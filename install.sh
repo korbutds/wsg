@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Install from a repository clone. Via npm is simpler: npm i -g wsgen
+# Install from a repository clone. Via npm is simpler: npm i -g @korbutds/wsg
 #
 set -euo pipefail
 

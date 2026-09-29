@@ -28,17 +28,17 @@ breaking the work.
 Try it without installing:
 
 ```bash
-npx wsgen
+npx @korbutds/wsg
 ```
 
 Install globally:
 
 ```bash
-npm i -g wsgen
+npm i -g @korbutds/wsg
 wsg --help
 ```
 
-The package is called `wsgen`; the command is `wsg`.
+The package is called `@korbutds/wsg`; the command is `wsg`.
 
 The `ws` navigation function can't be a program: a child process can't change its parent's
 directory. So its code is printed for `eval` — add this to `~/.zshrc`:
