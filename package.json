@@ -1,0 +1,48 @@
+{
+  "name": "wsgen",
+  "version": "0.1.0",
+  "description": "Task workspaces for coding agents: one directory per task with its own session history, agent memory and on-demand rules",
+  "author": "d.korbut",
+  "license": "MIT",
+  "homepage": "https://github.com/korbutds/wsg#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/korbutds/wsg.git"
+  },
+  "bugs": {
+    "url": "https://github.com/korbutds/wsg/issues"
+  },
+  "bin": {
+    "wsg": "bin/cli.js"
+  },
+  "files": [
+    "bin/",
+    "lib/",
+    "shell/",
+    "docs/",
+    "config.example",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": "^20.19.0 || ^22.13.0 || >=23.5.0"
+  },
+  "os": [
+    "darwin",
+    "linux"
+  ],
+  "keywords": [
+    "claude-code",
+    "codex",
+    "agents",
+    "git-worktree",
+    "workspace",
+    "agents-md"
+  ],
+  "scripts": {
+    "test": "node --check bin/cli.js && bash -n install.sh && zsh -n shell/wsg.zsh && node test/generate.test.js"
+  },
+  "dependencies": {
+    "@inquirer/prompts": "^8.7.2"
+  }
+}
