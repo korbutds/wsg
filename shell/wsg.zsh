@@ -16,6 +16,8 @@
 # shell-init, not this file.
 
 WSG_CONFIG="${WSG_CONFIG:-$HOME/.config/wsg/config}"
+# Tells wsg that ws is loaded in this shell (lib/shellrc.js), so it doesn't offer to hook it again.
+typeset -gx WSG_WS_LOADED=1
 _ws_load_config() {
   # WS_ROOT from the environment wins over the file, as in wsg (lib/config.js): otherwise
   # `WS_ROOT=… wsg` creates a workspace that ws then looks for somewhere else.

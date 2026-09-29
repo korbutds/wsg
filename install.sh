@@ -54,7 +54,8 @@ LINE='command -v wsg >/dev/null && eval "$(wsg shell-init zsh)"'
 # Keep $HOME as a variable: the rc survives a username change and profile migration.
 PATH_LINE="export PATH=\"\$HOME${BIN_DIR#"$HOME"}:\$PATH\""
 case "$BIN_DIR" in "$HOME"/*) ;; *) PATH_LINE="export PATH=\"$BIN_DIR:\$PATH\"" ;; esac
-RC="$HOME/.zshrc"
+# zsh reads $ZDOTDIR/.zshrc when it is set; lib/shellrc.js writes to the same place.
+RC="${ZDOTDIR:-$HOME}/.zshrc"
 LOGIN_SHELL="${SHELL:-}"
 if [ "${LOGIN_SHELL##*/}" != zsh ]; then
   [ "$IN_PATH" = 1 ] || warn "add to PATH: $PATH_LINE"

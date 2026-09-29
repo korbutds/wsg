@@ -47,6 +47,8 @@ directory. So its code is printed for `eval` — add this to `~/.zshrc`:
 eval "$(wsg shell-init zsh)"
 ```
 
+If you skip this, `wsg` offers to add it at the end of the first interview.
+
 Then copy the settings and adjust `WS_ROOT`:
 
 ```bash

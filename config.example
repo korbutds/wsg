@@ -13,6 +13,9 @@ WS_ROOT="$HOME/workspaces"
 # new terminal; setting it here is more reliable than a LANG exported later in .zshrc.
 # WSG_LANG="ru"
 
+# "no" stops the interview from offering to hook ws into .zshrc. Written here when you decline.
+# WSG_SHELL_HOOK="no"
+
 # Tracker prefix: if you answer the ticket question with just a number,
 # the link is built as "$WSG_TRACKER_URL$TICKET".
 # WSG_TRACKER_URL="https://your-tracker.example.com/browse/"

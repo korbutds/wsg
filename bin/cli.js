@@ -63,6 +63,41 @@ function guardPlatform() {
   }
 }
 
+const isCancel = (e) => e && (e.name === 'ExitPromptError' || e.name === 'AbortPromptError' || e.name === 'Interrupted');
+
+// Without ws the workspace is a directory the user doesn't know how to enter, so the end of the
+// interview offers to hook it. This runs after the workspace exists: a failure or Ctrl+C here must
+// not end in "nothing created" — it falls back to the manual hint.
+// Returns { ws, reload, hint }: whether to suggest `ws <slug>`, whether the shell needs a reload
+// first, and what to say next to the cd fallback.
+async function offerWs(cfg, askYesNo) {
+  const ui = require(path.join(ROOT, 'lib', 'ui.js'));
+  const shellrc = require(path.join(ROOT, 'lib', 'shellrc.js'));
+  // ws is written in zsh: in another shell there is nothing to offer.
+  if (path.basename(process.env.SHELL || '') !== 'zsh') return { ws: false };
+  if (shellrc.loaded()) return { ws: true };
+  // Hooked, but this shell started before that (e.g. right after install.sh).
+  if (shellrc.isHooked()) return { ws: true, reload: true };
+  const rc = shellrc.rcPath();
+  const manual = t('cli.hookManual', { rc, line: shellrc.LINE });
+  if (!shellrc.wsgOnPath()) return { ws: false, hint: t('cli.hookNeedsInstall', { rc, line: shellrc.LINE }) };
+  if (cfg.WSG_SHELL_HOOK === 'no' || !process.stdin.isTTY) return { ws: false, hint: manual };
+  try {
+    ui.info(t('cli.hookWhy'));
+    if (await askYesNo({ message: t('cli.hookAsk', { rc }), default: true })) {
+      shellrc.hook(rc);
+      ui.ok(t('cli.hooked', { rc }));
+      return { ws: true, reload: true };
+    }
+    shellrc.rememberDecline(cfg.configFile);
+    ui.dim(t('cli.hookDeclined', { file: cfg.configFile }));
+  } catch (e) {
+    if (isCancel(e)) process.stdout.write('\n');
+    else ui.warn(t('cli.hookFailed', { rc, msg: (e && e.message) || e }));
+  }
+  return { ws: false, hint: manual };
+}
+
 (async () => {
   try {
     if (argv[0] === '--check') {
@@ -96,7 +131,17 @@ function guardPlatform() {
     const ws = await generate.run(a, cfg);
     const code = check.run(ws, cfg);
     ui.head(code === 0 ? t('cli.done') : t('cli.doneWithErrors'));
-    ui.info(`  cd ${T.sh(ws)} && claude`);
+
+    const launch = await offerWs(cfg, interview.askYesNo);
+    ui.info('');
+    ui.dim(t('cli.next'));
+    if (launch.ws) {
+      if (launch.reload) ui.info(`  exec zsh      ${ui.D}# ${t('cli.reload')}${ui.N}`);
+      ui.info(`  ws ${a.slug}`);
+    } else {
+      ui.info(`  cd ${T.sh(ws)} && claude`);
+      if (launch.hint) ui.dim(launch.hint);
+    }
     const pending = [];
     for (const f of ['README.md', 'AGENTS.md', 'notes.md']) {
       if (fs.readFileSync(path.join(ws, f), 'utf8').includes('FILL IN')) pending.push(`./${f}`);
@@ -112,7 +157,7 @@ function guardPlatform() {
     }
     process.exit(code === 0 ? 0 : 1);
   } catch (e) {
-    if (e && (e.name === 'ExitPromptError' || e.name === 'AbortPromptError' || e.name === 'Interrupted')) {
+    if (isCancel(e)) {
       process.stderr.write(`\n${t('cli.cancelled')}\n`);
       process.exit(130);
     }

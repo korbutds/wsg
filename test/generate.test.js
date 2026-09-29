@@ -538,6 +538,11 @@ process.on('exit', () => {
     // The successful path: a task becomes a process and still passes the check.
     const pm = await quietAsync(() => generate.run({ ...base, kind: 'task', slug: 'promote-me', title: 'T',
       stateLabel: 'new feature', repos: [{ name: 'docs', path: docs, mode: 'link', branch: '', base: '', target: '—', verify: '', note: '', carry: [], cloneNm: false }] }, cfg));
+    it('docs-only workspace: verification says none is needed instead of FILL IN', () => {
+      const agents = fs.readFileSync(path.join(pm, 'AGENTS.md'), 'utf8');
+      assert.match(agents, /- None: the sources are documents/);
+      assert.doesNotMatch(agents, /FILL IN: no command/);
+    });
     const code = await quietAsync(() => promote.run(pm, cfg, { skillName: 'weekly-release' }));
     it('promote: kind switched to process', () => assert.strictEqual(fs.readFileSync(path.join(pm, '.claude/ws-kind'), 'utf8').trim(), 'process'));
     it('promote: skill and journal created', () => {
@@ -632,8 +637,11 @@ process.on('exit', () => {
       return lines.join('\n');
     };
     const noVerify = await quietAsync(() => generate.run({ ...base, kind: 'task', slug: 'no-verify', title: 'T', stateLabel: 'new feature',
-      repos: [{ name: 'docs', path: docs, mode: 'link', branch: '', base: '', target: '—', verify: '', note: '', carry: [], cloneNm: false }] }, cfg));
+      repos: [{ name: 'api', path: repo, mode: 'link', branch: '', base: '', target: 'main', verify: '', note: '', carry: [], cloneNm: false }] }, cfg));
     it('an empty verification section is a warning, not OK', () => assert.match(out(noVerify), /verification section has no command yet/));
+    const docsOnly = await quietAsync(() => generate.run({ ...base, kind: 'task', slug: 'docs-only', title: 'T', stateLabel: 'new feature',
+      repos: [{ name: 'docs', path: docs, mode: 'link', branch: '', base: '', target: '—', verify: '', note: '', carry: [], cloneNm: false }] }, cfg));
+    it('a docs-only workspace needs no verification command', () => assert.match(out(docsOnly), /no verification command needed/));
     it('a verification command is OK', () => assert.match(out(ws), /has a verification command/));
   }
 
@@ -897,6 +905,62 @@ process.on('exit', () => {
     });
     it('a verification command does not count', () =>
       assert.ok(!T.hasForeignText({ ...base, title: 'T', repos: [{ note: '', verify: 'echo привет' }] })));
+  }
+
+  console.log('\nhooking ws into .zshrc');
+  {
+    const shellrc = require(path.join(ROOT, 'lib', 'shellrc.js'));
+    it('.zshrc follows ZDOTDIR', () => assert.strictEqual(shellrc.rcPath({ ZDOTDIR: '/z' }), '/z/.zshrc'));
+    it('ws counts as loaded only with the marker from wsg.zsh', () => {
+      assert.strictEqual(shellrc.loaded({ WSG_WS_LOADED: '1' }), true);
+      assert.strictEqual(shellrc.loaded({}), false);
+    });
+    it('wsg.zsh exports the marker', () =>
+      assert.match(fs.readFileSync(path.join(ROOT, 'shell', 'wsg.zsh'), 'utf8'), /^typeset -gx WSG_WS_LOADED=1$/m));
+
+    const zd = path.join(tmp, 'zdotdir');
+    const env = { ZDOTDIR: zd, HOME: path.join(tmp, 'home-without-rc') };
+    it('a missing .zshrc is not hooked', () => assert.strictEqual(shellrc.isHooked(env), false));
+    shellrc.hook(shellrc.rcPath(env));
+    it('hooking creates a missing .zshrc and its directory', () =>
+      assert.strictEqual(fs.readFileSync(path.join(zd, '.zshrc'), 'utf8'), `# wsg\n${shellrc.LINE}\n`));
+    it('a hooked .zshrc is recognised', () => assert.strictEqual(shellrc.isHooked(env), true));
+    const rc = path.join(zd, '.zshrc');
+    fs.writeFileSync(rc, 'alias ll="ls -l"');
+    shellrc.hook(rc);
+    it('hooking appends after a last line without a newline', () =>
+      assert.strictEqual(fs.readFileSync(rc, 'utf8'), `alias ll="ls -l"\n\n# wsg\n${shellrc.LINE}\n`));
+    fs.writeFileSync(rc, '');
+    shellrc.hook(rc);
+    it('an empty .zshrc gets no leading blank line', () => assert.strictEqual(fs.readFileSync(rc, 'utf8'), `# wsg\n${shellrc.LINE}\n`));
+    fs.writeFileSync(rc, 'eval "$(wsg shell-init zsh)"\n');
+    it('a hand-written line without the guard counts too', () => assert.strictEqual(shellrc.isHooked(env), true));
+    fs.writeFileSync(rc, '# eval "$(wsg shell-init zsh)"\n  #  command -v wsg && eval "$(wsg shell-init zsh)"\n');
+    it('a commented-out line does not count', () => assert.strictEqual(shellrc.isHooked(env), false));
+    fs.mkdirSync(path.join(rc + '.d'));
+    it('an unreadable .zshrc is an error, not "missing"', () => assert.throws(() => shellrc.hook(rc + '.d')));
+
+    const bin = path.join(tmp, 'bin-wsg');
+    const npxBin = path.join(tmp, '_npx', 'abc', 'node_modules', '.bin');
+    for (const d of [bin, npxBin]) {
+      fs.mkdirSync(d, { recursive: true });
+      fs.writeFileSync(path.join(d, 'wsg'), '#!/bin/sh\n', { mode: 0o755 });
+    }
+    it('wsg installed on PATH is found', () => assert.strictEqual(shellrc.wsgOnPath({ PATH: bin }), true));
+    it('wsg from the npx cache does not count', () => assert.strictEqual(shellrc.wsgOnPath({ PATH: npxBin }), false));
+
+    const cfgFile = path.join(tmp, 'cfg-decline', 'config');
+    shellrc.rememberDecline(cfgFile);
+    it('a declined hook is remembered in the config', () => {
+      const prev = process.env.WSG_CONFIG;
+      process.env.WSG_CONFIG = cfgFile;
+      try {
+        assert.strictEqual(require(path.join(ROOT, 'lib', 'config.js')).load().WSG_SHELL_HOOK, 'no');
+      } finally {
+        if (prev === undefined) delete process.env.WSG_CONFIG;
+        else process.env.WSG_CONFIG = prev;
+      }
+    });
   }
 
   try { execFileSync('git', ['-C', repo, 'worktree', 'remove', '--force', path.join(ws, 'api')], { stdio: 'ignore' }); } catch {}
