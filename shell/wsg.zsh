@@ -7,8 +7,11 @@
 #   ws <slug> --new     jump in and start a new session
 #   ws <slug> --cd      only jump in
 #   ws <slug> --codex   jump in and start codex, whatever WSG_AGENT says
+#   ws <slug> --claude  jump in and start claude, whatever WSG_AGENT says
+#   ws --agent          choose the agent again
 #
-# The agent is asked on the first `ws <slug>` and saved to the config.
+# The agent is asked on the first `ws <slug>` and saved to the config. The config is reread on
+# every call, so a change made by hand or in another tab applies at once.
 # A slug can be shortened to an unambiguous prefix: ws daz
 #
 # The @-delimited keys in double quotes are UI strings: `wsg shell-init zsh` replaces them in
@@ -22,7 +25,12 @@ _ws_load_config() {
   # WS_ROOT from the environment wins over the file, as in wsg (lib/config.js): otherwise
   # `WS_ROOT=… wsg` creates a workspace that ws then looks for somewhere else.
   local from_env="$WS_ROOT"
+  # The agent is reread every time: a line removed from the file must not live on in the shell.
+  # Only a value the file itself set is dropped — one set in .zshrc stays.
+  [[ -n "$WSG_AGENT" && "$WSG_AGENT" == "${_ws_cfg_agent-}" ]] && WSG_AGENT=
+  _ws_cfg_agent=
   [ -f "$WSG_CONFIG" ] && source "$WSG_CONFIG"
+  [ -f "$WSG_CONFIG" ] && grep -Eq '^[[:space:]]*(export[[:space:]]+)?WSG_AGENT=' "$WSG_CONFIG" && _ws_cfg_agent="$WSG_AGENT"
   [ -n "$from_env" ] && WS_ROOT="$from_env"
   WS_ROOT="${WS_ROOT:-$HOME/workspaces}"
   # Same as wsg (lib/config.js): a quoted "~/x" and a relative path are taken from $HOME,
@@ -111,6 +119,17 @@ _ws_setup_agent() {
   for c in claude codex cursor-agent gemini opencode aider; do
     (( $+commands[$c] )) && found+=("$c")
   done
+  # wsg draws the arrow-key menu, like in the interview; Node starts only this once.
+  if (( $+commands[wsg] )); then
+    local cmd
+    cmd="$(command wsg --pick-agent "${found[@]}")"
+    if [[ $? -ne 0 || -z "$cmd" ]]; then
+      print -r -u2 -- "@@ws.pick.nothing@@"
+      return 1
+    fi
+    _ws_save_agent "$cmd"
+    return
+  fi
   print -r -- "@@ws.setup.question@@"
   local i=1
   for c in "${found[@]}"; do print -r -- "  $i) $c"; (( i++ )); done
@@ -142,12 +161,18 @@ _ws_pick_agent() {
 }
 
 _ws_save_agent() {
+  setopt localoptions extendedglob
   mkdir -p "${WSG_CONFIG:h}" || return 1
-  # A config edited by hand may lack the final newline: the new line would glue onto the last one.
-  # $(…) strips a trailing newline, so a non-empty result means the last byte isn't one.
-  [[ -s "$WSG_CONFIG" && -n "$(tail -c 1 "$WSG_CONFIG")" ]] && print >> "$WSG_CONFIG"
-  print -r -- "WSG_AGENT=${(qq)1}" >> "$WSG_CONFIG" || return 1
+  local -a lines
+  # $(<…) drops the trailing newlines, so a last line without one doesn't glue onto ours.
+  [[ -s "$WSG_CONFIG" ]] && lines=("${(@f)$(<"$WSG_CONFIG")}")
+  # The previous choice is replaced, not shadowed: with two lines, which one wins depends on order.
+  # Commented examples (# WSG_AGENT=…) stay.
+  lines=("${(@)lines:#[[:space:]]#(export[[:space:]]##)#WSG_AGENT=*}")
+  lines+=("WSG_AGENT=${(qq)1}")
+  print -rl -- "${lines[@]}" > "$WSG_CONFIG" || return 1
   WSG_AGENT="$1"
+  _ws_cfg_agent="$1"
   local q="${(qq)1}"
   print -r -- "@@ws.saved@@"
 }
@@ -171,8 +196,12 @@ _ws_codex() {                 # codex only sees its launch directory: add symlin
 }
 
 ws() {
-  # The config is read when the shell starts: another tab may have saved the agent since.
-  [ -n "$WSG_AGENT" ] || _ws_load_config
+  # Reread on every call: the agent may have been changed by hand or in another tab.
+  _ws_load_config
+  if [ "$1" = --agent ]; then
+    _ws_setup_agent
+    return
+  fi
   local root="$WS_ROOT"
   local slug="$1" mode="${2:---session}"
 
@@ -227,6 +256,8 @@ ws() {
   case "$mode" in
     --cd) return 0 ;;
     --codex) _ws_codex "$dir"; return ;;
+    # Shadows the setting for this call only: the functions below read WSG_AGENT.
+    --claude) local WSG_AGENT=claude; mode=--session ;;
   esac
 
   # The directory is already changed: with no agent, the user at least lands in the workspace.

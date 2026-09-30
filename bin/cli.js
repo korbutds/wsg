@@ -89,7 +89,8 @@ async function offerWs(cfg, askYesNo) {
       ui.ok(t('cli.hooked', { rc }));
       return { ws: true, reload: true };
     }
-    shellrc.rememberDecline(cfg.configFile);
+    // A "no" is remembered, or the question comes back after every workspace.
+    config.saveSetting(cfg.configFile, 'WSG_SHELL_HOOK', 'no');
     ui.dim(t('cli.hookDeclined', { file: cfg.configFile }));
   } catch (e) {
     if (isCancel(e)) process.stdout.write('\n');
@@ -98,8 +99,45 @@ async function offerWs(cfg, askYesNo) {
   return { ws: false, hint: manual };
 }
 
+// The first `ws <slug>` without WSG_AGENT asks through here: ws is zsh and can only offer numbers,
+// while this is the same arrow-key menu as the interview. The menu is drawn on stderr, and the
+// chosen command goes to stdout for ws to save. The candidates come from ws: it knows what's in PATH.
+async function pickAgent(found) {
+  const { select, input } = require('@inquirer/prompts');
+  const { theme } = require(path.join(ROOT, 'lib', 'interview.js'));
+  const ctx = { output: process.stderr };
+  const file = process.env.WSG_CONFIG || path.join(os.homedir(), '.config', 'wsg', 'config');
+  process.stderr.write(`${t('ws.setup.question', { WSG_CONFIG: file })}\n`);
+  let cmd = '';
+  if (found.length) {
+    cmd = await select({
+      message: t('pick.agent'),
+      theme: theme(),
+      choices: [...found.map((c) => ({ name: c, value: c })), { name: t('pick.other'), value: '' }],
+    }, ctx);
+  }
+  if (!cmd) {
+    cmd = (await input({
+      message: t('pick.command'),
+      validate: (v) => (v.trim() ? true : t('validate.required')),
+    }, ctx)).trim();
+  }
+  process.stdout.write(`${cmd}\n`);
+  return 0;
+}
+
 (async () => {
   try {
+    if (argv[0] === '--pick-agent') {
+      // A cancel is reported by ws ("will ask next time"): the interview's "nothing created" doesn't fit.
+      const code = await pickAgent(argv.slice(1)).catch((e) => {
+        if (!isCancel(e)) throw e;
+        process.stderr.write('\n');
+        return 130;
+      });
+      process.exit(code);
+    }
+
     if (argv[0] === '--check') {
       if (!argv[1]) die(t('cli.specifyPath'));
       process.exit(require(path.join(ROOT, 'lib', 'check.js')).run(config.resolveWs(argv[1], cfg), cfg));
@@ -122,6 +160,7 @@ async function offerWs(cfg, askYesNo) {
     const ui = require(path.join(ROOT, 'lib', 'ui.js'));
     const T = require(path.join(ROOT, 'lib', 'templates.js'));
 
+    if (!cfg.WSG_LANG && process.stdin.isTTY) await interview.askLanguage(cfg, { save: !argv.includes('--dry-run') });
     const a = await interview.run(cfg);
     if (argv.includes('--dry-run')) {
       ui.head(t('cli.dryRun', { ws: path.join(cfg.WS_ROOT, a.slug) }));

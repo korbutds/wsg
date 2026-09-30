@@ -31,6 +31,8 @@ Try it without installing:
 npx @korbutds/wsg
 ```
 
+This creates a workspace. The `ws` command that jumps into it needs `wsg` installed globally.
+
 Install globally:
 
 ```bash
@@ -48,6 +50,7 @@ eval "$(wsg shell-init zsh)"
 ```
 
 If you skip this, `wsg` offers to add it at the end of the first interview.
+The first run also asks which language to talk in: English or Russian.
 
 Then copy the settings and adjust `WS_ROOT`:
 
@@ -78,6 +81,8 @@ cd wsg
 wsg                    # interview: kind of work, why, sources, invariants
 ws                     # list workspaces with checkout state
 ws <slug>              # go there and launch the agent (asks which one on first run)
+ws <slug> --claude     # this time with claude, whatever the setting (also --codex)
+ws --agent             # choose the agent again
 wsg --check <path>     # check a workspace against the conventions
 ```
 
@@ -171,14 +176,16 @@ WSG_PARENT_CONTEXT="$HOME/CLAUDE.md"                     # count toward the alwa
 All optional. Use a different settings file via the `WSG_CONFIG` environment variable.
 
 **Agent.** If `WSG_AGENT` is not set, `ws <slug>` on first run offers the agents found in PATH
-or a custom command, and saves the choice to the config. With `claude`, ws resumes the workspace's
+(arrow keys) or a custom command, and saves the choice to the config. `ws --agent` asks again and
+replaces it; so does editing the line by hand — `ws` rereads the config on every call. With `claude`, ws resumes the workspace's
 previous session; with `codex`, it attaches symlinked directories via `--add-dir`. Any other command
 (`gemini`, `cursor-agent`, `opencode`…) is run as-is; such an agent reads `AGENTS.md`,
 while the `.claude/` files — path-scoped rules, the push ban, separate memory — only work in Claude Code.
-To bypass the setting once: `ws <slug> --codex` or `ws <slug> --cd`.
+To bypass the setting once: `ws <slug> --claude`, `ws <slug> --codex` or `ws <slug> --cd`.
 
-**Language.** The interview, the messages of `wsg` itself and `ws` speak English or Russian:
-`WSG_LANG`, otherwise the locale. The `wsg --check` report stays English. Workspace files are always
+**Language.** The interview, the messages of `wsg` itself and `ws` speak English or Russian.
+The first `wsg` run asks which one and saves it as `WSG_LANG`; to switch later, change that line
+(`ws` picks it up in a new terminal). Without a terminal to ask in, the locale decides. The `wsg --check` report stays English. Workspace files are always
 English — agents work best with it, and it costs fewer tokens. If you answer the interview in
 Russian, the workspace gets a first-session task for the agent: translate what you typed into
 English and show you the diff. Other languages aren't detected yet.

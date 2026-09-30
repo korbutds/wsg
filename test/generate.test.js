@@ -505,6 +505,35 @@ process.on('exit', () => {
     it('saving after a proper final newline adds no blank line', () =>
       assert.strictEqual(fs.readFileSync(cfgFile, 'utf8'), 'WS_ROOT="/x"\nWSG_AGENT=\'codex\'\n'));
 
+    fs.writeFileSync(cfgFile, '# WSG_AGENT="claude"\nWS_ROOT="/x"\n\nWSG_AGENT=codex\nexport WSG_AGENT=\'old\'\n');
+    zsh('_ws_save_agent claude >/dev/null');
+    it('choosing again replaces the saved agent and keeps comments and blank lines', () =>
+      assert.strictEqual(fs.readFileSync(cfgFile, 'utf8'), '# WSG_AGENT="claude"\nWS_ROOT="/x"\n\nWSG_AGENT=\'claude\'\n'));
+
+    // One shell, two calls: the second sees the config as it is now.
+    const reread = require('node:child_process').spawnSync('zsh', ['-f', '-c',
+      `source ${JSON.stringify(wsZsh)}; ws oauth-refresh; print -r -- "WSG_AGENT=codex" > ${JSON.stringify(cfgFile)}; ws oauth-refresh; : > ${JSON.stringify(cfgFile)}; ws oauth-refresh`],
+      { encoding: 'utf8', input: '', env: { ...process.env, HOME: tmp, PATH: `${fakeBin}:${process.env.PATH}`,
+        WS_ROOT: wsRoot, WSG_CONFIG: cfgFile, WSG_AGENT: '', WSG_TEST_X: '' } });
+    it('a changed agent applies in an open shell', () => assert.match(reread.stdout, /^claude .*\n(.*\n)*codex /m));
+    it('a removed agent line is not remembered by the shell', () => assert.match(reread.stderr, /agent not configured/));
+    it('an agent set in .zshrc is kept when the config has none', () => {
+      fs.writeFileSync(cfgFile, 'WS_ROOT="/x"\n');
+      const r = require('node:child_process').spawnSync('zsh', ['-f', '-c',
+        `WSG_AGENT=codex; source ${JSON.stringify(wsZsh)}; ws oauth-refresh; ws oauth-refresh`],
+        { encoding: 'utf8', input: '', env: { ...process.env, PATH: `${fakeBin}:${process.env.PATH}`, WS_ROOT: wsRoot, WSG_CONFIG: cfgFile } });
+      assert.strictEqual((r.stdout.match(/^codex /gm) || []).length, 2);
+    });
+    it('--claude runs claude whatever the setting says', () =>
+      assert.match(launch(`'codex --full-auto'`, '--claude'), /^claude \[-n\] \[oauth-refresh\]$/m));
+    fs.writeFileSync(cfgFile, "WSG_AGENT='codex'\n");
+    const again = zsh('ws --agent; print -r -- "pwd=$PWD"');
+    it('ws --agent without a terminal explains and keeps the setting', () => {
+      assert.match(again.stderr, /agent not configured|WSG_AGENT/);
+      assert.strictEqual(fs.readFileSync(cfgFile, 'utf8'), "WSG_AGENT='codex'\n");
+      assert.doesNotMatch(again.stdout, /oauth-refresh/);
+    });
+
     fs.rmSync(cfgFile);
     const list = (agentLine) => zsh(`print -r -- ${JSON.stringify(agentLine)} > ${JSON.stringify(cfgFile)}; ws`).stdout;
     it('the listing rereads the config saved by another tab', () =>
@@ -844,6 +873,40 @@ process.on('exit', () => {
     it('an unknown placeholder is an error', () => assert.throws(() => i18n.renderShell('"@@no.such@@"'), /unknown shell string/));
   }
 
+  console.log('\nthe first run asks for the language');
+  {
+    const i18n = require(path.join(ROOT, 'lib', 'i18n'));
+    const interview = require(path.join(ROOT, 'lib', 'interview.js'));
+    const { PassThrough } = require('node:stream');
+    const pick = async (keys, opts, cfg) => {
+      const input = new PassThrough();
+      const output = new PassThrough();
+      const log = console.log;
+      console.log = () => {};
+      try {
+        const answer = interview.askLanguage(cfg, opts, { input, output });
+        setTimeout(() => input.write(keys), 50);
+        return await answer;
+      } finally { console.log = log; }
+    };
+    const langCfg = path.join(tmp, 'lang', 'config');
+    i18n.init('en');
+    const cfg1 = { configFile: langCfg, WSG_LANG: '' };
+    const got = await pick('\u001b[B\r', {}, cfg1);
+    it('arrow down picks Russian', () => assert.strictEqual(got, 'ru'));
+    it('the UI switches right away', () => assert.strictEqual(i18n.current(), 'ru'));
+    it('the choice is saved to the config', () => assert.strictEqual(fs.readFileSync(langCfg, 'utf8'), 'WSG_LANG="ru"\n'));
+    it('the config sees it', () => assert.strictEqual(cfg1.WSG_LANG, 'ru'));
+    fs.writeFileSync(langCfg, 'WS_ROOT="/x"\nWSG_LANG="ru"\n# WSG_LANG="en"\n');
+    await pick('\u001b[A\r', {}, { configFile: langCfg, WSG_LANG: '' });
+    it('choosing again replaces the saved language', () =>
+      assert.strictEqual(fs.readFileSync(langCfg, 'utf8'), 'WS_ROOT="/x"\n# WSG_LANG="en"\nWSG_LANG="en"\n'));
+    const dry = path.join(tmp, 'lang-dry', 'config');
+    await pick('\r', { save: false }, { configFile: dry, WSG_LANG: '' });
+    it('--dry-run does not write the config', () => assert.ok(!fs.existsSync(dry)));
+    i18n.init('en');
+  }
+
   console.log('\nyes/no answers typed into the prompt');
   {
     const i18n = require(path.join(ROOT, 'lib', 'i18n'));
@@ -950,7 +1013,7 @@ process.on('exit', () => {
     it('wsg from the npx cache does not count', () => assert.strictEqual(shellrc.wsgOnPath({ PATH: npxBin }), false));
 
     const cfgFile = path.join(tmp, 'cfg-decline', 'config');
-    shellrc.rememberDecline(cfgFile);
+    require(path.join(ROOT, 'lib', 'config.js')).saveSetting(cfgFile, 'WSG_SHELL_HOOK', 'no');
     it('a declined hook is remembered in the config', () => {
       const prev = process.env.WSG_CONFIG;
       process.env.WSG_CONFIG = cfgFile;
@@ -961,6 +1024,19 @@ process.on('exit', () => {
         else process.env.WSG_CONFIG = prev;
       }
     });
+  }
+
+  console.log('\nws asks for the agent through wsg --pick-agent');
+  {
+    const r = require('node:child_process').spawnSync(process.execPath, [path.join(ROOT, 'bin', 'cli.js'), '--pick-agent', 'claude'],
+      { encoding: 'utf8', input: '', env: { ...process.env, WSG_CONFIG: path.join(tmp, 'no-config') } });
+    it('a closed input is a cancel: nothing on stdout for ws to save', () => {
+      assert.strictEqual(r.status, 130);
+      assert.strictEqual(r.stdout, '');
+    });
+    it('the cancel leaves the message to ws', () => assert.doesNotMatch(r.stderr, /nothing created/));
+    it('ws calls it with the agents found in PATH', () =>
+      assert.match(fs.readFileSync(path.join(ROOT, 'shell', 'wsg.zsh'), 'utf8'), /wsg --pick-agent "\$\{found\[@\]\}"/));
   }
 
   try { execFileSync('git', ['-C', repo, 'worktree', 'remove', '--force', path.join(ws, 'api')], { stdio: 'ignore' }); } catch {}

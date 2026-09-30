@@ -4,13 +4,14 @@
 WS_ROOT="$HOME/workspaces"
 
 # Command that `ws <slug>` uses to launch the agent. If unset, ws asks on first run
-# and writes it here. claude resumes the workspace's previous session, codex gets
+# and writes it here; `ws --agent` asks again. claude resumes the workspace's previous session, codex gets
 # --add-dir for attached directories; any other command is run as-is.
 # WSG_AGENT="claude"
 
-# Language of the interview, CLI messages and ws: en or ru. If unset, taken from the locale
-# (LC_ALL, LC_MESSAGES, LANG). Workspace files are always English. ws picks up a change in a
-# new terminal; setting it here is more reliable than a LANG exported later in .zshrc.
+# Language of the interview, CLI messages and ws: en or ru. Asked on the first run and written
+# here. If unset and there is no terminal to ask in, taken from the locale (LC_ALL, LC_MESSAGES,
+# LANG). Workspace files are always English. ws picks up a change in a new terminal; setting it
+# here is more reliable than a LANG exported later in .zshrc.
 # WSG_LANG="ru"
 
 # "no" stops the interview from offering to hook ws into .zshrc. Written here when you decline.
