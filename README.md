@@ -110,14 +110,15 @@ $WS_ROOT/oauth-refresh/
 | | **task** | **process** |
 |---|---|---|
 | lives | until merge | permanently |
-| bound to | ticket and branch | nothing: the ticket is a run argument |
+| bound to | ticket and branch | nothing: each run gets its own input |
 | main artifact | plan, spec, review | `.claude/skills/<name>/SKILL.md` |
-| log | `notes.md` → "Current context" | `journal.md` + `runs/<ticket>.md` |
+| log | `notes.md` → "Current context" | `journal.md` + `runs/<date>-<short-name>.md` |
 | memory | context of one task | accumulates across runs |
 
 A **task** is regular ticket work. A **process** is something that repeats: a release, a regular
 export, a routine change. A process keeps its procedure in a skill that is invoked manually
-(`/release <ticket>`), and its run log accumulates what broke last time.
+(`/release 2.4`, or just `/health` to go through whatever is new), and its run log accumulates
+what broke last time. No tracker needed: runs are named by date.
 
 A task that turns out to be repeatable is turned into a process: `wsg --promote <slug>`.
 

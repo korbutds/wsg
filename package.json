@@ -1,6 +1,6 @@
 {
   "name": "@korbutds/wsg",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Task workspaces for coding agents: one directory per task with its own session history, agent memory and on-demand rules",
   "author": "d.korbut",
   "license": "MIT",

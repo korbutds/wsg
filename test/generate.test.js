@@ -600,6 +600,11 @@ process.on('exit', () => {
       assert.ok(fs.existsSync(path.join(pm, 'journal.md')));
     });
     it('promote: AGENTS.md explains how it runs', () => assert.match(fs.readFileSync(path.join(pm, 'AGENTS.md'), 'utf8'), /## How it runs/));
+    it('promote: the same wording as a new process, no ticket', () => {
+      const text = fs.readFileSync(path.join(pm, 'AGENTS.md'), 'utf8');
+      assert.match(text, /runs\/<date>-<short-name>\.md/);
+      assert.doesNotMatch(text, /<ticket>/);
+    });
     it('promote: the check passes afterwards', () => assert.strictEqual(code, 0));
     it('promote: the empty steps are still flagged — the first run was the task', () => {
       const lines = [];
@@ -931,6 +936,15 @@ process.on('exit', () => {
     });
     it('process: the input of each run is in the skill', () => assert.match(skill, /## Input of each run\n\n- the new documents/));
     it('process: steps are worked out on the first run', () => assert.match(skill, /on the first run, work them out with the owner/));
+    it('process: no ticket is asked for anywhere', () => {
+      for (const f of [pa, skill, fs.readFileSync(path.join(proc, 'journal.md'), 'utf8')]) assert.doesNotMatch(f, /<ticket>|ticket or description/);
+    });
+    it('process: runs are named by date', () => {
+      assert.match(pa, /runs\/<date>-<short-name>\.md/);
+      assert.match(skill, /runs\/<date>-<short-name>\.md/);
+    });
+    it('process: it can be run without an argument', () => assert.match(pa, /Without an argument, look at what is new/));
+    it('process without git: the skill says nothing about pushes and MRs', () => assert.doesNotMatch(skill, /create an MR/));
     it('process: no invariants section it was never asked for', () => assert.doesNotMatch(pa, /Invariants are not findings/));
     it('process without git: no talk of branches or a code map', () => {
       assert.doesNotMatch(pa, /no permanent branch/);
