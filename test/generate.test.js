@@ -685,8 +685,30 @@ process.on('exit', () => {
     fs.writeFileSync(path.join(ws, 'nested.md'), '@AGENTS.md\n');
     fs.writeFileSync(agentsMd, origA + '\n@nested.md\n');
     it('an import cycle is followed once and passes', () => assert.strictEqual(quiet(() => check.run(ws, cfg)), 0));
+    const report = () => {
+      const lines = [];
+      const log = console.log;
+      console.log = (x) => lines.push(String(x));
+      let code;
+      try { code = check.run(ws, cfg); } finally { console.log = log; }
+      return { code, text: lines.join('\n') };
+    };
     fs.writeFileSync(agentsMd, origA + '\nSee @missing-inline.md for details.\n');
-    it('an import in the middle of a line is checked too', () => assert.strictEqual(quiet(() => check.run(ws, cfg)), 1));
+    const inline = report();
+    it('a missing file named in prose is a warning, not a failure', () => {
+      assert.strictEqual(inline.code, 0);
+      assert.match(inline.text, /@missing-inline\.md \(in AGENTS\.md\) looks like an import but does not resolve/);
+    });
+    fs.writeFileSync(agentsMd, origA + '\nPublished on npm as @korbutds/wsg, see @scope/pkg too.\n');
+    const pkg = report();
+    it('an npm package name in prose is not an import', () => {
+      assert.strictEqual(pkg.code, 0);
+      assert.doesNotMatch(pkg.text, /korbutds|scope\/pkg/);
+    });
+    fs.writeFileSync(path.join(ws, 'inline-target.md'), '@missing-deeper.md\n');
+    fs.writeFileSync(agentsMd, origA + '\nSee @inline-target.md for details.\n');
+    it('an existing import in prose is still followed', () => assert.strictEqual(quiet(() => check.run(ws, cfg)), 1));
+    fs.rmSync(path.join(ws, 'inline-target.md'));
     fs.writeFileSync(agentsMd, origA + '\nWrite to user@example.com, see `@not-an-import.md`.\n');
     it('an e-mail and code are not imports', () => assert.strictEqual(quiet(() => check.run(ws, cfg)), 0));
     fs.writeFileSync(agentsMd, origA);
