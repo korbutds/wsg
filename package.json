@@ -1,6 +1,6 @@
 {
   "name": "@korbutds/wsg",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Task workspaces for coding agents: one directory per task with its own session history, agent memory and on-demand rules",
   "author": "d.korbut",
   "license": "MIT",
@@ -43,6 +43,7 @@
     "test": "node --check bin/cli.js && bash -n install.sh && zsh -n shell/wsg.zsh && node test/generate.test.js"
   },
   "dependencies": {
+    "@inquirer/core": "^12.0.3",
     "@inquirer/prompts": "^8.7.2"
   }
 }

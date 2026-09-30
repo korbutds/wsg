@@ -123,12 +123,23 @@ A task that turns out to be repeatable is turned into a process: `wsg --promote 
 
 ## What the interview does
 
-It asks not only for paths and branches, but also for what the agent is useless without:
+It asks not only for paths and branches, but also for what the agent is useless without — a few
+narrow questions, each with an example, each answer in its own section of `AGENTS.md`. The agent
+reads them in every session, so 1–3 lines per answer is the goal.
 
-- **why** — what problem we're solving; an empty answer is not accepted, since this field defines the scope;
-- **definition of done** — the acceptance criterion;
-- **invariants** — deliberate decisions that look like violations of the repo's rules. Without them
-  the agent and the reviewer subagent will "fix" them.
+| task | process |
+|---|---|
+| **problem** and why now — required, it defines the scope | **what it does** and what it gives you — required |
+| **definition of done** | **when it runs** |
+| **out of scope** — nearby things not to touch | **input of each run** — the skill's arguments |
+| **invariants** — deliberate decisions that look like violations; without them the agent and the reviewer subagent will "fix" them | **rules and boundaries** — always-on, not only inside the skill |
+| | **when a run is finished** |
+
+A process's steps are not asked up front: the agent works them out with you on the first run.
+
+Then the sources: type a path, Tab completes. A folder that doesn't exist yet is created together
+with the workspace; with no sources at all, the files live in the workspace itself — keep data you
+need for long in a folder of its own, since a workspace goes away with its task.
 
 Anything left unfilled is marked `FILL IN`, and at the end the script lists those places.
 

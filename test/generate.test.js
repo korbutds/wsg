@@ -173,6 +173,27 @@ process.on('exit', () => {
   const badErr = await failure(() => generate.run(bad, cfg));
   it('a branch name conflict aborts creation', () => assert.match(badErr, /conflict|worktree add/i));
   it('no directory left after rollback', () => assert.ok(!fs.existsSync(path.join(wsRoot, 'rollback-me'))));
+  {
+    // The same failure, now after two new folders under one missing parent were made: the worktree
+    // step comes after folder creation, so this is a real rollback, not a rejected run.
+    const shared = path.join(tmp, 'rb-new');
+    const mk = (n) => ({ name: n, path: path.join(shared, n), create: true, mode: 'link', branch: '', base: '', target: '—', verify: '', note: '', carry: [], cloneNm: false });
+    const printed = [];
+    const log = console.log;
+    const err = process.stderr.write;
+    console.log = (x) => printed.push(String(x));
+    process.stderr.write = () => true;
+    try {
+      await generate.run({ ...bad, slug: 'rollback-dirs', repos: [...bad.repos, mk('a'), mk('b')] }, cfg);
+    } catch { /* expected: the branch name conflict */ } finally { console.log = log; process.stderr.write = err; }
+    it('the folders were created before the failure', () => assert.match(printed.join('\n'), /folder created: .*rb-new\/b/));
+    it('rollback removes them and their shared parent', () => assert.ok(!fs.existsSync(shared)));
+    fs.mkdirSync(path.join(shared, 'a'), { recursive: true });
+    fs.writeFileSync(path.join(shared, 'a', 'mine.txt'), 'x');
+    await failure(() => generate.run({ ...bad, slug: 'rollback-dirs2', repos: [...bad.repos, mk('b')] }, cfg));
+    it('a folder that already had files is not touched', () => assert.ok(fs.existsSync(path.join(shared, 'a', 'mine.txt'))));
+    it('only the folder this run made is removed', () => assert.ok(!fs.existsSync(path.join(shared, 'b'))));
+  }
 
   console.log('\nan existing branch is not reset without a backup');
   {
@@ -580,6 +601,13 @@ process.on('exit', () => {
     });
     it('promote: AGENTS.md explains how it runs', () => assert.match(fs.readFileSync(path.join(pm, 'AGENTS.md'), 'utf8'), /## How it runs/));
     it('promote: the check passes afterwards', () => assert.strictEqual(code, 0));
+    it('promote: the empty steps are still flagged — the first run was the task', () => {
+      const lines = [];
+      const log = console.log;
+      console.log = (x) => lines.push(String(x));
+      try { check.run(pm, cfg); } finally { console.log = log; }
+      assert.match(lines.join('\n'), /WARN.*no steps described, though it has been run/);
+    });
 
     // A workspace where AGENTS.md is a symlink (generated before sources were checked).
     const linked = await quietAsync(() => generate.run({ ...base, kind: 'task', slug: 'linked-agents', title: 'T',
@@ -871,6 +899,205 @@ process.on('exit', () => {
       assert.match(ruWs('ws nope').stderr, /нет воркспейса 'nope'/);
     });
     it('an unknown placeholder is an error', () => assert.throws(() => i18n.renderShell('"@@no.such@@"'), /unknown shell string/));
+  }
+
+  console.log('\nanswers land in their own sections');
+  {
+    const cfgT = { WS_ROOT: path.join(tmp, 'sections'), WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
+    const task = await quietAsync(() => generate.run({ ...base, kind: 'task', slug: 'scoped', title: 'T', stateLabel: 'new feature',
+      outOfScope: ['the login screen redesign'], repos: [] }, cfgT));
+    const agents = fs.readFileSync(path.join(task, 'AGENTS.md'), 'utf8');
+    it('task: out of scope is a section with a rule', () => {
+      assert.match(agents, /## Out of scope\n\n- the login screen redesign/);
+      assert.match(agents, /ask the owner first/);
+    });
+    it('no sources: AGENTS.md says the files live in the workspace', () => assert.match(agents, /no sources: its files live here/));
+    it('no sources: verification needs no command', () => assert.match(agents, /- None: the workspace has no sources/));
+    const readme = fs.readFileSync(path.join(task, 'README.md'), 'utf8');
+    it('no sources: README has no empty table', () => {
+      assert.doesNotMatch(readme, /\| Repository \|/);
+      assert.match(readme, /## Sources\n\nNone: the files of this work live in the workspace itself/);
+    });
+    const proc = await quietAsync(() => generate.run({ ...base, kind: 'process', slug: 'health', title: 'Health', skillName: 'health',
+      stateLabel: 'repeatable process', trigger: ['new test results arrived'], varies: ['the new documents'],
+      fixed: ['no diagnoses'], steps: [], invariants: [], repos: [] }, cfgT));
+    const pa = fs.readFileSync(path.join(proc, 'AGENTS.md'), 'utf8');
+    const skill = fs.readFileSync(path.join(proc, '.claude/skills/health/SKILL.md'), 'utf8');
+    it('process: when it runs is in AGENTS.md', () => assert.match(pa, /## When it runs\n\n- new test results arrived/));
+    it('process: rules and boundaries are always-on, in AGENTS.md', () => assert.match(pa, /## Rules and boundaries\n\n- no diagnoses/));
+    it('process: the skill points to them instead of repeating', () => {
+      assert.doesNotMatch(skill, /no diagnoses/);
+      assert.match(skill, /Rules and boundaries of every run are in AGENTS.md/);
+    });
+    it('process: the input of each run is in the skill', () => assert.match(skill, /## Input of each run\n\n- the new documents/));
+    it('process: steps are worked out on the first run', () => assert.match(skill, /on the first run, work them out with the owner/));
+    it('process: no invariants section it was never asked for', () => assert.doesNotMatch(pa, /Invariants are not findings/));
+    it('process without git: no talk of branches or a code map', () => {
+      assert.doesNotMatch(pa, /no permanent branch/);
+      assert.doesNotMatch(pa, /Code map/);
+    });
+    const checkOut = (dir) => {
+      const lines = [];
+      const log = console.log;
+      console.log = (x) => lines.push(String(x));
+      try { check.run(dir, cfgT); } finally { console.log = log; }
+      return lines.join('\n');
+    };
+    it('a new process passes its own check with no warnings at all', () => assert.doesNotMatch(checkOut(proc), /WARN|FAIL/));
+    it('a task without sources passes with no warnings', () => assert.doesNotMatch(checkOut(task), /WARN|FAIL/));
+    it('and check does not claim a verification command', () => {
+      assert.doesNotMatch(checkOut(task), /has a verification command/);
+      assert.match(checkOut(task), /no verification command needed/);
+    });
+    const notes = fs.readFileSync(path.join(task, 'notes.md'), 'utf8');
+    it('no sources: notes.md has no code map to fill in', () => {
+      assert.doesNotMatch(notes, /Code map/);
+      assert.doesNotMatch(notes, /FILL IN/);
+    });
+    it('no sources: the layout does not promise a code map', () => assert.doesNotMatch(agents, /code map/i));
+    fs.writeFileSync(path.join(proc, 'runs', 'first.md'), '# run\n');
+    it('after a run, missing steps are', () => assert.match(checkOut(proc), /no steps described, though it has been run/));
+  }
+
+  console.log('\nsource folders are created with the workspace');
+  {
+    const cfgD = { WS_ROOT: path.join(tmp, 'mkdirs'), WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
+    const fresh = path.join(tmp, 'new-root', 'Health');
+    const src = (p) => ({ name: path.basename(p), path: p, create: true, mode: 'link', branch: '', base: '', target: '—', verify: '', note: '', carry: [], cloneNm: false });
+    const made = await quietAsync(() => generate.run({ ...base, kind: 'task', slug: 'mk', title: 'T', stateLabel: 'new feature', repos: [src(fresh)] }, cfgD));
+    it('a folder marked for creation exists after generation', () => assert.ok(fs.statSync(fresh).isDirectory()));
+    it('and is linked into the workspace', () => assert.strictEqual(fs.realpathSync(path.join(made, 'Health')), fs.realpathSync(fresh)));
+    it('the rule for a folder of documents does not talk about commits', () => {
+      const rule = fs.readFileSync(path.join(made, '.claude', 'rules', 'Health.md'), 'utf8');
+      assert.match(rule, /how the files here are organized/);
+      assert.doesNotMatch(rule, /commit conventions/);
+    });
+
+    const doomed = path.join(tmp, 'doomed-root', 'deep', 'Docs');
+    // Rejected by the checks before anything is made (a file is not a source). The rollback after
+    // folders were made is tested in "rollback on failure".
+    const notDir = path.join(tmp, 'a-file');
+    fs.writeFileSync(notDir, '');
+    await failure(() => generate.run({ ...base, kind: 'task', slug: 'mk2', title: 'T', stateLabel: 'new feature',
+      repos: [src(doomed), { ...src(notDir), create: false }] }, cfgD));
+    it('a run rejected by the checks creates no folders', () => assert.ok(!fs.existsSync(path.join(tmp, 'doomed-root'))));
+
+    const { missingChain, sourceProblem } = generate;
+    {
+      const home = path.join(tmp, 'dotfiles-home');
+      fs.mkdirSync(path.join(home, 'code', 'api'), { recursive: true });
+      execFileSync('git', ['init', '-q', home]);
+      execFileSync('git', ['init', '-q', path.join(home, 'code', 'api')]);
+      const g = require(path.join(ROOT, 'lib', 'git.js'));
+      const prev = process.env.HOME;
+      process.env.HOME = home;
+      try {
+        it('home as a dotfiles repo: a new ~/Health is not a git source', () => assert.strictEqual(g.newFolderInRepo(home), false));
+        it('the same way generation will judge it once created', () => {
+          fs.mkdirSync(path.join(home, 'Health'));
+          assert.strictEqual(g.isRepo(path.join(home, 'Health')), false);
+        });
+        it('a new folder inside a real repo still is', () => assert.strictEqual(g.newFolderInRepo(path.join(home, 'code', 'api')), true));
+      } finally { process.env.HOME = prev; }
+    }
+
+    {
+      // mkdir -p that fails halfway: the outer folder is made, the long name is refused.
+      const outer = path.join(tmp, 'half-made');
+      const tooLong = path.join(outer, 'x'.repeat(300));
+      await failure(() => generate.run({ ...base, kind: 'task', slug: 'half', title: 'T', stateLabel: 'new feature', repos: [src(tooLong)] }, cfgD));
+      it('a mkdir that fails halfway leaves no outer folder', () => assert.ok(!fs.existsSync(outer)));
+    }
+
+    {
+      const i18n = require(path.join(ROOT, 'lib', 'i18n'));
+      for (const l of ['en', 'ru']) {
+        i18n.init(l);
+        it(`${l}: the links hint does not repeat "empty line to finish"`, () =>
+          assert.ok(!i18n.t('interview.links.hint').includes(i18n.t('interview.finish'))));
+      }
+      i18n.init('en');
+    }
+
+    const dangling = path.join(tmp, 'dangling');
+    fs.symlinkSync(path.join(tmp, 'unmounted-drive'), dangling);
+    it('a dangling symlink is not a folder to create', () => assert.deepStrictEqual(missingChain(dangling).missing, []));
+    it('and is reported as missing right away', () => assert.match(sourceProblem({ path: dangling, name: 'dangling', create: false }), /does not exist/));
+
+    const { ensureDir } = require(path.join(ROOT, 'lib', 'interview.js'));
+    const { PassThrough } = require('node:stream');
+    const answer = async (full, typed) => {
+      const input = new PassThrough();
+      const output = new PassThrough();
+      const log = console.log;
+      const printed = [];
+      console.log = (x) => printed.push(String(x));
+      try {
+        const r = ensureDir(full, { input, output });
+        setTimeout(() => input.write(typed + '\n'), 50);
+        return { value: await r, printed: printed.join('\n') };
+      } finally { console.log = log; }
+    };
+    const one = await answer(path.join(tmp, 'only-this'), '');
+    it('a missing folder in an existing parent: Enter says yes', () => assert.strictEqual(one.value, true));
+    it('the interview itself creates nothing', () => assert.ok(!fs.existsSync(path.join(tmp, 'only-this'))));
+    const typo = await answer(path.join(tmp, 'Documets', 'Health'), '');
+    it('a missing parent (likely a typo): Enter says no', () => assert.strictEqual(typo.value, false));
+    it('and the whole chain is shown', () => assert.match(typo.printed, /Documets\n\s+.*Documets\/Health/));
+    fs.mkdirSync(path.join(tmp, 'Documents'), { recursive: true });
+    const cut = await answer(path.join(tmp, 'Doc'), '');
+    it('a name cut short (Doc next to Documents): Enter says no', () => assert.strictEqual(cut.value, false));
+    it('and the existing folder is suggested', () => assert.match(cut.printed, /Documents/));
+    const caseOnly = await answer(path.join(tmp, 'Receipts'), '');
+    it('an unrelated new name still defaults to yes', () => assert.strictEqual(caseOnly.value, true));
+    fs.mkdirSync(path.join(tmp, 'Documents', 'Health'), { recursive: true });
+    const helth = await answer(path.join(tmp, 'Documents', 'Helth'), '');
+    it('a typo of an existing folder (Helth): Enter says no', () => assert.strictEqual(helth.value, false));
+    it('and the real folder is suggested', () => assert.match(helth.printed, /Documents\/Health/));
+    const drive = path.join(tmp, 'drive');
+    fs.symlinkSync(path.join(tmp, 'unmounted-volume'), drive);
+    const onDrive = await answer(path.join(drive, 'Health'), 'y');
+    it('a folder behind a dangling link is refused with the real reason', () => {
+      assert.strictEqual(onDrive.value, false);
+      assert.match(onDrive.printed, /not available/);
+      assert.doesNotMatch(onDrive.printed, /write access|did you mean/);
+    });
+    fs.writeFileSync(path.join(tmp, 'notes.txt'), '');
+    const underFile = await answer(path.join(tmp, 'notes.txt', 'sub'), 'y');
+    it('a file on the way is named as the reason', () => {
+      assert.strictEqual(underFile.value, false);
+      assert.match(underFile.printed, /notes\.txt is a file, not a folder/);
+    });
+  }
+
+  console.log('\ntyping a source path');
+  {
+    const { completePath, tildePath } = require(path.join(ROOT, 'lib', 'pathPrompt.js'));
+    const interview = require(path.join(ROOT, 'lib', 'interview.js'));
+    it('a folder dragged into the terminal: escapes are undone', () =>
+      assert.strictEqual(interview.resolveSource('/x/My\\ Docs\\ \\(old\\) '), '/x/My Docs (old)'));
+    it('a quoted path loses its quotes', () => assert.strictEqual(interview.resolveSource("'/x/My Docs'"), '/x/My Docs'));
+    it('~ only as the leading home directory', () => {
+      assert.strictEqual(tildePath(path.join(os.homedir(), 'x')), '~/x');
+      assert.strictEqual(tildePath(`${os.homedir()}-shared/Documents`), `${os.homedir()}-shared/Documents`);
+    });
+    const base = path.join(tmp, 'complete');
+    for (const d of ['medical-docs', 'media', 'Projects', '.hidden']) fs.mkdirSync(path.join(base, d), { recursive: true });
+    fs.writeFileSync(path.join(base, 'medical.txt'), '');
+    fs.symlinkSync(path.join(base, 'Projects'), path.join(base, 'proj-link'));
+    it('a single match completes and ends with /', () => assert.strictEqual(completePath(`${base}/medic`).completed, `${base}/medical-docs/`));
+    it('several matches complete to their common part', () => assert.strictEqual(completePath(`${base}/me`).completed, `${base}/medi`));
+    it('files are not offered', () => assert.ok(!completePath(`${base}/medical`).matches.some((m) => m.endsWith('.txt'))));
+    it('case does not matter, the real name is used', () => assert.strictEqual(completePath(`${base}/proje`).completed, `${base}/Projects/`));
+    it('a symlink to a directory counts', () => assert.ok(completePath(`${base}/proj-`).matches.some((m) => m.endsWith('proj-link'))));
+    it('hidden ones only when asked for', () => {
+      assert.ok(!completePath(`${base}/`).matches.some((m) => m.endsWith('.hidden')));
+      assert.strictEqual(completePath(`${base}/.hi`).completed, `${base}/.hidden/`);
+    });
+    it('~ stays ~', () => assert.match(completePath('~/').completed, /^~\//));
+    it('no match leaves the text as typed', () => assert.strictEqual(completePath(`${base}/zzz`).completed, `${base}/zzz`));
+    fs.mkdirSync(path.join(base, 'My Docs'));
+    it('an escaped space still completes', () => assert.strictEqual(completePath(`${base}/My\\ D`).completed, `${base}/My Docs/`));
   }
 
   console.log('\nthe first run asks for the language');
