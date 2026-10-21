@@ -297,11 +297,27 @@ async function cmdPromote(args) {
   return lib('promote').run(target, cfg, { skillName: flags['--skill'] });
 }
 
+function cmdInstallSkills(args) {
+  parse(args, {}, 0);
+  const ui = lib('ui');
+  let code = 0;
+  for (const { file, status } of lib('skills').install()) {
+    if (status === 'written') ui.ok(t('cli.skillWritten', { file }));
+    else if (status === 'unchanged') ui.ok(t('cli.skillUnchanged', { file }));
+    else {
+      ui.fail(t('cli.skillRefused', { file }));
+      code = 1;
+    }
+  }
+  return code;
+}
+
 const COMMANDS = {
   new: cmdNew,
   add: cmdAdd,
   check: cmdCheck,
   promote: cmdPromote,
+  'install-skills': cmdInstallSkills,
   // The 0.1 spellings, kept for one release.
   '--check': cmdCheck,
   '--promote': cmdPromote,

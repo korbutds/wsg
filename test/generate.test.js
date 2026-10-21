@@ -816,6 +816,8 @@ process.on('exit', () => {
       assert.match(rc(), /^export PATH="\$HOME\/\.local\/bin:\$PATH"$/m);
       assert.match(rc(), /^command -v wsg >\/dev\/null && eval "\$\(wsg shell-init zsh\)"$/m);
     });
+    const skill = path.join(home, '.claude', 'skills', 'wsg-new', 'SKILL.md');
+    it('install.sh installs the wsg-new skill', () => assert.match(fs.readFileSync(skill, 'utf8'), /^name: wsg-new$/m));
     it('install.sh needs no npm install: there are no dependencies', () =>
       assert.doesNotMatch(fs.readFileSync(path.join(ROOT, 'install.sh'), 'utf8'), /npm install/));
     const before = rc();

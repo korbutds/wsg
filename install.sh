@@ -85,4 +85,12 @@ WS_ROOT_DEFAULT="$HOME/workspaces"
 mkdir -p "$WS_ROOT_DEFAULT"
 ok "workspaces directory: $WS_ROOT_DEFAULT"
 
+# The wsg-new skill lets a Claude Code session create a workspace when asked. Not fatal: a skill
+# file of the user's own with that name is left alone, and wsg works without it.
+if node "$SRC/bin/cli.js" install-skills >/dev/null 2>&1; then
+  ok "Claude Code skill wsg-new installed"
+else
+  warn "skill wsg-new not installed — run: wsg install-skills"
+fi
+
 printf '\n%sDone%s\n  open a new terminal tab, then: wsg --help\n\n' "$B" "$N"
