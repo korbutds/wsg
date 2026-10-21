@@ -718,6 +718,28 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       assert.match(r2.err, /AGENTS\.md: the <!-- wsg:layout --> block has 2 opening and 2 closing markers/);
     });
     it('and nothing is written', () => assert.strictEqual(fs.readFileSync(agentsFile, 'utf8'), dup));
+
+    // An unclosed fence hides every marker after it: each add would append another pair.
+    const wsF = path.join(wsRoot, 'fence');
+    wsg(['new', 'fence', '--no-launch']);
+    const fenceFile = path.join(wsF, 'AGENTS.md');
+    fs.writeFileSync(fenceFile, fs.readFileSync(fenceFile, 'utf8').replace('## Why', '```sh\nnpm test\n\n## Why'));
+    const unclosed = fs.readFileSync(fenceFile, 'utf8');
+    const line = unclosed.split('\n').indexOf('```sh') + 1;
+    const r3 = wsg(['add', web, '--link'], { cwd: wsF });
+    it('an unclosed code fence is refused: exit 2, naming the file and the line', () => {
+      assert.strictEqual(r3.code, 2, r3.all);
+      assert.match(r3.err, new RegExp(`AGENTS\\.md: the code block opened on line ${line} is never closed`));
+    });
+    it('and nothing is written', () => {
+      assert.strictEqual(fs.readFileSync(fenceFile, 'utf8'), unclosed);
+      assert.ok(!fs.existsSync(path.join(wsF, 'web')));
+    });
+    const fc = report(wsF, cfg);
+    it('check fails on it', () => {
+      assert.strictEqual(fc.code, 1, fc.text);
+      assert.match(fc.text, new RegExp(`AGENTS\\.md — the code block opened on line ${line} is never closed`));
+    });
   }
 
   console.log('\none command at a time');
