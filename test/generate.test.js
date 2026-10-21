@@ -132,6 +132,14 @@ process.on('exit', () => {
     fs.writeFileSync(claudeMd, orig + '\n@missing/file.md\n');
     it('--check still fails a real broken import', () => assert.strictEqual(quiet(() => check.run(ws, cfg)), 1));
     fs.writeFileSync(claudeMd, orig);
+    // A ```` fence isn't closed by the ``` line inside it: the import after that line is still code.
+    const agentsMd = path.join(ws, 'AGENTS.md');
+    const agentsOrig = fs.readFileSync(agentsMd, 'utf8');
+    fs.writeFileSync(agentsMd, agentsOrig + '\n````md\n```\n@docs/missing.md\n````\n');
+    it('--check skips an import inside a 4-backtick fence holding a ``` line', () => assert.strictEqual(quiet(() => check.run(ws, cfg)), 0));
+    fs.writeFileSync(agentsMd, agentsOrig + '\n````md\n```\n````\n\n@docs/missing.md\n');
+    it('--check still fails a broken import after such a fence', () => assert.strictEqual(quiet(() => check.run(ws, cfg)), 1));
+    fs.writeFileSync(agentsMd, agentsOrig);
   }
 
   console.log('\nprocess workspace');
@@ -1047,10 +1055,12 @@ process.on('exit', () => {
     const closed = [
       ['a 4-backtick fence holding a 3-backtick line', ['````md', '```sh', 'npm test', '````', 'text']],
       ['a line of inline code that starts with three backticks', ['```wsg add``` is the command', 'text']],
-      ['a ``` line indented 4 spaces (indented code)', ['para', '', '    ```', '    code', 'text']],
+      ['a ``` line in a 4-space indented code block, closed in the same indent', ['para', '', '    ```', '    code', '    ```', 'text']],
+      ['a fence in a list item, indented 4 spaces', ['1.  Example:', '', '    ```md', '    <!-- wsg:layout -->', '    x', '    <!-- /wsg:layout -->', '    ```', 'text']],
+      ['a fence in a list item, closed at a different indent', ['- step', '', '    ```sh', '    npm test', '  ```', 'text']],
       ['a ~~~ fence', ['~~~', '```', 'inside', '~~~']],
       ['a ~~~ fence closed by a longer run', ['~~~', 'x', '~~~~~']],
-      ['a closer indented up to 3 spaces, spaces after it', ['```', 'x', '   ```  ']],
+      ['a closer indented, spaces after it', ['```', 'x', '      ```  ']],
       ['CRLF line endings', ['```sh', 'npm test', '```', 'text'].map((l) => `${l}\r`)],
       ['CRLF around a 4-backtick fence', ['````', '```', '````', ''].map((l) => `${l}\r`)],
     ];
@@ -1070,6 +1080,26 @@ process.on('exit', () => {
       const r = generate.replaceBlock(quoted, 'AGENTS.md', 'layout', ['new'], /^## Layout/m);
       assert.ok(r.text.includes('<!-- wsg:layout -->\nexample\n'), r.text);
       assert.match(r.text, /## Layout\n\n<!-- wsg:layout -->\nnew\n<!-- \/wsg:layout -->/);
+    });
+    // A list item that shows the block as an example: its fence and markers are indented. Neither the
+    // fence nor the markers in it are taken for the real pair, which is still found and replaced.
+    const listed = '# x\n\n1.  Example:\n\n    ```md\n    <!-- wsg:layout -->\n    example\n    <!-- /wsg:layout -->\n    ```\n\n## Layout\n\n<!-- wsg:layout -->\nold\n<!-- /wsg:layout -->\n';
+    it('a fenced example in a list item is text, the real block is replaced', () => {
+      const r = generate.replaceBlock(listed, 'AGENTS.md', 'layout', ['new'], /^## Layout/m);
+      assert.ok(r.text.includes('    <!-- wsg:layout -->\n    example\n'), r.text);
+      assert.match(r.text, /## Layout\n\n<!-- wsg:layout -->\nnew\n<!-- \/wsg:layout -->/);
+      assert.strictEqual(r.restored, false);
+    });
+    // Indented markers outside any fence are an example too: wsg writes its own at column 0.
+    const indented = '# x\n\n- like this:\n  <!-- wsg:layout -->\n\n## Layout\n\n<!-- wsg:layout -->\nold\n<!-- /wsg:layout -->\n';
+    it('an indented marker is not counted', () => {
+      const r = generate.replaceBlock(indented, 'AGENTS.md', 'layout', ['new'], /^## Layout/m);
+      assert.ok(r.text.includes('- like this:\n  <!-- wsg:layout -->\n'), r.text);
+      assert.match(r.text, /<!-- wsg:layout -->\nnew\n<!-- \/wsg:layout -->/);
+    });
+    it('a real marker with trailing spaces still counts', () => {
+      const r = generate.replaceBlock('## Layout\n\n<!-- wsg:layout -->  \nold\n<!-- /wsg:layout -->\n', 'AGENTS.md', 'layout', ['new'], /^## Layout/m);
+      assert.strictEqual(r.text, '## Layout\n\n<!-- wsg:layout -->\nnew\n<!-- /wsg:layout -->\n');
     });
     it('the refusal names the line and the closer it needs', () => assert.throws(
       () => generate.replaceBlock('# x\n\n````sh\nx\n```\n', 'AGENTS.md', 'layout', ['l'], /^## Layout/m),
