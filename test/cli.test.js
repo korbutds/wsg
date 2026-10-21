@@ -341,7 +341,9 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       ['a bad branch name', [api, '--branch', 'feat x'], /not a valid branch name/],
       ['a branch busy in another worktree', [api, '--branch', 'main'], /already checked out/],
       ['a ref-path conflict', [api, '--branch', 'a/b/c'], /conflicts with existing branch a\/b/],
-      ['an existing branch without --reuse-branch', [api, '--branch', 'feature/existing'], /--reuse-branch/],
+      ['--base for an existing branch kept as is', [api, '--branch', 'feature/existing', '--base', 'main'], /--base applies only to a new branch/],
+      ['--reset-to-base for a branch that does not exist', [api, '--branch', 'b4', '--reset-to-base'], /--reset-to-base applies to an existing branch/],
+      ['the removed --reuse-branch', [api, '--branch', 'feature/existing', '--reuse-branch'], /unknown argument: --reuse-branch/],
       ['a base that does not resolve', [api, '--branch', 'b2', '--base', 'origin/nope'], /ref origin\/nope not found/],
       ['an unknown carry entry', [api, '--branch', 'b3', '--carry', '.env,secret.key'], /secret\.key is not among/],
       ['--branch on a link', [api, '--link', '--branch', 'x'], /--branch applies only to a worktree/],
@@ -470,20 +472,104 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     });
   }
 
-  console.log('\nwsg add: an existing branch is reused only on request');
+  console.log('\nwsg add: branches that already exist');
   {
-    const tip = git(api, ['rev-parse', 'feature/existing']);
-    const wsR = path.join(wsRoot, 'reuse');
-    wsg(['new', 'reuse', '--no-launch']);
-    const r = wsg(['add', api, '--branch', 'feature/existing', '--reuse-branch', '--base', 'main'], { cwd: wsR });
-    it('--reuse-branch attaches it', () => assert.strictEqual(r.code, 0, r.all));
-    it('the old head is saved in backup/', () => {
-      const bk = branches(api).find((b) => b.startsWith('backup/feature-existing-'));
-      assert.ok(bk, branches(api).join(' '));
-      assert.strictEqual(git(api, ['rev-parse', bk]), tip);
+    // A repository with a remote: an open MR's branch lives on origin, maybe locally too.
+    const svc = makeRepo('svc');
+    const bare = path.join(tmp, 'svc-origin.git');
+    git(tmp, ['init', '-q', '--bare', bare]);
+    git(svc, ['remote', 'add', 'origin', bare]);
+    git(svc, ['push', '-q', 'origin', 'main']);
+    // Commits without a checkout: the main checkout stays on main.
+    const commit = (parent, msg) => git(svc, ['commit-tree', '-p', parent, '-m', msg, `${parent}^{tree}`]);
+    const setRef = (b, sha) => git(svc, ['update-ref', `refs/heads/${b}`, sha]);
+    const tipOf = (ref) => git(svc, ['rev-parse', ref]);
+    const ws = (slug) => { wsg(['new', slug, '--no-launch']); return path.join(wsRoot, slug); };
+    const dryIn = (dir, args) => { const r = wsg(['add', svc, ...args, '--dry-run'], { cwd: dir }); return { ...r, plan: JSON.parse(r.out) }; };
+    const drop = (dir) => execFileSync('git', ['-C', svc, 'worktree', 'remove', '--force', path.join(dir, 'svc')]);
+
+    // A local branch with its own commit: attached as it is.
+    const own = commit('main', 'local work');
+    setRef('feature/local', own);
+    const wl = ws('br-local');
+    const dl = dryIn(wl, ['--branch', 'feature/local']);
+    it('an existing local branch is attached as is by default', () => {
+      assert.strictEqual(dl.code, 0, dl.all);
+      assert.strictEqual(dl.plan.start, 'attach');
+      assert.strictEqual(dl.plan.branchExists, true);
     });
-    it('the branch is reset to the base', () => assert.strictEqual(git(api, ['rev-parse', 'feature/existing']), git(api, ['rev-parse', 'main'])));
-    execFileSync('git', ['-C', api, 'worktree', 'remove', '--force', path.join(wsR, 'api')]);
+    const al = wsg(['add', svc, '--branch', 'feature/local'], { cwd: wl });
+    it('its commits are kept: the branch does not move', () => {
+      assert.strictEqual(al.code, 0, al.all);
+      assert.strictEqual(tipOf('feature/local'), own);
+      assert.strictEqual(git(path.join(wl, 'svc'), ['rev-parse', 'HEAD']), own);
+    });
+    it('no backup is made', () => assert.ok(!branches(svc).some((b) => b.startsWith('backup/'))));
+    drop(wl);
+
+    // Local and origin went different ways: reported, never merged.
+    const pushed = commit('main', 'pushed');
+    setRef('feature/both', pushed);
+    git(svc, ['push', '-q', 'origin', 'feature/both']);
+    const local = commit('main', 'local only');
+    setRef('feature/both', local);
+    const db = dryIn(ws('br-both'), ['--branch', 'feature/both']);
+    it('a diverged branch is attached as is, with the counts', () => {
+      assert.strictEqual(db.code, 0, db.all);
+      assert.strictEqual(db.plan.start, 'attach');
+      assert.match(db.plan.warnings.join('\n'), /feature\/both and origin\/feature\/both differ: 1 commits only here, 1 only on origin/);
+    });
+
+    // Only on origin: the local branch continues it.
+    const remote = commit('main', 'remote work');
+    setRef('feature/remote', remote);
+    git(svc, ['push', '-q', 'origin', 'feature/remote']);
+    git(svc, ['branch', '-D', 'feature/remote']);
+    const wr = ws('br-remote');
+    const dr = dryIn(wr, ['--branch', 'feature/remote']);
+    it('a remote-only branch is continued', () => {
+      assert.strictEqual(dr.code, 0, dr.all);
+      assert.strictEqual(dr.plan.start, 'continue');
+      assert.strictEqual(dr.plan.remoteBranch, 'origin/feature/remote');
+      assert.strictEqual(dr.plan.base, 'origin/feature/remote');
+      assert.match(dr.plan.notes.join('\n'), /continuing origin\/feature\/remote/);
+    });
+    const ar = wsg(['add', svc, '--branch', 'feature/remote'], { cwd: wr });
+    it('the local branch starts at origin and tracks it', () => {
+      assert.strictEqual(ar.code, 0, ar.all);
+      assert.match(ar.out, /continuing origin\/feature\/remote/);
+      assert.strictEqual(tipOf('feature/remote'), remote);
+      assert.strictEqual(git(svc, ['config', '--get', 'branch.feature/remote.merge']), 'refs/heads/feature/remote');
+    });
+    drop(wr);
+    git(svc, ['branch', '-D', 'feature/remote']);
+    const wr2 = ws('br-remote-2');
+    const other = dryIn(wr2, ['--branch', 'feature/remote', '--base', 'main']);
+    it('another --base for a remote branch is refused', () => {
+      assert.strictEqual(other.code, 2);
+      assert.deepStrictEqual(other.plan.errors.length, 1);
+      assert.match(other.plan.errors[0], /origin\/feature\/remote exists/);
+    });
+    const over = dryIn(wr2, ['--branch', 'feature/remote', '--base', 'main', '--reset-to-base']);
+    it('unless --reset-to-base: a new branch, with a warning', () => {
+      assert.strictEqual(over.code, 0, over.all);
+      assert.strictEqual(over.plan.start, 'new');
+      assert.match(over.plan.warnings.join('\n'), /commits of origin\/feature\/remote are not included/);
+    });
+
+    // --reset-to-base on a local branch: the old head goes to backup/, the branch to the base.
+    const wx = ws('br-reset');
+    const ax = wsg(['add', svc, '--branch', 'feature/local', '--reset-to-base', '--base', 'main'], { cwd: wx });
+    it('--reset-to-base resets an existing branch', () => {
+      assert.strictEqual(ax.code, 0, ax.all);
+      assert.strictEqual(tipOf('feature/local'), tipOf('main'));
+    });
+    it('after saving its head in backup/', () => {
+      const bk = branches(svc).find((b) => b.startsWith('backup/feature-local-'));
+      assert.ok(bk, branches(svc).join(' '));
+      assert.strictEqual(tipOf(bk), own);
+    });
+    drop(wx);
   }
 
   console.log('\nwsg add: a failure rolls back only this source');

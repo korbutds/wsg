@@ -67,9 +67,13 @@ the owner names:
      or `--link` (a symlink to the shared checkout: for a repository the task only reads, or a heavy
      one that doesn't need its own branch; a subdirectory of a repository is always a link);
    - **branch** — named by the repository's existing convention, with the ticket if there is one.
-     Never invent a different scheme. An existing branch (an open MR) needs `--reuse-branch`: wsg
-     saves its head in `backup/…` and resets it to the base — say so;
-   - **base** — `origin/<target>` unless the owner wants another;
+     Never invent a different scheme. For "updating existing work" or an open MR, give the
+     existing branch: a local one is attached as it is, with its commits; one only on origin is
+     continued from `origin/<branch>` and tracks it. `--dry-run` shows which (`start`) and warns
+     when the local branch and origin differ — nothing is merged. Add `--reset-to-base` only after
+     the owner explicitly says to start the branch over: its current head is saved in `backup/…`
+     and the branch is reset to the base, so its commits leave the branch;
+   - **base** — for a new branch, `origin/<target>` unless the owner wants another (`--base`);
    - **target** — the MR target branch;
    - **verify** — the command that gives pass/fail;
    - **carry** — which ignored files to copy (`.env`, certificates): `all`, `none` or a list;

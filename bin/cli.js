@@ -188,7 +188,7 @@ async function cmdNew(args) {
 async function cmdAdd(args) {
   const { flags, pos } = parse(args, {
     '--worktree': 'bool', '--link': 'bool', '--reference': 'bool',
-    '--branch': 'value', '--base': 'value', '--reuse-branch': 'bool', '--target': 'value',
+    '--branch': 'value', '--base': 'value', '--reset-to-base': 'bool', '--target': 'value',
     '--verify': 'value', '--carry': 'value', '--clone-node-modules': 'bool', '--no-clone-node-modules': 'bool',
     '--note': 'value', '--dry-run': 'bool', '--ws': 'value',
   }, 1);
@@ -217,7 +217,7 @@ async function cmdAdd(args) {
     mode: modes.length ? modes[0].slice(2) : undefined,
     branch: flags['--branch'],
     base: flags['--base'],
-    reuseBranch: flags['--reuse-branch'],
+    resetToBase: flags['--reset-to-base'],
     target: flags['--target'],
     verify: flags['--verify'],
     carry: flags['--carry'],
@@ -254,6 +254,7 @@ async function cmdAdd(args) {
     return INVALID;
   }
   for (const w of res.warnings) ui.warn(w);
+  for (const n of res.notes) ui.info(`  ${n}`);
   guardPlatform();
   ui.head(t('cli.added', { name: res.spec.name }));
   try {

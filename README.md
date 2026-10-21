@@ -103,7 +103,7 @@ The commands the agent (or you) call:
 | Command | What it does |
 |---|---|
 | `wsg new <slug> [--title T] [--kind task\|process] [--skill NAME] [--ticket X] [--no-launch]` | Creates the skeleton and starts the agent; `--no-launch` prints the next step instead. |
-| `wsg add <path> [--worktree\|--link\|--reference] [--branch B] [--base REF] [--reuse-branch] [--target T] [--verify CMD] [--carry all\|none\|a,b] [--[no-]clone-node-modules] [--note TEXT] [--dry-run] [--ws SLUG\|PATH]` | Attaches one source to the workspace you are in. Every check happens before anything is touched; a failure rolls back only this source. `--dry-run` prints the plan as JSON. |
+| `wsg add <path> [--worktree\|--link\|--reference] [--branch B] [--base REF] [--reset-to-base] [--target T] [--verify CMD] [--carry all\|none\|a,b] [--[no-]clone-node-modules] [--note TEXT] [--dry-run] [--ws SLUG\|PATH]` | Attaches one source to the workspace you are in. An existing branch is attached as it is, one only on origin is continued; `--reset-to-base` starts it over (with a `backup/…`). Every check happens before anything is touched; a failure rolls back only this source. `--dry-run` prints the plan as JSON. |
 | `wsg check [path\|slug]` | Checks a workspace against the conventions. |
 | `wsg promote [slug\|path] --skill NAME` | Turns a task into a process. |
 | `wsg guide [setup]` | Prints the setup guide the agent follows. |
