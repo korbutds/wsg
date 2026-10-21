@@ -777,6 +777,73 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     it('the lock is released after the command', () => assert.ok(!fs.existsSync(lock)));
     wsg(['add', web, '--link'], { cwd: wsL });
     it('and after a refused one', () => assert.ok(!fs.existsSync(lock)));
+
+    // Two commands taking over the same stale lock at once. Played out in this process: fs is
+    // patched so that the other command acts at the worst moment.
+    const lockLib = require(path.join(ROOT, 'lib', 'lock.js'));
+    const wsR = path.join(tmp, 'lock-race');
+    fs.mkdirSync(path.join(wsR, '.claude'), { recursive: true });
+    const raceLock = path.join(wsR, '.claude', 'wsg.lock');
+    const theirs = JSON.stringify({ pid: process.pid, time: '2026-02-02T00:00:00Z' });
+    const race = (name, fn) => {
+      fs.writeFileSync(raceLock, JSON.stringify({ pid: dead, time: '2026-01-01T00:00:00Z' }));
+      const real = fs[name];
+      let fired = false;
+      fs[name] = (...a) => {
+        if (!fired) { fired = true; return fn(real, ...a); }
+        return real(...a);
+      };
+      const log = console.log;
+      console.log = () => {};
+      try { lockLib.acquire(wsR)(); return null; } catch (e) { return e; } finally { fs[name] = real; console.log = log; }
+    };
+    // The other one took the stale lock over and made its own just before this rename.
+    const e1 = race('renameSync', (real, from, to) => { fs.writeFileSync(raceLock, theirs); return real(from, to); });
+    it('a takeover that moved a fresh lock puts it back and reports busy', () => {
+      assert.ok(e1 && e1.invalid, String(e1));
+      assert.match(e1.message, /another wsg command is running .*pid \d+, since 2026-02-02/);
+      assert.strictEqual(fs.readFileSync(raceLock, 'utf8'), theirs);
+      assert.deepStrictEqual(fs.readdirSync(path.join(wsR, '.claude')), ['wsg.lock']);
+    });
+    // The other one made its lock between this takeover and the create.
+    const e2 = race('rmSync', (real, ...a) => { const r = real(...a); fs.writeFileSync(raceLock, theirs); return r; });
+    it('a lock made again right after the takeover: busy, not a raw EEXIST', () => {
+      assert.ok(e2 && e2.invalid, String(e2));
+      assert.match(e2.message, /another wsg command is running/);
+      assert.strictEqual(fs.readFileSync(raceLock, 'utf8'), theirs);
+    });
+    // The same through the CLI: exit 2.
+    fs.writeFileSync(lock, JSON.stringify({ pid: dead, time: '2026-01-01T00:00:00Z' }));
+    const racing = `const fs = require('fs');
+      const real = fs.rmSync;
+      fs.rmSync = (p, ...a) => {
+        real(p, ...a);
+        if (String(p).startsWith(${JSON.stringify(`${lock}.`)})) fs.writeFileSync(${JSON.stringify(lock)}, ${JSON.stringify(theirs)});
+      };
+      process.argv = [process.argv[0], ${JSON.stringify(CLI)}, 'add', ${JSON.stringify(web)}, '--link', '--ws', ${JSON.stringify(wsL)}];
+      require(${JSON.stringify(CLI)});`;
+    const rc = spawnSync(process.execPath, ['-e', racing], { cwd: tmp, encoding: 'utf8', env: ENV });
+    it('wsg add that loses the race: exit 2', () => {
+      assert.strictEqual(rc.status, 2, rc.stdout + rc.stderr);
+      assert.match(rc.stderr, /another wsg command is running/);
+    });
+    fs.rmSync(lock, { force: true });
+    fs.rmSync(wsR, { recursive: true, force: true });
+
+    // Ctrl+C while the source is still being resolved, before the rollback is armed: a git that
+    // interrupts its own process group there. The command runs in a group of its own.
+    const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+    const gitBin = path.join(tmp, 'git-interrupt-resolve');
+    fs.mkdirSync(gitBin);
+    fs.writeFileSync(path.join(gitBin, 'git'),
+      `#!/bin/sh\ncase "$*" in *" ls-files "*) kill -INT 0; sleep 2;; esac\nexec ${realGit} "$@"\n`, { mode: 0o755 });
+    const snapL = tree(wsL);
+    const ri = spawnSync(process.execPath, [CLI, 'add', api, '--branch', 'task/lock-int'],
+      { cwd: wsL, encoding: 'utf8', detached: true, env: { ...ENV, PATH: `${gitBin}:${ENV.PATH}` } });
+    it('Ctrl+C while resolving: exit 130', () => assert.strictEqual(ri.status, 130, `${ri.status} ${ri.signal} ${ri.stdout}${ri.stderr}`));
+    it('and the lock is released', () => assert.ok(!fs.existsSync(lock)));
+    it('and the workspace is as it was', () => assert.deepStrictEqual(tree(wsL), snapL));
+    it('no branch is left', () => assert.ok(!branches(api).includes('task/lock-int')));
   }
 
   console.log('\nwsg add: values that end up in markdown');
