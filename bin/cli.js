@@ -305,7 +305,7 @@ async function cmdRemove(args) {
       name: r ? r.name : pos[0],
       ...(r ? { path: r.path, mode: r.reference ? 'reference' : r.mode } : {}),
       ...(plan.branch ? { branchKept: plan.branch } : {}),
-      ...(plan.ignored.length ? { ignoredDeleted: plan.ignored } : {}),
+      ...(plan.ignored.length ? { ignored: plan.ignored } : {}),
       files: plan.errors.length ? [] : plan.files,
       settingsChanged: plan.settingsChanged,
       errors: plan.errors,
@@ -319,10 +319,15 @@ async function cmdRemove(args) {
   }
   guardPlatform();
   try {
-    const { branch } = await generate.remove(ws, r.name, cfg);
+    const { branch } = await generate.remove(ws, r.name, cfg, { deleteIgnored: !!flags['--delete-ignored'], ignored: plan.ignored });
     ui.head(t('cli.removed', { name: r.name }));
     if (branch) ui.info(t('cli.branchKept', { branch, path: r.path }));
   } catch (e) {
+    // Files that appeared after the plan: refused before anything changed.
+    if (e && e.invalid) {
+      process.stderr.write(`wsg: ${e.message}\n`);
+      return INVALID;
+    }
     if (e && e.name === 'Interrupted') {
       process.stderr.write(`${t('cli.addCancelled')}\n`);
       return 130;

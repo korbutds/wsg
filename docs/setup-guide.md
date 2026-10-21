@@ -98,9 +98,10 @@ the owner names:
 
    A source attached with the wrong settings is fixed by `wsg remove <name>`, then `wsg add` with
    the right flags. `remove` takes only a clean worktree — it lists what would be lost otherwise —
-   and keeps the branch; `wsg remove <name> --dry-run` shows what it would do. Ignored files wsg did
-   not copy in (a `.env` made later, an installed `node_modules`) are listed too: move out what is
-   needed, then `wsg remove <name> --delete-ignored`.
+   and keeps the branch; `wsg remove <name> --dry-run` shows what it would do. Ignored files that
+   exist nowhere else (a `.env` made later or a carried one edited since, an installed
+   `node_modules`) are listed too: move out what is needed, then `wsg remove <name> --delete-ignored`.
+   A `node_modules` wsg cloned is not checked: changes made inside it are deleted with the worktree.
 
 **Reference directories** — material the task works from that is not under git (specs, exports,
 designs): `wsg add <dir> --reference --note "<one line: what is in it>"`; the note is one line. They sit next to the

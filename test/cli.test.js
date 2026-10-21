@@ -982,7 +982,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     const ign = rm(['api']);
     it('a worktree with ignored files wsg did not copy is refused, and they are listed', () => {
       assert.strictEqual(ign.code, 2, ign.all);
-      assert.match(ign.err, /ignored files wsg did not put there[\s\S]*local\.pem[\s\S]*--delete-ignored/);
+      assert.match(ign.err, /ignored files that exist nowhere else[\s\S]*local\.pem[\s\S]*--delete-ignored/);
       assert.doesNotMatch(ign.err, /\.env/);
     });
     it('and nothing is touched', () => {
@@ -993,15 +993,60 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     it('--dry-run lists them, and the refusal', () => {
       const p = JSON.parse(ignDry.out);
       assert.strictEqual(ignDry.code, 2, ignDry.all);
-      assert.deepStrictEqual(p.ignoredDeleted, ['local.pem']);
+      assert.deepStrictEqual(p.ignored, ['local.pem']);
       assert.match(p.errors.join('\n'), /local\.pem/);
     });
     const ignOk = rm(['api', '--dry-run', '--delete-ignored']);
     it('--delete-ignored --dry-run: no refusal, the files still listed', () => {
       const p = JSON.parse(ignOk.out);
       assert.strictEqual(ignOk.code, 0, ignOk.all);
-      assert.deepStrictEqual(p.ignoredDeleted, ['local.pem']);
+      assert.deepStrictEqual(p.ignored, ['local.pem']);
     });
+
+    // A carried file edited in the worktree exists nowhere else now: refused like any other.
+    fs.writeFileSync(path.join(wsX, 'api', '.env'), 'TOKEN=edited\n');
+    const edited = rm(['api', '--delete-ignored', '--dry-run']);
+    it('a carried file changed in the worktree is listed', () => assert.deepStrictEqual(JSON.parse(edited.out).ignored.sort(), ['.env', 'local.pem']));
+    const editedRm = rm(['api']);
+    it('and refused: exit 2, the edit kept', () => {
+      assert.strictEqual(editedRm.code, 2, editedRm.all);
+      assert.match(editedRm.err, /ignored files that exist nowhere else[\s\S]*\.env/);
+      assert.strictEqual(fs.readFileSync(path.join(wsX, 'api', '.env'), 'utf8'), 'TOKEN=edited\n');
+    });
+    fs.writeFileSync(path.join(wsX, 'api', '.env'), fs.readFileSync(path.join(api, '.env')));
+
+    // A file made after the plan was checked, before git removes the worktree: not deleted unasked.
+    const late = generate.planRemove(wsX, 'api', { deleteIgnored: true });
+    fs.writeFileSync(path.join(wsX, 'api', 'pkg', 'local.pem'), 'made after the check\n');
+    const lateErr = await (async () => {
+      try { await quietAsync(() => generate.remove(wsX, 'api', cfg, { deleteIgnored: true, ignored: late.ignored })); return null; } catch (e) { return e; }
+    })();
+    it('a file that appeared after the check: refused as invalid input, listed', () => {
+      assert.deepStrictEqual(late.ignored, ['local.pem']);
+      assert.ok(lateErr && lateErr.invalid, String(lateErr));
+      assert.match(lateErr.message, /ignored files appeared after the check[\s\S]*pkg\/local\.pem/);
+    });
+    it('and nothing is touched', () => {
+      assert.ok(fs.existsSync(path.join(wsX, 'api', 'pkg', 'local.pem')));
+      assert.deepStrictEqual(W.readState(wsX).sources.map((x) => x.name), ['api', 'web', 'docs']);
+    });
+    fs.rmSync(path.join(wsX, 'api', 'pkg', 'local.pem'));
+    // The same through the CLI: the file appears right after the plan, exit 2.
+    const lateFile = path.join(wsX, 'api', 'pkg', 'local.pem');
+    const lateCli = `const fs = require('fs');
+      const gen = require(${JSON.stringify(path.join(ROOT, 'lib', 'generate.js'))});
+      const real = gen.planRemove;
+      gen.planRemove = (...a) => { const p = real(...a); fs.writeFileSync(${JSON.stringify(lateFile)}, 'late\\n'); return p; };
+      process.argv = [process.argv[0], ${JSON.stringify(CLI)}, 'remove', 'api', '--delete-ignored', '--ws', ${JSON.stringify(wsX)}];
+      require(${JSON.stringify(CLI)});`;
+    const lc = spawnSync(process.execPath, ['-e', lateCli], { cwd: tmp, encoding: 'utf8', env: ENV });
+    it('wsg remove that finds a file made after the check: exit 2, the worktree kept', () => {
+      assert.strictEqual(lc.status, 2, lc.stdout + lc.stderr);
+      assert.match(lc.stderr, /appeared after the check[\s\S]*pkg\/local\.pem/);
+      assert.ok(fs.existsSync(lateFile));
+      assert.ok(!fs.existsSync(path.join(wsX, '.claude', 'wsg.lock')));
+    });
+    fs.rmSync(lateFile);
 
     const r1 = rm(['api', '--delete-ignored']);
     it('with --delete-ignored the worktree is removed (carried ignored files do not count)', () => assert.strictEqual(r1.code, 0, r1.all));
@@ -1050,14 +1095,55 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     const nmAdd = add([nmRepo, '--branch', 'task/nm', '--carry', 'none', '--clone-node-modules']);
     const nmPlan = () => JSON.parse(rm(['nm-repo', '--dry-run']).out);
     const cloned = W.readState(wsX).sources.find((x) => x.name === 'nm-repo');
-    it('a node_modules wsg cloned does not count as ignored files', () => {
-      assert.strictEqual(nmAdd.code, 0, nmAdd.all);
-      assert.ok(!cloned.cloneNm || fs.existsSync(path.join(wsX, 'nm-repo', 'node_modules')));
-      assert.strictEqual(nmPlan().ignoredDeleted, undefined);
-    });
+    // Only macOS clones it (copy-on-write); elsewhere there is nothing to check.
+    if (os.platform() === 'darwin') {
+      it('a node_modules wsg cloned does not count as ignored files', () => {
+        assert.strictEqual(nmAdd.code, 0, nmAdd.all);
+        assert.strictEqual(cloned.cloneNm, true);
+        assert.ok(fs.existsSync(path.join(wsX, 'nm-repo', 'node_modules', 'x', 'index.js')));
+        assert.strictEqual(nmPlan().ignored, undefined);
+      });
+      it('and the plan says changes inside it are not protected', () =>
+        assert.match(nmPlan().warnings.join('\n'), /node_modules wsg cloned into nm-repo is not checked/));
+    } else console.log('  skip  a cloned node_modules: copy-on-write cloning is macOS only');
     fs.mkdirSync(path.join(wsX, 'nm-repo', 'pkg', 'node_modules'), { recursive: true });
     fs.writeFileSync(path.join(wsX, 'nm-repo', 'pkg', 'node_modules', 'y.js'), '\n');
-    it('one installed later does', () => assert.deepStrictEqual(nmPlan().ignoredDeleted, ['pkg/node_modules/']));
+    it('one installed later does', () => assert.deepStrictEqual(nmPlan().ignored, ['pkg/node_modules/']));
+    if (os.platform() === 'darwin') {
+      const nmRm = rm(['nm-repo']);
+      it('the refusal says the cloned node_modules is not checked', () => {
+        assert.strictEqual(nmRm.code, 2, nmRm.all);
+        assert.match(nmRm.err, /pkg\/node_modules\/[\s\S]*node_modules wsg cloned into nm-repo is not checked/);
+      });
+    }
+
+    // A carried file in a directory where everything else is gone from the branch: git reports the
+    // directory, `conf/`. Looked into, the carried copy is the only thing there and doesn't count.
+    const confRepo = makeRepo('conf-repo');
+    fs.mkdirSync(path.join(confRepo, 'conf'));
+    fs.writeFileSync(path.join(confRepo, 'conf', 'app.json'), '{}\n');
+    fs.writeFileSync(path.join(confRepo, 'conf', 'local.pem'), 'conf pem\n');
+    git(confRepo, ['add', '-A']);
+    git(confRepo, ['commit', '-qm', 'conf']);
+    const confAdd = add([confRepo, '--branch', 'task/conf', '--carry', 'conf/local.pem']);
+    const confWt = path.join(wsX, 'conf-repo');
+    git(confWt, ['rm', '-q', 'conf/app.json']);
+    git(confWt, ['commit', '-qm', 'drop app.json']);
+    const confPlan = () => JSON.parse(rm(['conf-repo', '--dry-run']).out);
+    it('a carried file alone in an ignored-only directory does not count', () => {
+      assert.strictEqual(confAdd.code, 0, confAdd.all);
+      assert.ok(git(confWt, ['ls-files', '--others', '--ignored', '--exclude-standard', '--directory']).split('\n').includes('conf/'));
+      assert.strictEqual(confPlan().ignored, undefined);
+    });
+    fs.writeFileSync(path.join(confWt, 'conf', 'local.pem'), 'edited\n');
+    it('changed, it is listed by itself', () => assert.deepStrictEqual(confPlan().ignored, ['conf/local.pem']));
+    fs.writeFileSync(path.join(confWt, 'conf', 'local.pem'), 'conf pem\n');
+    fs.mkdirSync(path.join(confWt, 'build'));
+    fs.writeFileSync(path.join(confWt, 'build', 'local.pem'), 'x\n');
+    it('a directory with nothing carried is still one entry', () => assert.deepStrictEqual(confPlan().ignored, ['build/']));
+    fs.rmSync(path.join(confWt, 'build'), { recursive: true });
+    const confRm = rm(['conf-repo']);
+    it('and the source is removed', () => assert.strictEqual(confRm.code, 0, confRm.all));
     it('the guide says how to fix a wrong source', () =>
       assert.match(fs.readFileSync(path.join(ROOT, 'docs', 'setup-guide.md'), 'utf8'), /`wsg remove <name>`/));
   }
