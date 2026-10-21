@@ -272,6 +272,55 @@ async function cmdAdd(args) {
   return 0;
 }
 
+async function cmdRemove(args) {
+  const { flags, pos } = parse(args, { '--dry-run': 'bool', '--ws': 'value' }, 1);
+  if (!pos[0]) invalid(t('cli.removeName'));
+  const found = targetWs(flags['--ws']);
+  if (!found) invalid(t('cli.notInWorkspace'));
+  if (found.legacy) invalid(t('cli.legacyWorkspace', { ws: found.ws }));
+  const { ws } = found;
+  const generate = lib('generate');
+  const ui = lib('ui');
+  let plan;
+  try {
+    plan = generate.planRemove(ws, pos[0]);
+  } catch (e) {
+    invalid(e.message);
+  }
+  const r = plan.source;
+  if (flags['--dry-run']) {
+    process.stdout.write(`${JSON.stringify({
+      workspace: ws,
+      name: r ? r.name : pos[0],
+      ...(r ? { path: r.path, mode: r.reference ? 'reference' : r.mode } : {}),
+      ...(plan.branch ? { branchKept: plan.branch } : {}),
+      files: plan.errors.length ? [] : plan.files,
+      settingsChanged: plan.settingsChanged,
+      errors: plan.errors,
+      warnings: plan.warnings,
+    }, null, 2)}\n`);
+    return plan.errors.length ? INVALID : 0;
+  }
+  if (plan.errors.length) {
+    for (const e of plan.errors) process.stderr.write(`wsg: ${e}\n`);
+    return INVALID;
+  }
+  guardPlatform();
+  try {
+    const { branch } = await generate.remove(ws, r.name, cfg);
+    ui.head(t('cli.removed', { name: r.name }));
+    if (branch) ui.info(t('cli.branchKept', { branch, path: r.path }));
+  } catch (e) {
+    if (e && e.name === 'Interrupted') {
+      process.stderr.write(`${t('cli.addCancelled')}\n`);
+      return 130;
+    }
+    throw e;
+  }
+  ui.info(t('cli.addNext'));
+  return 0;
+}
+
 function cmdCheck(args) {
   const { pos } = parse(args, {}, 1);
   let ws;
@@ -316,6 +365,7 @@ function cmdInstallSkills(args) {
 const COMMANDS = {
   new: cmdNew,
   add: cmdAdd,
+  remove: cmdRemove,
   check: cmdCheck,
   promote: cmdPromote,
   'install-skills': cmdInstallSkills,

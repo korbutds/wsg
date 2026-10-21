@@ -631,6 +631,97 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     });
   }
 
+  console.log('\nwsg remove');
+  {
+    const wsX = path.join(wsRoot, 'rm');
+    wsg(['new', 'rm', '--no-launch']);
+    const agentsFile = path.join(wsX, 'AGENTS.md');
+    fs.writeFileSync(agentsFile, fs.readFileSync(agentsFile, 'utf8').replace(/FILL IN: what problem this task solves.*\n/, 'Own prose.\n'));
+    const settingsFile = path.join(wsX, '.claude', 'settings.json');
+    const own = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
+    own.permissions.additionalDirectories = ['/hand/added'];
+    fs.writeFileSync(settingsFile, JSON.stringify(own, null, 2) + '\n');
+    const add = (args) => wsg(['add', ...args], { cwd: wsX });
+    add([api, '--branch', 'task/rm', '--verify', 'npm test', '--carry', '.env']);
+    add([web, '--link', '--target', 'main']);
+    add([docs, '--reference']);
+    const rm = (args) => wsg(['remove', ...args], { cwd: wsX });
+
+    const before = tree(wsX);
+    const d = rm(['api', '--dry-run']);
+    let plan = null;
+    try { plan = JSON.parse(d.out); } catch { /* below */ }
+    it('--dry-run prints the plan as JSON', () => {
+      assert.strictEqual(d.code, 0, d.all);
+      assert.strictEqual(plan.mode, 'worktree');
+      assert.strictEqual(plan.branchKept, 'task/rm');
+      for (const f of ['api', '.claude/rules/api.md', 'AGENTS.md', 'CLAUDE.md', '.claude/wsg.json', 'repo']) assert.ok(plan.files.includes(f), f);
+    });
+    it('--dry-run touches nothing', () => assert.deepStrictEqual(tree(wsX), before));
+    it('an unknown source: exit 2', () => {
+      const r = rm(['nope']);
+      assert.strictEqual(r.code, 2);
+      assert.match(r.err, /no source nope/);
+    });
+    fs.writeFileSync(path.join(wsX, 'api', 'a.ts'), 'changed\n');
+    fs.writeFileSync(path.join(wsX, 'api', 'new.txt'), 'new\n');
+    const dirty = rm(['api']);
+    it('a worktree with changes is refused, and they are listed', () => {
+      assert.strictEqual(dirty.code, 2);
+      assert.match(dirty.err, /a\.ts/);
+      assert.match(dirty.err, /new\.txt/);
+    });
+    it('and nothing is touched', () => assert.deepStrictEqual(tree(wsX), before));
+    git(path.join(wsX, 'api'), ['checkout', '--', 'a.ts']);
+    fs.rmSync(path.join(wsX, 'api', 'new.txt'));
+
+    git(api, ['worktree', 'lock', path.join(wsX, 'api')]);
+    const locked = rm(['api']);
+    it('a worktree git refuses to remove: the removal fails', () => assert.strictEqual(locked.code, 1, locked.all));
+    it('and the workspace is as it was', () => assert.deepStrictEqual(tree(wsX), before));
+    git(api, ['worktree', 'unlock', path.join(wsX, 'api')]);
+
+    const r1 = rm(['api']);
+    it('a clean worktree is removed (carried ignored files do not count)', () => assert.strictEqual(r1.code, 0, r1.all));
+    it('the directory and its registration are gone', () => {
+      assert.ok(!fs.existsSync(path.join(wsX, 'api')));
+      assert.ok(!git(api, ['worktree', 'list']).includes(path.join(wsX, 'api')));
+    });
+    it('the branch is kept, and says so', () => {
+      assert.ok(branches(api).includes('task/rm'));
+      assert.match(r1.out, /branch task\/rm is kept/);
+    });
+    it('its rule and its state entry are gone', () => {
+      assert.ok(!fs.existsSync(path.join(wsX, '.claude/rules/api.md')));
+      assert.deepStrictEqual(W.readState(wsX).sources.map((x) => x.name), ['web', 'docs']);
+    });
+    const agents = fs.readFileSync(agentsFile, 'utf8');
+    it('the blocks are rendered without it', () => {
+      assert.doesNotMatch(agents, /`api\/`/);
+      assert.doesNotMatch(fs.readFileSync(path.join(wsX, 'CLAUDE.md'), 'utf8'), /@api\/AGENTS\.md/);
+      assert.match(agents, /Own prose\./);
+    });
+    it('the pointer moves to the next git source', () => {
+      assert.strictEqual(fs.readlinkSync(path.join(wsX, 'repo')), 'web');
+      assert.strictEqual(fs.readFileSync(path.join(wsX, 'mr-target-branch.txt'), 'utf8'), 'main\n');
+    });
+    const r2 = rm(['web']);
+    it('a link is removed as a symlink', () => {
+      assert.strictEqual(r2.code, 0, r2.all);
+      assert.ok(!fs.existsSync(path.join(wsX, 'web')));
+      assert.ok(fs.existsSync(web));
+    });
+    it('without a git source the pointer and the MR target go', () => {
+      assert.ok(!fs.existsSync(path.join(wsX, 'repo')) && !fs.lstatSync(wsX).isSymbolicLink());
+      assert.throws(() => fs.lstatSync(path.join(wsX, 'repo')));
+      assert.ok(!fs.existsSync(path.join(wsX, 'mr-target-branch.txt')));
+    });
+    it('settings.json loses its directory, keeps the hand-added one', () =>
+      assert.deepStrictEqual(JSON.parse(fs.readFileSync(settingsFile, 'utf8')).permissions.additionalDirectories, [docs, '/hand/added']));
+    it('the guide says how to fix a wrong source', () =>
+      assert.match(fs.readFileSync(path.join(ROOT, 'docs', 'setup-guide.md'), 'utf8'), /`wsg remove <name>`/));
+  }
+
   console.log('\nwsg promote');
   {
     wsg(['new', 'to-promote', '--no-launch']);

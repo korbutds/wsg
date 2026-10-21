@@ -88,6 +88,10 @@ the owner names:
    Exit code 2 means the input was rejected and nothing was changed: read the message, fix the
    flag, try again. Exit code 1 means a step failed and was rolled back.
 
+   A source attached with the wrong settings is fixed by `wsg remove <name>`, then `wsg add` with
+   the right flags. `remove` takes only a clean worktree — it lists what would be lost otherwise —
+   and keeps the branch.
+
 **Reference directories** — material the task works from that is not under git (specs, exports,
 designs): `wsg add <dir> --reference --note "<one line: what is in it>"`. They sit next to the
 repositories, never instead of them. Edits there have no history, so change files there only when
