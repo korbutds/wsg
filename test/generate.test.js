@@ -342,6 +342,12 @@ process.on('exit', () => {
       assert.strictEqual(source.resolvePath('/a/~b'), '/a/~b'));
     it('spaces in a source name are replaced', () =>
       assert.strictEqual(source.sourceName('/x/My Project'), 'My-Project'));
+    it('a rule saved with CRLF line endings is still wsg\'s own', () => {
+      const rule = T.ruleMd({ name: 'api', mode: 'link', path: '/x/api', target: 'main' });
+      assert.ok(T.isOwnRule(rule));
+      assert.ok(T.isOwnRule(rule.replace(/\n/g, '\r\n')));
+      assert.ok(!T.isOwnRule('---\r\n# my notes\r\n---\r\n'));
+    });
     it('a slug is looked up in WS_ROOT', () => assert.strictEqual(config.resolveWs('oauth', cfg), path.join(wsRoot, 'oauth')));
     it('a dot is the current directory, not WS_ROOT', () => assert.strictEqual(config.resolveWs('.', cfg), process.cwd()));
     it('a path with ~ is expanded', () => assert.strictEqual(config.resolveWs('~/w/x', cfg), path.join(os.homedir(), 'w/x')));

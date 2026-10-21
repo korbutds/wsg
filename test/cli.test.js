@@ -347,6 +347,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       ['a base that does not resolve', [api, '--branch', 'b2', '--base', 'origin/nope'], /ref origin\/nope not found/],
       ['an unknown carry entry', [api, '--branch', 'b3', '--carry', '.env,secret.key'], /secret\.key is not among/],
       ['--branch on a link', [api, '--link', '--branch', 'x'], /--branch applies only to a worktree/],
+      ['--no-clone-node-modules on a link, named as given', [api, '--link', '--no-clone-node-modules'], /--no-clone-node-modules applies only to a worktree/],
       ['a missing path', [path.join(tmp, 'nope')], /does not exist/],
       ['a reserved name', [path.join(tmp, 'reserved', 'notes.md'), '--reference'], /can't be named notes\.md/],
     ];
@@ -684,6 +685,10 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       ['a directory containing it', wsRoot],
     ];
     fs.mkdirSync(path.join(wsS, 'scratch'));
+    // On a case-insensitive file system (APFS by default) SAFE is the same directory as safe.
+    const recased = path.join(path.dirname(wsS), path.basename(wsS).toUpperCase());
+    if (fs.existsSync(recased)) self.push(['the workspace itself in other case', recased]);
+    else console.log('  skip  the workspace in other case: the file system is case-sensitive');
     for (const [name, dir] of self) {
       const r = add([dir, '--reference']);
       it(`${name} is not a source: exit 2`, () => {
