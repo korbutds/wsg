@@ -19,7 +19,7 @@
 # shell-init, not this file.
 
 WSG_CONFIG="${WSG_CONFIG:-$HOME/.config/wsg/config}"
-# Tells wsg that ws is loaded in this shell (lib/shellrc.js), so it doesn't offer to hook it again.
+# Tells wsg that ws is loaded in this shell (lib/shellrc.js), so `wsg new` can suggest `ws <slug>`.
 typeset -gx WSG_WS_LOADED=1
 _ws_load_config() {
   # WS_ROOT from the environment wins over the file, as in wsg (lib/config.js): otherwise
@@ -119,17 +119,6 @@ _ws_setup_agent() {
   for c in claude codex cursor-agent gemini opencode aider; do
     (( $+commands[$c] )) && found+=("$c")
   done
-  # wsg draws the arrow-key menu, like in the interview; Node starts only this once.
-  if (( $+commands[wsg] )); then
-    local cmd
-    cmd="$(command wsg --pick-agent "${found[@]}")"
-    if [[ $? -ne 0 || -z "$cmd" ]]; then
-      print -r -u2 -- "@@ws.pick.nothing@@"
-      return 1
-    fi
-    _ws_save_agent "$cmd"
-    return
-  fi
   print -r -- "@@ws.setup.question@@"
   local i=1
   for c in "${found[@]}"; do print -r -- "  $i) $c"; (( i++ )); done

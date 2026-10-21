@@ -1,8 +1,8 @@
 'use strict';
 
-// Generation and the check run without a terminal: answers are supplied programmatically.
-// Before this the only option was an end-to-end run with piped stdin, which broke
-// whenever the questions shifted.
+// Generation and the check run without a terminal: answers are supplied programmatically,
+// through generate.run — the skeleton and each source composed in one step. The CLI commands
+// (new, add, …) are covered in cli.test.js.
 
 const assert = require('node:assert');
 const fs = require('node:fs');
@@ -122,11 +122,6 @@ process.on('exit', () => {
     assert.doesNotMatch(fs.readFileSync(path.join(ws, '.claude/rules/docs.md'), 'utf8'), /git -C docs/));
   it('no placeholders left in a language other than English', () =>
     assert.doesNotMatch(fs.readFileSync(path.join(ws, 'AGENTS.md'), 'utf8') + fs.readFileSync(path.join(ws, 'notes.md'), 'utf8'), /[А-Яа-яЁё]/));
-  it('notes.md does not call a non-git directory a shared checkout', () => {
-    const notes = fs.readFileSync(path.join(ws, 'notes.md'), 'utf8');
-    assert.match(notes, /\*\*docs\*\* — directory .*, not under git\./);
-    assert.doesNotMatch(notes, /\*\*docs\*\* — shared checkout/);
-  });
   it('--check passes', () => assert.strictEqual(quiet(() => check.run(ws, cfg)), 0));
   {
     // Lines Claude Code doesn't import: inside a code block, and an @mention.
@@ -173,27 +168,6 @@ process.on('exit', () => {
   const badErr = await failure(() => generate.run(bad, cfg));
   it('a branch name conflict aborts creation', () => assert.match(badErr, /conflict|worktree add/i));
   it('no directory left after rollback', () => assert.ok(!fs.existsSync(path.join(wsRoot, 'rollback-me'))));
-  {
-    // The same failure, now after two new folders under one missing parent were made: the worktree
-    // step comes after folder creation, so this is a real rollback, not a rejected run.
-    const shared = path.join(tmp, 'rb-new');
-    const mk = (n) => ({ name: n, path: path.join(shared, n), create: true, mode: 'link', branch: '', base: '', target: '—', verify: '', note: '', carry: [], cloneNm: false });
-    const printed = [];
-    const log = console.log;
-    const err = process.stderr.write;
-    console.log = (x) => printed.push(String(x));
-    process.stderr.write = () => true;
-    try {
-      await generate.run({ ...bad, slug: 'rollback-dirs', repos: [...bad.repos, mk('a'), mk('b')] }, cfg);
-    } catch { /* expected: the branch name conflict */ } finally { console.log = log; process.stderr.write = err; }
-    it('the folders were created before the failure', () => assert.match(printed.join('\n'), /folder created: .*rb-new\/b/));
-    it('rollback removes them and their shared parent', () => assert.ok(!fs.existsSync(shared)));
-    fs.mkdirSync(path.join(shared, 'a'), { recursive: true });
-    fs.writeFileSync(path.join(shared, 'a', 'mine.txt'), 'x');
-    await failure(() => generate.run({ ...bad, slug: 'rollback-dirs2', repos: [...bad.repos, mk('b')] }, cfg));
-    it('a folder that already had files is not touched', () => assert.ok(fs.existsSync(path.join(shared, 'a', 'mine.txt'))));
-    it('only the folder this run made is removed', () => assert.ok(!fs.existsSync(path.join(shared, 'b'))));
-  }
 
   console.log('\nan existing branch is not reset without a backup');
   {
@@ -285,8 +259,8 @@ process.on('exit', () => {
     fs.writeFileSync(hook, '#!/bin/sh\n[ -n "$WSG_TEST_MARK" ] || exit 0\ntouch "$WSG_TEST_MARK"\nsleep 5\n', { mode: 0o755 });
 
     // Generation runs in a separate process: the signal must hit the whole group, as from a terminal.
-    // run() is called from a stdin callback, like the real CLI after the interview: a pending
-    // signal is delivered in a different event loop phase than from the main module.
+    // run() is called from a stdin callback, not from the main module: there a pending signal
+    // is delivered in a different event loop phase, and the rollback must not depend on which.
     const runChild = (job, { selfKill = false } = {}) => {
       const jobFile = path.join(tmp, `${job.slug}.json`);
       const mark = path.join(tmp, `${job.slug}.mark`);
@@ -358,26 +332,36 @@ process.on('exit', () => {
   console.log('\npaths, names and templates');
   {
     const config = require(path.join(ROOT, 'lib', 'config.js'));
-    const interview = require(path.join(ROOT, 'lib', 'interview.js'));
+    const source = require(path.join(ROOT, 'lib', 'source.js'));
     const T = require(path.join(ROOT, 'lib', 'templates.js'));
     it('a relative source becomes absolute', () =>
-      assert.strictEqual(interview.resolveSource('src'), path.join(process.cwd(), 'src')));
+      assert.strictEqual(source.resolvePath('src'), path.join(process.cwd(), 'src')));
     it('~ in a source is expanded', () =>
-      assert.strictEqual(interview.resolveSource('~/x'), path.join(os.homedir(), 'x')));
+      assert.strictEqual(source.resolvePath('~/x'), path.join(os.homedir(), 'x')));
+    it('~ only as the leading home directory', () =>
+      assert.strictEqual(source.resolvePath('/a/~b'), '/a/~b'));
     it('spaces in a source name are replaced', () =>
-      assert.strictEqual(interview.sourceName('/x/My Project'), 'My-Project'));
+      assert.strictEqual(source.sourceName('/x/My Project'), 'My-Project'));
     it('a slug is looked up in WS_ROOT', () => assert.strictEqual(config.resolveWs('oauth', cfg), path.join(wsRoot, 'oauth')));
     it('a dot is the current directory, not WS_ROOT', () => assert.strictEqual(config.resolveWs('.', cfg), process.cwd()));
     it('a path with ~ is expanded', () => assert.strictEqual(config.resolveWs('~/w/x', cfg), path.join(os.homedir(), 'w/x')));
     it('a path with a space is printed quoted', () => assert.strictEqual(T.sh("/a b/c'd"), `'/a b/c'\\''d'`));
     it('a plain path is printed as is', () => assert.strictEqual(T.sh('/a/b-c'), '/a/b-c'));
-    it('a bare ticket number is kept for the tracker prefix', () => assert.strictEqual(interview.parseTicket('412'), '412'));
-    it('a lowercase key stays free text (often a branch name)', () => assert.strictEqual(interview.parseTicket('fix-2'), ''));
-    it('a ticket key is found inside a URL', () => assert.strictEqual(interview.parseTicket('https://t/browse/AB-7'), 'AB-7'));
-    it('free text is not a ticket', () => assert.strictEqual(interview.parseTicket('fix auth'), ''));
-    it('an invalid branch name is caught in the interview', () =>
-      assert.match(interview.branchError(repo, 'feat x', [], []), /not a valid branch name/));
-    it('a valid branch name passes', () => assert.strictEqual(interview.branchError(repo, 'feat/y', [], []), ''));
+    it('a bare ticket number is kept for the tracker prefix', () => assert.strictEqual(source.parseTicket('412'), '412'));
+    it('a lowercase key stays free text (often a branch name)', () => assert.strictEqual(source.parseTicket('fix-2'), ''));
+    it('a ticket key is found inside a URL', () => assert.strictEqual(source.parseTicket('https://t/browse/AB-7'), 'AB-7'));
+    it('free text is not a ticket', () => assert.strictEqual(source.parseTicket('fix auth'), ''));
+    it('a URL ticket is kept as the link', () =>
+      assert.deepStrictEqual(source.ticketFields('https://t/browse/AB-7', {}), { ticket: 'AB-7', ticketUrl: 'https://t/browse/AB-7' }));
+    it('a bare key gets the link from the tracker prefix', () =>
+      assert.deepStrictEqual(source.ticketFields('AB-7', { WSG_TRACKER_URL: 'https://t/' }), { ticket: 'AB-7', ticketUrl: 'https://t/AB-7' }));
+    it('free text without a prefix is written down as given', () =>
+      assert.deepStrictEqual(source.ticketFields('fix auth', {}), { ticket: 'fix auth', ticketUrl: '' }));
+    it('an invalid branch name is caught before anything is touched', () =>
+      assert.match(source.branchError(repo, 'feat x', [], []), /not a valid branch name/));
+    it('a busy branch is caught', () => assert.match(source.branchError(repo, 'main', [], ['main']), /already checked out/));
+    it('a ref-path conflict is caught', () => assert.match(source.branchError(repo, 'a/b/c', ['a/b'], []), /conflicts with existing branch a\/b/));
+    it('a valid branch name passes', () => assert.strictEqual(source.branchError(repo, 'feat/y', [], []), ''));
     {
       const g = require(path.join(ROOT, 'lib', 'git.js'));
       const sub = path.join(repo, 'pkg');
@@ -587,14 +571,19 @@ process.on('exit', () => {
 
     // The successful path: a task becomes a process and still passes the check.
     const pm = await quietAsync(() => generate.run({ ...base, kind: 'task', slug: 'promote-me', title: 'T',
-      stateLabel: 'new feature', repos: [{ name: 'docs', path: docs, mode: 'link', branch: '', base: '', target: '—', verify: '', note: '', carry: [], cloneNm: false }] }, cfg));
-    it('docs-only workspace: verification says none is needed instead of FILL IN', () => {
-      const agents = fs.readFileSync(path.join(pm, 'AGENTS.md'), 'utf8');
-      assert.match(agents, /- None: the sources are documents/);
-      assert.doesNotMatch(agents, /FILL IN: no command/);
-    });
+      stateLabel: 'new feature', repos: [{ name: 'api', path: repo, mode: 'link', branch: '', base: '', target: 'main', verify: 'echo ok', note: '', carry: [], cloneNm: false }] }, cfg));
+    const noSkill = await failure(() => promote.run(pm, cfg));
+    it('promote without a skill name is refused, no prompt', () => assert.match(noSkill, /skill name/));
+    it('a refused promote leaves the kind', () => assert.strictEqual(fs.readFileSync(path.join(pm, '.claude/ws-kind'), 'utf8').trim(), 'task'));
+    const badSkill = await failure(() => promote.run(pm, cfg, { skillName: '../x' }));
+    it('promote refuses a skill name with a path in it', () => assert.match(badSkill, /Lowercase Latin letters/));
     const code = await quietAsync(() => promote.run(pm, cfg, { skillName: 'weekly-release' }));
     it('promote: kind switched to process', () => assert.strictEqual(fs.readFileSync(path.join(pm, '.claude/ws-kind'), 'utf8').trim(), 'process'));
+    it('promote: the state file follows', () => {
+      const st = JSON.parse(fs.readFileSync(path.join(pm, '.claude/wsg.json'), 'utf8'));
+      assert.strictEqual(st.kind, 'process');
+      assert.strictEqual(st.skillName, 'weekly-release');
+    });
     it('promote: skill and journal created', () => {
       assert.ok(fs.existsSync(path.join(pm, '.claude/skills/weekly-release/SKILL.md')));
       assert.ok(fs.existsSync(path.join(pm, 'journal.md')));
@@ -630,6 +619,8 @@ process.on('exit', () => {
       stateLabel: 'new feature', repos: [{ name: 'docs', path: docs, mode: 'link', branch: '', base: '', target: '—', verify: '', note: '', carry: [], cloneNm: false }] }, cfg));
     const sharedSkills = path.join(tmp, 'shared-skills');
     fs.mkdirSync(sharedSkills);
+    // The skeleton has its own skills folder (wsg-setup): replaced by the shared one here.
+    fs.rmSync(path.join(nested, '.claude', 'skills'), { recursive: true });
     fs.symlinkSync(sharedSkills, path.join(nested, '.claude', 'skills'));
     const pe2 = await failure(() => promote.run(nested, cfg, { skillName: 'x' }));
     it('promote refuses a symlinked .claude/skills', () => assert.match(pe2, /\.claude\/skills in .* is a symlink/));
@@ -725,7 +716,8 @@ process.on('exit', () => {
     it('an empty verification section is a warning, not OK', () => assert.match(out(noVerify), /verification section has no command yet/));
     const docsOnly = await quietAsync(() => generate.run({ ...base, kind: 'task', slug: 'docs-only', title: 'T', stateLabel: 'new feature',
       repos: [{ name: 'docs', path: docs, mode: 'link', branch: '', base: '', target: '—', verify: '', note: '', carry: [], cloneNm: false }] }, cfg));
-    it('a docs-only workspace needs no verification command', () => assert.match(out(docsOnly), /no verification command needed/));
+    it('reference directories alone leave the setup unfinished', () => assert.match(out(docsOnly), /WARN setup not finished: no git repository attached/));
+    it('and still ask for a verification command', () => assert.match(out(docsOnly), /verification section has no command yet/));
     it('a verification command is OK', () => assert.match(out(ws), /has a verification command/));
   }
 
@@ -824,6 +816,8 @@ process.on('exit', () => {
       assert.match(rc(), /^export PATH="\$HOME\/\.local\/bin:\$PATH"$/m);
       assert.match(rc(), /^command -v wsg >\/dev\/null && eval "\$\(wsg shell-init zsh\)"$/m);
     });
+    it('install.sh needs no npm install: there are no dependencies', () =>
+      assert.doesNotMatch(fs.readFileSync(path.join(ROOT, 'install.sh'), 'utf8'), /npm install/));
     const before = rc();
     run();
     it('a second run changes nothing', () => assert.strictEqual(rc(), before));
@@ -862,7 +856,7 @@ process.on('exit', () => {
     it('nothing set is en', () => assert.strictEqual(rl({}), 'en'));
 
     i18n.init('ru');
-    it('t gives Russian text in ru', () => assert.match(i18n.t('interview.kind'), /[А-Яа-я]/));
+    it('t gives Russian text in ru', () => assert.match(i18n.t('cli.created', { ws: 'x' }), /[А-Яа-я]/));
     it('Russian plural forms', () => {
       assert.match(i18n.t('gen.copied', { n: 1, total: 5 }), / 1 файл /);
       assert.match(i18n.t('gen.copied', { n: 3, total: 5 }), / 3 файла /);
@@ -911,7 +905,7 @@ process.on('exit', () => {
       fs.mkdirSync(bad);
       const help = execFileSync(process.execPath, [path.join(ROOT, 'bin', 'cli.js'), '--help'],
         { encoding: 'utf8', env: { ...process.env, WSG_CONFIG: path.join(bad, 'nested', '..', '..', 'unreadable-config'), WSG_LANG: 'ru' } });
-      it('--help follows WSG_LANG even when the config is broken', () => assert.match(help, /интерактивное создание/));
+      it('--help follows WSG_LANG even when the config is broken', () => assert.match(help, /создать воркспейс и запустить/));
     }
     it('WSG_LANG from the environment beats the config', () => assert.strictEqual(langWith('WSG_LANG=ru\n', { WSG_LANG: 'en' }), 'en'));
 
@@ -931,32 +925,27 @@ process.on('exit', () => {
   console.log('\nanswers land in their own sections');
   {
     const cfgT = { WS_ROOT: path.join(tmp, 'sections'), WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
+    const linked = { name: 'api', path: repo, mode: 'link', branch: '', base: '', target: 'main', verify: 'echo ok', note: '', carry: [], cloneNm: false };
     const task = await quietAsync(() => generate.run({ ...base, kind: 'task', slug: 'scoped', title: 'T', stateLabel: 'new feature',
-      outOfScope: ['the login screen redesign'], repos: [] }, cfgT));
+      outOfScope: ['the login screen redesign'], repos: [linked] }, cfgT));
     const agents = fs.readFileSync(path.join(task, 'AGENTS.md'), 'utf8');
     it('task: out of scope is a section with a rule', () => {
       assert.match(agents, /## Out of scope\n\n- the login screen redesign/);
       assert.match(agents, /ask the owner first/);
     });
-    it('no sources: AGENTS.md says the files live in the workspace', () => assert.match(agents, /no sources: its files live here/));
-    it('no sources: verification needs no command', () => assert.match(agents, /- None: the workspace has no sources/));
-    const readme = fs.readFileSync(path.join(task, 'README.md'), 'utf8');
-    it('no sources: README has no empty table', () => {
-      assert.doesNotMatch(readme, /\| Repository \|/);
-      assert.match(readme, /## Sources\n\nNone: the files of this work live in the workspace itself/);
-    });
-    const proc = await quietAsync(() => generate.run({ ...base, kind: 'process', slug: 'health', title: 'Health', skillName: 'health',
-      stateLabel: 'repeatable process', trigger: ['new test results arrived'], varies: ['the new documents'],
-      fixed: ['no diagnoses'], steps: [], invariants: [], repos: [] }, cfgT));
+    const proc = await quietAsync(() => generate.run({ ...base, kind: 'process', slug: 'release', title: 'Release', skillName: 'release',
+      stateLabel: 'repeatable process', trigger: ['a release is scheduled'], varies: ['the version to release'],
+      fixed: ['no force-push to the release branch'], steps: [], invariants: [], repos: [linked] }, cfgT));
     const pa = fs.readFileSync(path.join(proc, 'AGENTS.md'), 'utf8');
-    const skill = fs.readFileSync(path.join(proc, '.claude/skills/health/SKILL.md'), 'utf8');
-    it('process: when it runs is in AGENTS.md', () => assert.match(pa, /## When it runs\n\n- new test results arrived/));
-    it('process: rules and boundaries are always-on, in AGENTS.md', () => assert.match(pa, /## Rules and boundaries\n\n- no diagnoses/));
+    const skill = fs.readFileSync(path.join(proc, '.claude/skills/release/SKILL.md'), 'utf8');
+    it('process: when it runs is in AGENTS.md', () => assert.match(pa, /## When it runs\n\n- a release is scheduled/));
+    it('process: rules and boundaries are always-on, in AGENTS.md', () => assert.match(pa, /## Rules and boundaries\n\n- no force-push/));
     it('process: the skill points to them instead of repeating', () => {
-      assert.doesNotMatch(skill, /no diagnoses/);
+      assert.doesNotMatch(skill, /no force-push/);
       assert.match(skill, /Rules and boundaries of every run are in AGENTS.md/);
     });
-    it('process: the input of each run is in the skill', () => assert.match(skill, /## Input of each run\n\n- the new documents/));
+    it('process: the input of each run is in the skill', () => assert.match(skill, /## Input of each run\n\n- the version to release/));
+    it('process: the run name example is an engineering one', () => assert.match(pa, /runs\/2026-09-30-release-2\.4\.md/));
     it('process: steps are worked out on the first run', () => assert.match(skill, /on the first run, work them out with the owner/));
     it('process: no ticket is asked for anywhere', () => {
       for (const f of [pa, skill, fs.readFileSync(path.join(proc, 'journal.md'), 'utf8')]) assert.doesNotMatch(f, /<ticket>|ticket or description/);
@@ -966,12 +955,9 @@ process.on('exit', () => {
       assert.match(skill, /runs\/<date>-<short-name>\.md/);
     });
     it('process: it can be run without an argument', () => assert.match(pa, /Without an argument, look at what is new/));
-    it('process without git: the skill says nothing about pushes and MRs', () => assert.doesNotMatch(skill, /create an MR/));
+    it('process: the skill leaves pushes and MRs to the owner', () => assert.match(skill, /Do not push or create an MR/));
     it('process: no invariants section it was never asked for', () => assert.doesNotMatch(pa, /Invariants are not findings/));
-    it('process without git: no talk of branches or a code map', () => {
-      assert.doesNotMatch(pa, /no permanent branch/);
-      assert.doesNotMatch(pa, /Code map/);
-    });
+    it('process: repositories are links, the skill makes the branch', () => assert.match(pa, /no permanent branch/));
     const checkOut = (dir) => {
       const lines = [];
       const log = console.log;
@@ -980,229 +966,10 @@ process.on('exit', () => {
       return lines.join('\n');
     };
     it('a new process passes its own check with no warnings at all', () => assert.doesNotMatch(checkOut(proc), /WARN|FAIL/));
-    it('a task without sources passes with no warnings', () => assert.doesNotMatch(checkOut(task), /WARN|FAIL/));
-    it('and check does not claim a verification command', () => {
-      assert.doesNotMatch(checkOut(task), /has a verification command/);
-      assert.match(checkOut(task), /no verification command needed/);
-    });
-    const notes = fs.readFileSync(path.join(task, 'notes.md'), 'utf8');
-    it('no sources: notes.md has no code map to fill in', () => {
-      assert.doesNotMatch(notes, /Code map/);
-      assert.doesNotMatch(notes, /FILL IN/);
-    });
-    it('no sources: the layout does not promise a code map', () => assert.doesNotMatch(agents, /code map/i));
+    it('the setup skill is not taken for the procedure', () => assert.doesNotMatch(checkOut(proc), /skill wsg-setup/));
+    it('a task with its answers given counts as set up', () => assert.match(checkOut(task), /OK   setup finished: 1 git repository/));
     fs.writeFileSync(path.join(proc, 'runs', 'first.md'), '# run\n');
     it('after a run, missing steps are', () => assert.match(checkOut(proc), /no steps described, though it has been run/));
-  }
-
-  console.log('\nsource folders are created with the workspace');
-  {
-    const cfgD = { WS_ROOT: path.join(tmp, 'mkdirs'), WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
-    const fresh = path.join(tmp, 'new-root', 'Health');
-    const src = (p) => ({ name: path.basename(p), path: p, create: true, mode: 'link', branch: '', base: '', target: '—', verify: '', note: '', carry: [], cloneNm: false });
-    const made = await quietAsync(() => generate.run({ ...base, kind: 'task', slug: 'mk', title: 'T', stateLabel: 'new feature', repos: [src(fresh)] }, cfgD));
-    it('a folder marked for creation exists after generation', () => assert.ok(fs.statSync(fresh).isDirectory()));
-    it('and is linked into the workspace', () => assert.strictEqual(fs.realpathSync(path.join(made, 'Health')), fs.realpathSync(fresh)));
-    it('the rule for a folder of documents does not talk about commits', () => {
-      const rule = fs.readFileSync(path.join(made, '.claude', 'rules', 'Health.md'), 'utf8');
-      assert.match(rule, /how the files here are organized/);
-      assert.doesNotMatch(rule, /commit conventions/);
-    });
-
-    const doomed = path.join(tmp, 'doomed-root', 'deep', 'Docs');
-    // Rejected by the checks before anything is made (a file is not a source). The rollback after
-    // folders were made is tested in "rollback on failure".
-    const notDir = path.join(tmp, 'a-file');
-    fs.writeFileSync(notDir, '');
-    await failure(() => generate.run({ ...base, kind: 'task', slug: 'mk2', title: 'T', stateLabel: 'new feature',
-      repos: [src(doomed), { ...src(notDir), create: false }] }, cfgD));
-    it('a run rejected by the checks creates no folders', () => assert.ok(!fs.existsSync(path.join(tmp, 'doomed-root'))));
-
-    const { missingChain, sourceProblem } = generate;
-    {
-      const home = path.join(tmp, 'dotfiles-home');
-      fs.mkdirSync(path.join(home, 'code', 'api'), { recursive: true });
-      execFileSync('git', ['init', '-q', home]);
-      execFileSync('git', ['init', '-q', path.join(home, 'code', 'api')]);
-      const g = require(path.join(ROOT, 'lib', 'git.js'));
-      const prev = process.env.HOME;
-      process.env.HOME = home;
-      try {
-        it('home as a dotfiles repo: a new ~/Health is not a git source', () => assert.strictEqual(g.newFolderInRepo(home), false));
-        it('the same way generation will judge it once created', () => {
-          fs.mkdirSync(path.join(home, 'Health'));
-          assert.strictEqual(g.isRepo(path.join(home, 'Health')), false);
-        });
-        it('a new folder inside a real repo still is', () => assert.strictEqual(g.newFolderInRepo(path.join(home, 'code', 'api')), true));
-      } finally { process.env.HOME = prev; }
-    }
-
-    {
-      // mkdir -p that fails halfway: the outer folder is made, the long name is refused.
-      const outer = path.join(tmp, 'half-made');
-      const tooLong = path.join(outer, 'x'.repeat(300));
-      await failure(() => generate.run({ ...base, kind: 'task', slug: 'half', title: 'T', stateLabel: 'new feature', repos: [src(tooLong)] }, cfgD));
-      it('a mkdir that fails halfway leaves no outer folder', () => assert.ok(!fs.existsSync(outer)));
-    }
-
-    {
-      const i18n = require(path.join(ROOT, 'lib', 'i18n'));
-      for (const l of ['en', 'ru']) {
-        i18n.init(l);
-        it(`${l}: the links hint does not repeat "empty line to finish"`, () =>
-          assert.ok(!i18n.t('interview.links.hint').includes(i18n.t('interview.finish'))));
-      }
-      i18n.init('en');
-    }
-
-    const dangling = path.join(tmp, 'dangling');
-    fs.symlinkSync(path.join(tmp, 'unmounted-drive'), dangling);
-    it('a dangling symlink is not a folder to create', () => assert.deepStrictEqual(missingChain(dangling).missing, []));
-    it('and is reported as missing right away', () => assert.match(sourceProblem({ path: dangling, name: 'dangling', create: false }), /does not exist/));
-
-    const { ensureDir } = require(path.join(ROOT, 'lib', 'interview.js'));
-    const { PassThrough } = require('node:stream');
-    const answer = async (full, typed) => {
-      const input = new PassThrough();
-      const output = new PassThrough();
-      const log = console.log;
-      const printed = [];
-      console.log = (x) => printed.push(String(x));
-      try {
-        const r = ensureDir(full, { input, output });
-        setTimeout(() => input.write(typed + '\n'), 50);
-        return { value: await r, printed: printed.join('\n') };
-      } finally { console.log = log; }
-    };
-    const one = await answer(path.join(tmp, 'only-this'), '');
-    it('a missing folder in an existing parent: Enter says yes', () => assert.strictEqual(one.value, true));
-    it('the interview itself creates nothing', () => assert.ok(!fs.existsSync(path.join(tmp, 'only-this'))));
-    const typo = await answer(path.join(tmp, 'Documets', 'Health'), '');
-    it('a missing parent (likely a typo): Enter says no', () => assert.strictEqual(typo.value, false));
-    it('and the whole chain is shown', () => assert.match(typo.printed, /Documets\n\s+.*Documets\/Health/));
-    fs.mkdirSync(path.join(tmp, 'Documents'), { recursive: true });
-    const cut = await answer(path.join(tmp, 'Doc'), '');
-    it('a name cut short (Doc next to Documents): Enter says no', () => assert.strictEqual(cut.value, false));
-    it('and the existing folder is suggested', () => assert.match(cut.printed, /Documents/));
-    const caseOnly = await answer(path.join(tmp, 'Receipts'), '');
-    it('an unrelated new name still defaults to yes', () => assert.strictEqual(caseOnly.value, true));
-    fs.mkdirSync(path.join(tmp, 'Documents', 'Health'), { recursive: true });
-    const helth = await answer(path.join(tmp, 'Documents', 'Helth'), '');
-    it('a typo of an existing folder (Helth): Enter says no', () => assert.strictEqual(helth.value, false));
-    it('and the real folder is suggested', () => assert.match(helth.printed, /Documents\/Health/));
-    const drive = path.join(tmp, 'drive');
-    fs.symlinkSync(path.join(tmp, 'unmounted-volume'), drive);
-    const onDrive = await answer(path.join(drive, 'Health'), 'y');
-    it('a folder behind a dangling link is refused with the real reason', () => {
-      assert.strictEqual(onDrive.value, false);
-      assert.match(onDrive.printed, /not available/);
-      assert.doesNotMatch(onDrive.printed, /write access|did you mean/);
-    });
-    fs.writeFileSync(path.join(tmp, 'notes.txt'), '');
-    const underFile = await answer(path.join(tmp, 'notes.txt', 'sub'), 'y');
-    it('a file on the way is named as the reason', () => {
-      assert.strictEqual(underFile.value, false);
-      assert.match(underFile.printed, /notes\.txt is a file, not a folder/);
-    });
-  }
-
-  console.log('\ntyping a source path');
-  {
-    const { completePath, tildePath } = require(path.join(ROOT, 'lib', 'pathPrompt.js'));
-    const interview = require(path.join(ROOT, 'lib', 'interview.js'));
-    it('a folder dragged into the terminal: escapes are undone', () =>
-      assert.strictEqual(interview.resolveSource('/x/My\\ Docs\\ \\(old\\) '), '/x/My Docs (old)'));
-    it('a quoted path loses its quotes', () => assert.strictEqual(interview.resolveSource("'/x/My Docs'"), '/x/My Docs'));
-    it('~ only as the leading home directory', () => {
-      assert.strictEqual(tildePath(path.join(os.homedir(), 'x')), '~/x');
-      assert.strictEqual(tildePath(`${os.homedir()}-shared/Documents`), `${os.homedir()}-shared/Documents`);
-    });
-    const base = path.join(tmp, 'complete');
-    for (const d of ['medical-docs', 'media', 'Projects', '.hidden']) fs.mkdirSync(path.join(base, d), { recursive: true });
-    fs.writeFileSync(path.join(base, 'medical.txt'), '');
-    fs.symlinkSync(path.join(base, 'Projects'), path.join(base, 'proj-link'));
-    it('a single match completes and ends with /', () => assert.strictEqual(completePath(`${base}/medic`).completed, `${base}/medical-docs/`));
-    it('several matches complete to their common part', () => assert.strictEqual(completePath(`${base}/me`).completed, `${base}/medi`));
-    it('files are not offered', () => assert.ok(!completePath(`${base}/medical`).matches.some((m) => m.endsWith('.txt'))));
-    it('case does not matter, the real name is used', () => assert.strictEqual(completePath(`${base}/proje`).completed, `${base}/Projects/`));
-    it('a symlink to a directory counts', () => assert.ok(completePath(`${base}/proj-`).matches.some((m) => m.endsWith('proj-link'))));
-    it('hidden ones only when asked for', () => {
-      assert.ok(!completePath(`${base}/`).matches.some((m) => m.endsWith('.hidden')));
-      assert.strictEqual(completePath(`${base}/.hi`).completed, `${base}/.hidden/`);
-    });
-    it('~ stays ~', () => assert.match(completePath('~/').completed, /^~\//));
-    it('no match leaves the text as typed', () => assert.strictEqual(completePath(`${base}/zzz`).completed, `${base}/zzz`));
-    fs.mkdirSync(path.join(base, 'My Docs'));
-    it('an escaped space still completes', () => assert.strictEqual(completePath(`${base}/My\\ D`).completed, `${base}/My Docs/`));
-  }
-
-  console.log('\nthe first run asks for the language');
-  {
-    const i18n = require(path.join(ROOT, 'lib', 'i18n'));
-    const interview = require(path.join(ROOT, 'lib', 'interview.js'));
-    const { PassThrough } = require('node:stream');
-    const pick = async (keys, opts, cfg) => {
-      const input = new PassThrough();
-      const output = new PassThrough();
-      const log = console.log;
-      console.log = () => {};
-      try {
-        const answer = interview.askLanguage(cfg, opts, { input, output });
-        setTimeout(() => input.write(keys), 50);
-        return await answer;
-      } finally { console.log = log; }
-    };
-    const langCfg = path.join(tmp, 'lang', 'config');
-    i18n.init('en');
-    const cfg1 = { configFile: langCfg, WSG_LANG: '' };
-    const got = await pick('\u001b[B\r', {}, cfg1);
-    it('arrow down picks Russian', () => assert.strictEqual(got, 'ru'));
-    it('the UI switches right away', () => assert.strictEqual(i18n.current(), 'ru'));
-    it('the choice is saved to the config', () => assert.strictEqual(fs.readFileSync(langCfg, 'utf8'), 'WSG_LANG="ru"\n'));
-    it('the config sees it', () => assert.strictEqual(cfg1.WSG_LANG, 'ru'));
-    fs.writeFileSync(langCfg, 'WS_ROOT="/x"\nWSG_LANG="ru"\n# WSG_LANG="en"\n');
-    await pick('\u001b[A\r', {}, { configFile: langCfg, WSG_LANG: '' });
-    it('choosing again replaces the saved language', () =>
-      assert.strictEqual(fs.readFileSync(langCfg, 'utf8'), 'WS_ROOT="/x"\n# WSG_LANG="en"\nWSG_LANG="en"\n'));
-    const dry = path.join(tmp, 'lang-dry', 'config');
-    await pick('\r', { save: false }, { configFile: dry, WSG_LANG: '' });
-    it('--dry-run does not write the config', () => assert.ok(!fs.existsSync(dry)));
-    i18n.init('en');
-  }
-
-  console.log('\nyes/no answers typed into the prompt');
-  {
-    const i18n = require(path.join(ROOT, 'lib', 'i18n'));
-    const interview = require(path.join(ROOT, 'lib', 'interview.js'));
-    const { PassThrough } = require('node:stream');
-    // Types into the real prompt through inquirer's own input/output streams.
-    const typeInto = async (lines, def) => {
-      const input = new PassThrough();
-      const output = new PassThrough();
-      let shown = '';
-      output.on('data', (d) => { shown += d; });
-      const answer = interview.askYesNo({ message: 'Q?', default: def }, { input, output });
-      let i = 0;
-      const next = () => { if (i < lines.length) { input.write(lines[i++] + '\n'); setTimeout(next, 30); } };
-      setImmediate(next);
-      return { value: await answer, shown };
-    };
-    for (const lang of ['en', 'ru']) {
-      i18n.init(lang);
-      const cases = [['нет', true, false], ['да', false, true], ['no', true, false], ['yes', false, true],
-        ['н', true, false], ['Y', false, true], ['', true, true], ['', false, false]];
-      for (const [typed, def, want] of cases) {
-        const { value } = await typeInto([typed], def);
-        it(`${lang} UI: "${typed}" with default ${def} is ${want}`, () => assert.strictEqual(value, want));
-      }
-      // Not a guess: an unknown answer is asked again, and the next one counts.
-      const { value, shown } = await typeInto(['maybe', '\u0015нет'], true);
-      it(`${lang} UI: an unknown answer is asked again`, () => {
-        assert.strictEqual(value, false);
-        assert.match(shown, lang === 'ru' ? /Ответь да или нет/ : /Answer y or n/);
-      });
-    }
-    i18n.init('en');
   }
 
   console.log('\nanswers in another language');
@@ -1233,7 +1000,7 @@ process.on('exit', () => {
       assert.ok(!T.hasForeignText({ ...base, title: 'T', repos: [{ note: '', verify: 'echo привет' }] })));
   }
 
-  console.log('\nhooking ws into .zshrc');
+  console.log('\nis ws hooked into .zshrc');
   {
     const shellrc = require(path.join(ROOT, 'lib', 'shellrc.js'));
     it('.zshrc follows ZDOTDIR', () => assert.strictEqual(shellrc.rcPath({ ZDOTDIR: '/z' }), '/z/.zshrc'));
@@ -1247,59 +1014,23 @@ process.on('exit', () => {
     const zd = path.join(tmp, 'zdotdir');
     const env = { ZDOTDIR: zd, HOME: path.join(tmp, 'home-without-rc') };
     it('a missing .zshrc is not hooked', () => assert.strictEqual(shellrc.isHooked(env), false));
-    shellrc.hook(shellrc.rcPath(env));
-    it('hooking creates a missing .zshrc and its directory', () =>
-      assert.strictEqual(fs.readFileSync(path.join(zd, '.zshrc'), 'utf8'), `# wsg\n${shellrc.LINE}\n`));
-    it('a hooked .zshrc is recognised', () => assert.strictEqual(shellrc.isHooked(env), true));
+    fs.mkdirSync(zd, { recursive: true });
     const rc = path.join(zd, '.zshrc');
-    fs.writeFileSync(rc, 'alias ll="ls -l"');
-    shellrc.hook(rc);
-    it('hooking appends after a last line without a newline', () =>
-      assert.strictEqual(fs.readFileSync(rc, 'utf8'), `alias ll="ls -l"\n\n# wsg\n${shellrc.LINE}\n`));
-    fs.writeFileSync(rc, '');
-    shellrc.hook(rc);
-    it('an empty .zshrc gets no leading blank line', () => assert.strictEqual(fs.readFileSync(rc, 'utf8'), `# wsg\n${shellrc.LINE}\n`));
+    fs.writeFileSync(rc, '# wsg\ncommand -v wsg >/dev/null && eval "$(wsg shell-init zsh)"\n');
+    it('the line install.sh writes is recognised', () => assert.strictEqual(shellrc.isHooked(env), true));
     fs.writeFileSync(rc, 'eval "$(wsg shell-init zsh)"\n');
     it('a hand-written line without the guard counts too', () => assert.strictEqual(shellrc.isHooked(env), true));
     fs.writeFileSync(rc, '# eval "$(wsg shell-init zsh)"\n  #  command -v wsg && eval "$(wsg shell-init zsh)"\n');
     it('a commented-out line does not count', () => assert.strictEqual(shellrc.isHooked(env), false));
-    fs.mkdirSync(path.join(rc + '.d'));
-    it('an unreadable .zshrc is an error, not "missing"', () => assert.throws(() => shellrc.hook(rc + '.d')));
-
-    const bin = path.join(tmp, 'bin-wsg');
-    const npxBin = path.join(tmp, '_npx', 'abc', 'node_modules', '.bin');
-    for (const d of [bin, npxBin]) {
-      fs.mkdirSync(d, { recursive: true });
-      fs.writeFileSync(path.join(d, 'wsg'), '#!/bin/sh\n', { mode: 0o755 });
-    }
-    it('wsg installed on PATH is found', () => assert.strictEqual(shellrc.wsgOnPath({ PATH: bin }), true));
-    it('wsg from the npx cache does not count', () => assert.strictEqual(shellrc.wsgOnPath({ PATH: npxBin }), false));
-
-    const cfgFile = path.join(tmp, 'cfg-decline', 'config');
-    require(path.join(ROOT, 'lib', 'config.js')).saveSetting(cfgFile, 'WSG_SHELL_HOOK', 'no');
-    it('a declined hook is remembered in the config', () => {
-      const prev = process.env.WSG_CONFIG;
-      process.env.WSG_CONFIG = cfgFile;
-      try {
-        assert.strictEqual(require(path.join(ROOT, 'lib', 'config.js')).load().WSG_SHELL_HOOK, 'no');
-      } finally {
-        if (prev === undefined) delete process.env.WSG_CONFIG;
-        else process.env.WSG_CONFIG = prev;
-      }
-    });
   }
 
-  console.log('\nws asks for the agent through wsg --pick-agent');
+  console.log('\nws picks the agent by itself');
   {
+    const zshSrc = fs.readFileSync(path.join(ROOT, 'shell', 'wsg.zsh'), 'utf8');
+    it('ws no longer calls wsg for a menu', () => assert.doesNotMatch(zshSrc, /--pick-agent/));
     const r = require('node:child_process').spawnSync(process.execPath, [path.join(ROOT, 'bin', 'cli.js'), '--pick-agent', 'claude'],
       { encoding: 'utf8', input: '', env: { ...process.env, WSG_CONFIG: path.join(tmp, 'no-config') } });
-    it('a closed input is a cancel: nothing on stdout for ws to save', () => {
-      assert.strictEqual(r.status, 130);
-      assert.strictEqual(r.stdout, '');
-    });
-    it('the cancel leaves the message to ws', () => assert.doesNotMatch(r.stderr, /nothing created/));
-    it('ws calls it with the agents found in PATH', () =>
-      assert.match(fs.readFileSync(path.join(ROOT, 'shell', 'wsg.zsh'), 'utf8'), /wsg --pick-agent "\$\{found\[@\]\}"/));
+    it('--pick-agent is gone: invalid input', () => assert.strictEqual(r.status, 2));
   }
 
   try { execFileSync('git', ['-C', repo, 'worktree', 'remove', '--force', path.join(ws, 'api')], { stdio: 'ignore' }); } catch {}

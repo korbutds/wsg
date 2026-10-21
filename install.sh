@@ -18,8 +18,7 @@ printf '\n%swsg — install from clone%s\n\n' "$B" "$N"
 NEED='Node 20.19+ or 22.13+ is required'
 command -v node >/dev/null || { printf '%s\n' "$NEED" >&2; exit 1; }
 NV="$(node -p 'process.versions.node')"
-# Matches engines in package.json: the interview loads an ESM package via require(),
-# which works without a flag from 20.19 and 22.12; the prompt library itself needs 22.13 on 22.x.
+# Matches engines in package.json.
 node -e '
   const [M, m] = process.versions.node.split(".").map(Number);
   process.exit(M >= 24 || (M === 23 && m >= 5) || (M === 22 && m >= 13) || (M === 20 && m >= 19) ? 0 : 1);
@@ -27,14 +26,6 @@ node -e '
 ok "node $NV"
 command -v git >/dev/null || { printf 'git is required\n' >&2; exit 1; }
 ok "git found"
-
-if [ -d "$SRC/node_modules/@inquirer" ]; then
-  ok "dependencies installed"
-else
-  warn "no dependencies — running npm install"
-  (cd "$SRC" && npm install --omit=dev --silent)
-  ok "dependencies installed"
-fi
 
 mkdir -p "$BIN_DIR"
 ln -sf "$SRC/bin/cli.js" "$BIN_DIR/wsg"
@@ -54,7 +45,7 @@ LINE='command -v wsg >/dev/null && eval "$(wsg shell-init zsh)"'
 # Keep $HOME as a variable: the rc survives a username change and profile migration.
 PATH_LINE="export PATH=\"\$HOME${BIN_DIR#"$HOME"}:\$PATH\""
 case "$BIN_DIR" in "$HOME"/*) ;; *) PATH_LINE="export PATH=\"$BIN_DIR:\$PATH\"" ;; esac
-# zsh reads $ZDOTDIR/.zshrc when it is set; lib/shellrc.js writes to the same place.
+# zsh reads $ZDOTDIR/.zshrc when it is set; lib/shellrc.js looks in the same place.
 RC="${ZDOTDIR:-$HOME}/.zshrc"
 LOGIN_SHELL="${SHELL:-}"
 if [ "${LOGIN_SHELL##*/}" != zsh ]; then
