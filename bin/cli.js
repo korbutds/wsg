@@ -297,6 +297,7 @@ async function cmdRemove(args) {
   try {
     plan = generate.planRemove(ws, pos[0], { deleteIgnored: !!flags['--delete-ignored'] });
   } catch (e) {
+    if (e && e.name === 'Interrupted') throw e; // Ctrl+C while git listed the worktree: exit 130
     invalid(e.message);
   }
   const r = plan.source;

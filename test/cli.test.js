@@ -1386,6 +1386,100 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       assert.ok(fs.existsSync(path.join(bigWt, '.env')));
       assert.ok(W.readState(wsX).sources.some((x) => x.name === 'big-repo'));
     });
+    // Ctrl+C that stops git while it lists the worktree stops the command: exit 130, not a refusal.
+    const intGit = path.join(tmp, 'int-git');
+    fs.mkdirSync(intGit);
+    const intScript = (who) => `#!/bin/sh\ncase " $* " in *" --ignored "*) kill -INT ${who}; sleep 2;; esac\nexec ${JSON.stringify(realGit)} "$@"\n`;
+    fs.writeFileSync(path.join(intGit, 'git'), intScript('$$'), { mode: 0o755 });
+    const intEnv = { PATH: `${intGit}:${ENV.PATH}` };
+    const intDry = wsg(['remove', 'big-repo', '--dry-run'], { cwd: wsX, env: intEnv });
+    const intRm = wsg(['remove', 'big-repo'], { cwd: wsX, env: intEnv });
+    it('Ctrl+C stopping git as it lists the ignored files: exit 130, the worktree kept', () => {
+      assert.strictEqual(intDry.code, 130, intDry.all);
+      assert.strictEqual(intRm.code, 130, intRm.all);
+      assert.doesNotMatch(intRm.err, /could not list/);
+      assert.ok(fs.existsSync(path.join(bigWt, '.env')));
+      assert.ok(W.readState(wsX).sources.some((x) => x.name === 'big-repo'));
+    });
+    // The whole group, wsg included, as a terminal sends it. wsg runs in a group of its own.
+    fs.writeFileSync(path.join(intGit, 'git'), intScript('0'));
+    const intGroup = spawnSync(process.execPath, [CLI, 'remove', 'big-repo'],
+      { cwd: wsX, encoding: 'utf8', detached: true, env: { ...ENV, ...intEnv } });
+    it('Ctrl+C to the whole group: exit 130, the lock released, the worktree kept', () => {
+      assert.strictEqual(intGroup.status, 130, `${intGroup.status} ${intGroup.signal} ${intGroup.stdout}${intGroup.stderr}`);
+      assert.ok(!fs.existsSync(path.join(wsX, '.claude', 'wsg.lock')));
+      assert.ok(fs.existsSync(path.join(bigWt, '.env')));
+    });
+    G.gitList = () => { throw G.interruptedError(); };
+    let intLate;
+    try {
+      intLate = await (async () => {
+        try { await quietAsync(() => generate.remove(wsX, 'big-repo', cfg, {})); return null; } catch (e) { return e; }
+      })();
+    } finally {
+      G.gitList = realList;
+    }
+    it('and at the re-check before the removal: Interrupted, not a refusal', () => {
+      assert.ok(intLate && intLate.name === 'Interrupted' && !intLate.invalid, String(intLate));
+      assert.ok(W.readState(wsX).sources.some((x) => x.name === 'big-repo'));
+    });
+
+    // A listing over the cap: the refusal says it is too large and what to do.
+    it('a listing over the cap throws ENOBUFS', () => assert.throws(
+      () => G.gitList(bigWt, ['ls-files', '-z', '--others', '--ignored', '--exclude-standard'], { max: 4 }),
+      (e) => e.code === 'ENOBUFS'));
+    G.gitList = () => { throw Object.assign(new Error('git ls-files: ENOBUFS'), { code: 'ENOBUFS' }); };
+    let tooLarge;
+    try { tooLarge = generate.planRemove(wsX, 'big-repo'); } finally { G.gitList = realList; }
+    it('a listing too large refuses, suggesting to delete the build output by hand', () => {
+      assert.match(tooLarge.errors.join('\n'), /git lists more than 256 MiB of files there[\s\S]*Delete the build output in it by hand/);
+    });
+
+    // A name with a line break is quoted: shown raw it reads as two names.
+    fs.writeFileSync(path.join(bigWt, 'two\nlines.o'), '');
+    const nl = rm(['big-repo']);
+    it('an ignored name with a line break is shown quoted', () => {
+      assert.strictEqual(nl.code, 2, nl.all);
+      assert.ok(nl.err.includes('\n    "two\\nlines.o"\n'), nl.err);
+    });
+    fs.rmSync(path.join(bigWt, 'two\nlines.o'));
+
+    // Changes listed over 1 MiB (thousands of untracked files) are read in full: the dry run
+    // doesn't call the worktree clean, the list is cut at 20.
+    const untracked = path.join(bigWt, 'untracked');
+    fs.mkdirSync(untracked);
+    for (let i = 0; i < 4500; i++) fs.writeFileSync(path.join(untracked, `${'u'.repeat(240)}-${i}.txt`), '');
+    const manyDry = rm(['big-repo', '--dry-run']);
+    const manyRm = rm(['big-repo']);
+    it('over 1 MiB of changes: the dry run refuses them, exit 2', () => {
+      assert.ok(execFileSync('git', ['-C', bigWt, 'status', '--porcelain', '-z', '--untracked-files=all'], { maxBuffer: 1 << 28 }).length > 1 << 20);
+      assert.strictEqual(manyDry.code, 2, manyDry.out.slice(0, 2000));
+      const errs = JSON.parse(manyDry.out).errors.join('\n');
+      assert.match(errs, /has changes that exist nowhere else[\s\S]*\?\? untracked\/u+-\d+\.txt[\s\S]*… and 4480 more/);
+    });
+    it('and so does the removal, the worktree kept', () => {
+      assert.strictEqual(manyRm.code, 2, manyRm.all);
+      assert.match(manyRm.err, /has changes that exist nowhere else/);
+      assert.ok(fs.existsSync(untracked));
+    });
+    fs.rmSync(untracked, { recursive: true });
+    // git that can't say what is changed: refused as well.
+    fs.writeFileSync(path.join(failGit, 'git'),
+      `#!/bin/sh\ncase " $* " in *" status "*) echo "fatal: index file corrupt" >&2; exit 128;; esac\nexec ${JSON.stringify(realGit)} "$@"\n`, { mode: 0o755 });
+    const statusDry = wsg(['remove', 'big-repo', '--dry-run'], { cwd: wsX, env: failEnv });
+    const statusRm = wsg(['remove', 'big-repo'], { cwd: wsX, env: failEnv });
+    it('git failing to list the changes: exit 2, dry run and removal alike', () => {
+      assert.strictEqual(statusDry.code, 2, statusDry.all);
+      assert.match(JSON.parse(statusDry.out).errors.join('\n'), /could not list its changes \(git status: fatal: index file corrupt\)/);
+      assert.strictEqual(statusRm.code, 2, statusRm.all);
+      assert.ok(W.readState(wsX).sources.some((x) => x.name === 'big-repo'));
+    });
+    // A staged rename reads as old -> new: with -z the old name is a field of its own.
+    git(bigWt, ['mv', 'a.ts', 'b.ts']);
+    const renamed = JSON.parse(rm(['big-repo', '--dry-run']).out).errors.join('\n');
+    it('a staged rename is shown as old -> new', () => assert.match(renamed, /\n {4}R {2}a\.ts -> b\.ts(\n|$)/));
+    git(bigWt, ['mv', 'b.ts', 'a.ts']);
+
     const bigOk = rm(['big-repo']);
     it('once git can list them, the source is removed', () => assert.strictEqual(bigOk.code, 0, bigOk.all));
     it('the guide says how to fix a wrong source', () =>
