@@ -42,7 +42,7 @@ const ENV = {
   WSG_NO_LAUNCH: '1',
 };
 const wsg = (args, { cwd = tmp, env = {}, input = '' } = {}) => {
-  const r = spawnSync(process.execPath, [CLI, ...args], { cwd, encoding: 'utf8', input, env: { ...ENV, ...env } });
+  const r = spawnSync(process.execPath, [CLI, ...args], { cwd, encoding: 'utf8', input, env: { ...ENV, ...env }, maxBuffer: 1 << 28 });
   return { code: r.status, out: r.stdout, err: r.stderr, all: r.stdout + r.stderr };
 };
 
@@ -1223,6 +1223,103 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     fs.rmSync(path.join(confWt, 'build'), { recursive: true });
     const confRm = rm(['conf-repo']);
     it('and the source is removed', () => assert.strictEqual(confRm.code, 0, confRm.all));
+
+    // A listing of ignored files over 1 MiB (a build's object files): read in full, not dropped
+    // as if there were none — an edited carried file next to them is still refused.
+    const bigRepo = makeRepo('big-repo');
+    fs.appendFileSync(path.join(bigRepo, '.gitignore'), '*.o\n\\ \n');
+    fs.mkdirSync(path.join(bigRepo, 'conf'));
+    fs.writeFileSync(path.join(bigRepo, 'conf', 'app.json'), '{}\n');
+    fs.writeFileSync(path.join(bigRepo, 'conf', 'local.pem'), 'conf pem\n');
+    git(bigRepo, ['add', '-A']);
+    git(bigRepo, ['commit', '-qm', 'objects ignored, conf']);
+    const bigAdd = add([bigRepo, '--branch', 'task/big', '--carry', '.env,conf/local.pem']);
+    const bigWt = path.join(wsX, 'big-repo');
+    const objects = (dir) => {
+      fs.mkdirSync(dir, { recursive: true });
+      for (let i = 0; i < 4500; i++) fs.writeFileSync(path.join(dir, `${'o'.repeat(240)}-${i}.o`), '');
+    };
+    const listed = (dir) => execFileSync('git', ['-C', bigWt, 'ls-files', '-z', '--others', '--ignored', '--exclude-standard', '--', dir], { maxBuffer: 1 << 28 }).length;
+    objects(bigWt);
+    fs.writeFileSync(path.join(bigWt, '.env'), 'TOKEN=edited\n');
+    const bigRm = rm(['big-repo']);
+    it('a listing over 1 MiB is read in full: the edited carried file refused, kept', () => {
+      assert.strictEqual(bigAdd.code, 0, bigAdd.all);
+      assert.ok(listed('.') > 1 << 20);
+      assert.strictEqual(bigRm.code, 2, bigRm.all);
+      assert.match(bigRm.err, /ignored files that exist nowhere else[\s\S]*\.env/);
+      assert.strictEqual(fs.readFileSync(path.join(bigWt, '.env'), 'utf8'), 'TOKEN=edited\n');
+    });
+    fs.writeFileSync(path.join(bigWt, '.env'), 'TOKEN=x\n');
+    for (const f of fs.readdirSync(bigWt)) if (f.endsWith('.o')) fs.rmSync(path.join(bigWt, f));
+    // The same inside a directory looked into file by file: conf/ holds only ignored files now.
+    git(bigWt, ['rm', '-q', 'conf/app.json']);
+    git(bigWt, ['commit', '-qm', 'drop app.json']);
+    objects(path.join(bigWt, 'conf'));
+    fs.writeFileSync(path.join(bigWt, 'conf', 'local.pem'), 'edited\n');
+    const bigConfRm = rm(['big-repo', '--dry-run']);
+    it('and in a directory listed file by file', () => {
+      assert.ok(listed('conf/') > 1 << 20);
+      const bigConf = JSON.parse(bigConfRm.out);
+      assert.ok(bigConf.ignored.includes('conf/local.pem'), bigConf.errors.join('\n'));
+      assert.match(bigConf.errors.join('\n'), /conf\/local\.pem/);
+    });
+    fs.rmSync(path.join(bigWt, 'conf'), { recursive: true });
+    fs.mkdirSync(path.join(bigWt, 'conf'));
+    fs.writeFileSync(path.join(bigWt, 'conf', 'local.pem'), 'conf pem\n');
+
+    // A name that is nothing but a space is a file like any other, and shown so it can be seen.
+    fs.writeFileSync(path.join(bigWt, ' '), 'space\n');
+    const space = rm(['big-repo']);
+    it('an ignored file named " " is listed and refused, the name quoted', () => {
+      assert.strictEqual(space.code, 2, space.all);
+      assert.match(space.err, /\n {4}" "\n/);
+      assert.deepStrictEqual(JSON.parse(rm(['big-repo', '--dry-run']).out).ignored, [' ']);
+      assert.ok(fs.existsSync(path.join(bigWt, ' ')));
+    });
+    fs.rmSync(path.join(bigWt, ' '));
+
+    // git that can't list the ignored files: no list is not an empty list, the removal is refused.
+    const failGit = path.join(tmp, 'fail-git');
+    fs.mkdirSync(failGit);
+    const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+    fs.writeFileSync(path.join(failGit, 'git'),
+      `#!/bin/sh\ncase " $* " in *" --ignored "*) echo "fatal: index file corrupt" >&2; exit 128;; esac\nexec ${JSON.stringify(realGit)} "$@"\n`, { mode: 0o755 });
+    const failEnv = { PATH: `${failGit}:${ENV.PATH}` };
+    const failRm = wsg(['remove', 'big-repo'], { cwd: wsX, env: failEnv });
+    it('git failing to list the ignored files: exit 2, the worktree kept', () => {
+      assert.strictEqual(failRm.code, 2, failRm.all);
+      assert.match(failRm.err, /could not list its ignored files \(git ls-files: fatal: index file corrupt\)/);
+      assert.ok(fs.existsSync(path.join(bigWt, '.env')));
+      assert.ok(W.readState(wsX).sources.some((x) => x.name === 'big-repo'));
+    });
+    const failDry = wsg(['remove', 'big-repo', '--dry-run', '--delete-ignored'], { cwd: wsX, env: failEnv });
+    it('--dry-run says so too, even with --delete-ignored', () => {
+      assert.strictEqual(failDry.code, 2, failDry.all);
+      assert.match(JSON.parse(failDry.out).errors.join('\n'), /could not list its ignored files/);
+    });
+    // Failing right before the removal, after the plan passed: refused the same way.
+    const G = require(path.join(ROOT, 'lib', 'git.js'));
+    const failPlan = generate.planRemove(wsX, 'big-repo');
+    const realList = G.gitList;
+    G.gitList = () => { throw new Error('git ls-files: signal SIGKILL'); };
+    let failLate;
+    try {
+      failLate = await (async () => {
+        try { await quietAsync(() => generate.remove(wsX, 'big-repo', cfg, {})); return null; } catch (e) { return e; }
+      })();
+    } finally {
+      G.gitList = realList;
+    }
+    it('git failing at the re-check before the removal: refused as invalid, nothing touched', () => {
+      assert.deepStrictEqual(failPlan.errors, []);
+      assert.ok(failLate && failLate.invalid, String(failLate));
+      assert.match(failLate.message, /could not list its ignored files \(git ls-files: signal SIGKILL\)/);
+      assert.ok(fs.existsSync(path.join(bigWt, '.env')));
+      assert.ok(W.readState(wsX).sources.some((x) => x.name === 'big-repo'));
+    });
+    const bigOk = rm(['big-repo']);
+    it('once git can list them, the source is removed', () => assert.strictEqual(bigOk.code, 0, bigOk.all));
     it('the guide says how to fix a wrong source', () =>
       assert.match(fs.readFileSync(path.join(ROOT, 'docs', 'setup-guide.md'), 'utf8'), /`wsg remove <name>`/));
   }
@@ -1413,6 +1510,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
   process.exit(failed === 0 ? 0 : 1);
 })().catch((e) => {
   console.log(`\nFAIL  ${e.stack || e}`);
+  fs.rmSync(tmp, { recursive: true, force: true });
   finished = true;
   process.exit(1);
 });

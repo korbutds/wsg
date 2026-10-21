@@ -405,7 +405,12 @@ const COMMANDS = {
   if (!run) invalid(cmd.startsWith('-') ? t('cli.unknownArg', { arg: cmd }) : t('cli.unknownCommand', { cmd }));
   if (cfgError && !NO_CONFIG.has(cmd)) die(t('cli.cannotReadSettings', { msg: cfgError.message }));
   try {
-    process.exit(await run(rest));
+    const code = await run(rest);
+    // A pipe takes output asynchronously: exiting at once would cut a long --dry-run at 64 KiB.
+    let pending = 2;
+    const done = () => { if (--pending === 0) process.exit(code); };
+    process.stdout.write('', done);
+    process.stderr.write('', done);
   } catch (e) {
     if (e && e.name === 'Interrupted') {
       process.stderr.write(`\n${t('cli.cancelled')}\n`);
