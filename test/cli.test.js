@@ -956,6 +956,35 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       for (const s of ['wsg add', '--dry-run', '--reference', 'wsg check', 'notes.md', 'FILL IN', 'for-each-ref', 'restart']) assert.ok(guide.includes(s), s);
     });
 
+    // Every wsg command and flag the guide names exists, and every flag of add and remove is named:
+    // an agent follows the guide literally, and an unknown flag is exit 2 in the middle of setup.
+    const { FLAGS, GLOBAL } = require(path.join(ROOT, 'lib', 'flags.js'));
+    const spans = [];
+    let fence = false;
+    for (const line of guide.split('\n')) {
+      if (/^\s*```/.test(line)) { fence = !fence; continue; }
+      if (fence) spans.push(line.trim());
+      else for (const m of line.matchAll(/`([^`]+)`/g)) spans.push(m[1]);
+    }
+    const allFlags = new Set([...GLOBAL, ...Object.values(FLAGS).flatMap(Object.keys)]);
+    const problems = [];
+    for (const span of spans) {
+      for (const m of span.matchAll(/(?:^|[\s(])wsg\s+([a-z][a-z-]*)([^|&;]*)/g)) {
+        const cmd = m[1];
+        if (!FLAGS[cmd]) { problems.push(`unknown command: wsg ${cmd}`); continue; }
+        for (const f of m[2].match(/--[a-z][a-z-]*/g) || []) if (!(f in FLAGS[cmd])) problems.push(`wsg ${cmd} has no ${f}`);
+      }
+      if (/^--[a-z]/.test(span)) for (const f of span.match(/--[a-z][a-z-]*/g)) if (!allFlags.has(f)) problems.push(`no such flag: ${f}`);
+    }
+    it('every wsg command and flag in the guide exists', () => assert.deepStrictEqual(problems, []));
+    it('the guide names every flag of add and remove', () => {
+      const named = new Set(spans.flatMap((x) => x.match(/--[a-z][a-z-]*/g) || []));
+      const missing = [...Object.keys(FLAGS.add), ...Object.keys(FLAGS.remove)].filter((f) => !named.has(f));
+      assert.deepStrictEqual(missing, []);
+    });
+    it('the guide says how to record a ticket after wsg new', () => assert.match(guide, /`Ticket:` line[\s\S]{0,200}WSG_TRACKER_URL/));
+    it('the guide says what --dry-run needs', () => assert.match(guide, /--dry-run[\s\S]{0,300}--branch/));
+
     const skill = path.join(claudeDir, 'skills', 'wsg-new', 'SKILL.md');
     const i1 = wsg(['install-skills']);
     it('install-skills writes the wsg-new skill', () => {

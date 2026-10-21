@@ -259,6 +259,14 @@ shows you the text before writing it.
   `.worktreeinclude`, and auto-cleanup. `wsg` helps where those fall short: a task spanning several
   repositories, a task knowledge layer, and a limits validator.
 - No command to delete a workspace — for now, three commands by hand.
+- **Workspace trust.** Until Claude Code's trust dialog has been accepted once in a workspace (an
+  interactive session there), a `claude -p` run in it ignores `permissions.allow` from its
+  `.claude/settings.json` — Claude Code says so on stderr. The first `wsg new` launch is
+  interactive, so it shows the dialog.
+- **Linked directories mid-session.** Whether a running session picks up a directory that
+  `wsg add --link`/`--reference` adds to `additionalDirectories` is not verified; `wsg add` asks
+  for a restart whenever it changes `settings.json`. `test/smoke-claude.sh` (manual, needs claude)
+  checks this and the setup launch against a real Claude Code.
 - `paths` in rules are untested for a repository attached via a symlink pointing outside.
 
 ## Documentation

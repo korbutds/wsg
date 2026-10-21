@@ -23,8 +23,10 @@ Go through these in order. Each answer goes into its section of `AGENTS.md`, rep
 1. **What and why** (required) — the problem, for whom, and why now. Without it the agent can't
    decide what is in scope. Example: "Users are logged out every hour: the refresh token is not
    renewed. ~20 support tickets a day." → section `## Why`.
-2. **Ticket** — a key or a URL. A bare key with a known tracker prefix becomes a link
-   (`WSG_TRACKER_URL` in the wsg config). Goes on the `Ticket:` line under the title.
+2. **Ticket** — a key or a URL. `wsg new --ticket` writes it at creation; given later, write the
+   `Ticket:` line under the title of `AGENTS.md` yourself: a URL as given; for a bare key, the
+   tracker prefix `WSG_TRACKER_URL` from `~/.config/wsg/config` (if it is set there) followed by
+   the key, else the key alone.
 3. **Definition of done** — something checkable: "a session survives 24 h, renewal is covered by
    tests, the MR is open" → `## Definition of done`.
 4. **Out of scope** — nearby things not to touch. None — remove the section.
@@ -60,12 +62,15 @@ the owner names:
      MR target;
    - `package.json` scripts, `Makefile`, the CI config (`.github/workflows/`, `.gitlab-ci.yml`) —
      the verification command: what CI runs for tests, types, lint;
-   - `wsg add <repo> --dry-run` — the mode wsg picks, the files outside git it can copy
-     (`carryCandidates`), whether `node_modules` can be cloned, and every file it would write.
+   - `wsg add <repo> --branch <name> --dry-run` — the plan as JSON, touching nothing. Give it the
+     flags you mean to use: for a worktree that includes `--branch`. Without it the plan still
+     lists the files outside git it can copy (`carryCandidates`) and `nodeModules`, but reports the
+     missing branch as an error (exit 2). With it you also get the mode, `start` (how the branch
+     starts), `base`, `target` and every file it would write.
 2. **Propose**, in one short message:
-   - **mode** — `worktree` (its own branch inside the workspace; the default for a repository root)
-     or `--link` (a symlink to the shared checkout: for a repository the task only reads, or a heavy
-     one that doesn't need its own branch; a subdirectory of a repository is always a link);
+   - **mode** — `--worktree` (its own branch inside the workspace; the default for a repository
+     root) or `--link` (a symlink to the shared checkout: for a repository the task only reads, or
+     a heavy one that doesn't need its own branch; a subdirectory of a repository is always a link);
    - **branch** — named by the repository's existing convention, with the ticket if there is one.
      Never invent a different scheme. For "updating existing work" or an open MR, give the
      existing branch: a local one is attached as it is, with its commits; one only on origin is
@@ -74,10 +79,12 @@ the owner names:
      the owner explicitly says to start the branch over: its current head is saved in `backup/…`
      and the branch is reset to the base, so its commits leave the branch;
    - **base** — for a new branch, `origin/<target>` unless the owner wants another (`--base`);
-   - **target** — the MR target branch;
-   - **verify** — the command that gives pass/fail;
-   - **carry** — which ignored files to copy (`.env`, certificates): `all`, `none` or a list;
-   - **node_modules** — clone (APFS copy-on-write, macOS) or install later.
+   - **target** — the MR target branch, `origin/HEAD` by default (`--target`);
+   - **verify** — the command that gives pass/fail (`--verify`): one line, no backticks;
+   - **carry** — which ignored files to copy (`.env`, certificates): `--carry all`, `none` or a
+     comma-separated list (`all` by default);
+   - **node_modules** — clone it from the main checkout (APFS copy-on-write, macOS; the default
+     when it has one) or install later: `--clone-node-modules` / `--no-clone-node-modules`.
 3. **Wait for "ok"**, then run it, e.g.:
 
    ```bash
@@ -86,14 +93,15 @@ the owner names:
    ```
 
    Exit code 2 means the input was rejected and nothing was changed: read the message, fix the
-   flag, try again. Exit code 1 means a step failed and was rolled back.
+   flag, try again. Exit code 1 means a step failed and was rolled back. From outside the workspace,
+   name it with `--ws <slug|path>`.
 
    A source attached with the wrong settings is fixed by `wsg remove <name>`, then `wsg add` with
    the right flags. `remove` takes only a clean worktree — it lists what would be lost otherwise —
-   and keeps the branch.
+   and keeps the branch; `wsg remove <name> --dry-run` shows what it would do.
 
 **Reference directories** — material the task works from that is not under git (specs, exports,
-designs): `wsg add <dir> --reference --note "<one line: what is in it>"`. They sit next to the
+designs): `wsg add <dir> --reference --note "<one line: what is in it>"`; the note is one line. They sit next to the
 repositories, never instead of them. Edits there have no history, so change files there only when
 the owner asks.
 

@@ -114,6 +114,7 @@ function parse(args, spec, maxPositional) {
 }
 
 const lib = (name) => require(path.join(ROOT, 'lib', `${name}.js`));
+const { FLAGS } = lib('flags');
 
 // add, remove and promote change wsg.json: one at a time per workspace (lib/lock.js).
 function lock(ws) {
@@ -143,9 +144,7 @@ function targetWs(given) {
 }
 
 async function cmdNew(args) {
-  const { flags, pos } = parse(args, {
-    '--title': 'value', '--kind': 'value', '--skill': 'value', '--ticket': 'value', '--no-launch': 'bool',
-  }, 1);
+  const { flags, pos } = parse(args, FLAGS.new, 1);
   if (!pos[0]) invalid(t('cli.newSlug'));
   const kind = flags['--kind'] || 'task';
   if (kind !== 'task' && kind !== 'process') invalid(t('cli.badKind', { kind }));
@@ -200,12 +199,7 @@ async function cmdNew(args) {
 }
 
 async function cmdAdd(args) {
-  const { flags, pos } = parse(args, {
-    '--worktree': 'bool', '--link': 'bool', '--reference': 'bool',
-    '--branch': 'value', '--base': 'value', '--reset-to-base': 'bool', '--target': 'value',
-    '--verify': 'value', '--carry': 'value', '--clone-node-modules': 'bool', '--no-clone-node-modules': 'bool',
-    '--note': 'value', '--dry-run': 'bool', '--ws': 'value',
-  }, 1);
+  const { flags, pos } = parse(args, FLAGS.add, 1);
   if (!pos[0]) invalid(t('cli.addPath'));
   const modes = ['--worktree', '--link', '--reference'].filter((f) => flags[f]);
   if (modes.length > 1) invalid(t('cli.oneMode'));
@@ -289,7 +283,7 @@ async function cmdAdd(args) {
 }
 
 async function cmdRemove(args) {
-  const { flags, pos } = parse(args, { '--dry-run': 'bool', '--ws': 'value' }, 1);
+  const { flags, pos } = parse(args, FLAGS.remove, 1);
   if (!pos[0]) invalid(t('cli.removeName'));
   const found = targetWs(flags['--ws']);
   if (!found) invalid(t('cli.notInWorkspace'));
@@ -339,7 +333,7 @@ async function cmdRemove(args) {
 }
 
 function cmdCheck(args) {
-  const { pos } = parse(args, {}, 1);
+  const { pos } = parse(args, FLAGS.check, 1);
   let ws;
   if (pos[0]) ws = config.resolveWs(pos[0], cfg);
   else {
@@ -351,7 +345,7 @@ function cmdCheck(args) {
 }
 
 async function cmdPromote(args) {
-  const { flags, pos } = parse(args, { '--skill': 'value' }, 1);
+  const { flags, pos } = parse(args, FLAGS.promote, 1);
   if (!flags['--skill']) invalid(t('cli.promoteSkill'));
   const bad = lib('workspace').skillError(flags['--skill']);
   if (bad) invalid(t('workspace.badSkill', { name: flags['--skill'], why: bad }));
@@ -368,7 +362,7 @@ async function cmdPromote(args) {
 }
 
 function cmdInstallSkills(args) {
-  parse(args, {}, 0);
+  parse(args, FLAGS['install-skills'], 0);
   const ui = lib('ui');
   let code = 0;
   for (const { file, status } of lib('skills').install()) {
