@@ -3,29 +3,26 @@
 # Where workspaces are created.
 WS_ROOT="$HOME/workspaces"
 
-# Command that `ws <slug>` uses to launch the agent. If unset, ws asks on first run
-# and writes it here; `ws --agent` asks again. claude resumes the workspace's previous session, codex gets
+# Command that launches the agent. `wsg new` starts it in the new workspace with /wsg-setup
+# (unset: claude, if it is on PATH). `ws <slug>` uses it too; if unset, ws asks on first run and
+# writes it here; `ws --agent` asks again. claude resumes the workspace's previous session, codex gets
 # --add-dir for attached directories; any other command is run as-is.
 # WSG_AGENT="claude"
 
-# Language of the interview, CLI messages and ws: en or ru. Asked on the first run and written
-# here. If unset and there is no terminal to ask in, taken from the locale (LC_ALL, LC_MESSAGES,
-# LANG). Workspace files are always English. ws picks up a change in a new terminal; setting it
-# here is more reliable than a LANG exported later in .zshrc.
+# Language of CLI messages and ws: en or ru. If unset, taken from the locale (LC_ALL,
+# LC_MESSAGES, LANG). Workspace files are always English. ws picks up a change in a new terminal;
+# setting it here is more reliable than a LANG exported later in .zshrc.
 # WSG_LANG="ru"
 
-# "no" stops the interview from offering to hook ws into .zshrc. Written here when you decline.
-# WSG_SHELL_HOOK="no"
-
-# Tracker prefix: if you answer the ticket question with just a number,
+# Tracker prefix: if the ticket (wsg new --ticket, or the setup dialogue) is just a key or number,
 # the link is built as "$WSG_TRACKER_URL$TICKET".
 # WSG_TRACKER_URL="https://your-tracker.example.com/browse/"
 
 # Your personal file of rules for working with the agent (how to review, what not to do without asking).
-# If set, the generator offers to copy a digest of it into the workspace's AGENTS.md:
+# If set, the workspace's AGENTS.md gets a section for a digest of it, filled during setup:
 # Codex has its own file chain, and this file isn't part of it.
 # WSG_GLOBAL_MEMORY="$HOME/.config/agent-rules.md"
 
 # Context file one level above the workspaces that the agent loads in every session.
-# Only counted toward the always-on budget in `wsg --check`.
+# Only counted toward the always-on budget in `wsg check`.
 # WSG_PARENT_CONTEXT="$HOME/CLAUDE.md"

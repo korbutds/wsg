@@ -17,10 +17,11 @@ $WS_ROOT/<slug>/
 ├── AGENTS.md          task rules; the only source for Codex
 ├── README.md          task card: problem, sources, links, how to launch
 ├── notes.md           current context, code map, open questions
+├── SETUP.md           how to run the setup again
 ├── mr-target-branch.txt
 ├── repo -> <main repository: the first worktree, else the first git source>
 ├── <repo>/            git worktree on the task branch
-├── .claude/{settings.json, rules/<repo>.md}
+├── .claude/{settings.json, wsg.json, rules/<repo>.md, skills/wsg-setup/}
 ├── .claude-memory/    auto-memory for this task only
 └── .learnings/        lessons and failures of this task
 ```
@@ -31,24 +32,32 @@ branch worktrees off them. All work happens in workspaces.
 ## Starting a task
 
 ```bash
-wsg
+wsg new dpop-auth
 ```
 
-The interview asks about the work first, then about each source. Give substantive answers to two
-questions; the rest is mechanics:
+`wsg new` creates the skeleton — `AGENTS.md` with `FILL IN` headings, no repositories yet — and
+starts the agent in it with `/wsg-setup` (`--no-launch` prints the command instead). From any
+Claude Code session the same is "make me a workspace for …", once `wsg install-skills` has run.
 
-- **Why** — what problem we're solving. An empty answer is rejected: this field defines what's in scope.
+The agent leads the dialogue, following [setup-guide.md](setup-guide.md). Give substantive answers
+to two questions; the rest is mechanics:
+
+- **Why** — what problem we're solving: this defines what's in scope. Until it is written,
+  `wsg check` warns that setup is not finished.
 - **Invariants** — deliberate decisions that look like violations of the repo's rules. Without them
   the agent and the reviewer subagent will "fix" them. Can be filled in later.
 
-For each repository: `worktree` or `link`, target branch, task branch, base, verification
-command. The script offers to copy untracked files (`.env`, certificates) and to clone
-`node_modules` via APFS copy-on-write.
+For each repository the agent looks first — branch naming, `origin/HEAD`, package scripts and CI,
+`wsg add <repo> --dry-run` for files outside git and `node_modules` — then proposes the mode,
+branch, base, target and verification command, and after your "ok" runs `wsg add`. It copies
+untracked files (`.env`, certificates) and clones `node_modules` via APFS copy-on-write.
 
-`link` mode is for heavy repos that don't need their own branch: attached via a symlink to the
-shared checkout and added to `additionalDirectories`.
+`--link` is for repos the task reads, or heavy ones that don't need their own branch: attached via
+a symlink to the shared checkout and added to `additionalDirectories`. That changes
+`settings.json`, which a running session doesn't reread: `wsg add` says when to restart.
 
-Unfilled places are marked `FILL IN`; the script lists them at the end.
+The dialogue ends with `wsg check` and an updated `notes.md`. `/wsg-setup` can be run again to
+attach another repository or fill gaps; any other agent is pointed at `SETUP.md`.
 
 ## Day to day
 
@@ -140,7 +149,7 @@ When debugging a failure, first check which ignored files are missing there.
 ## Maintenance
 
 ```bash
-wsg --check $WS_ROOT/<slug>   # file limits, imports, symlinks, budget
+wsg check <slug>              # file limits, imports, symlinks, budget, setup
 ```
 
 Run it periodically, not just after creation: files grow, and the check will catch when

@@ -2,7 +2,7 @@
 
 The canonical source of limits for directories of the form `$WS_ROOT/<slug>/` that serve as
 the working directory of a Claude Code or Codex session. The `wsg` generator
-creates files according to these rules and also checks them (`--check`).
+creates files according to these rules and also checks them (`wsg check`).
 
 Basis: [Best practices for Claude Code](https://code.claude.com/docs/en/best-practices),
 [How Claude remembers your project](https://code.claude.com/docs/en/memory),
@@ -19,14 +19,14 @@ The second rule: **don't duplicate what's already in the repository.** If the re
 
 ## Two kinds of workspace
 
-The kind is recorded in `.claude/ws-kind` (`task` or `process`) and determines what `--check` checks.
+The kind is recorded in `.claude/ws-kind` (`task` or `process`) and determines what `wsg check` checks.
 
 | | **task** | **process** |
 |---|---|---|
 | lives | until the MR is merged | permanently |
 | bound to | ticket and branch | nothing: the ticket is a run argument |
 | main artifact | plan, spec, review materials | `.claude/skills/<name>/SKILL.md` |
-| log | `notes.md` → "Current context" | `journal.md` + `runs/<ticket>.md` |
+| log | `notes.md` → "Current context" | `journal.md` + `runs/<date>-<short-name>.md` |
 | branch | pinned at creation | new for each run, created by the skill |
 | memory | context of one task | accumulates across runs |
 | "done" | the task's acceptance criterion | the criterion of a single run |
@@ -38,19 +38,59 @@ per-run worktree are created by the skill.
 The procedure skill must have `disable-model-invocation: true`: a run has side effects, so it
 is launched only on the owner's command, not whenever the agent decides the moment is right.
 
-A task that turns out to be repeatable is turned into a process: `wsg --promote <slug>`. Sources,
+A process is a repeatable engineering procedure — a release, a dependency upgrade, a routine
+migration.
+
+A task that turns out to be repeatable is turned into a process: `wsg promote <slug> --skill <name>`. Sources,
 rules and memory stay; a skill stub and a log with the first run are added. There is no reverse
 conversion — there's no use case for it.
 
 ## Sources
 
-A source is what the task works with. Three types:
+A source is what the task works with, attached by `wsg add`. A workspace needs at least one git
+repository: until it has one, `wsg check` warns that setup is not finished.
 
 | Type | Attached as |
 |---|---|
 | git repository you edit | worktree inside the workspace, own branch |
-| git repository you read | symlink + `additionalDirectories` |
-| document directory, no git | symlink + `additionalDirectories`, described in the layout |
+| git repository you read | `--link`: symlink + `additionalDirectories` |
+| reference directory, no git | `--reference`: symlink + `additionalDirectories`, described in the layout |
+
+A reference directory is material the task works from, not code it changes. The rule for it asks
+the agent to change files there only when the owner asks — a prompt, not a permission: nothing
+makes it read-only.
+
+## Generated parts
+
+`.claude/wsg.json` is the single source of truth for what the generator owns: the sources and how
+each one is attached (`path`, `name`, `mode`, `branch`, `base`, `target`, `verify`, `note`, `carry`,
+`cloneNm`, `reference`), plus the kind, slug and title. Every `wsg add` re-renders from it:
+
+| Where | What |
+|---|---|
+| `AGENTS.md` | `<!-- wsg:layout -->` — the source lines of Layout; `<!-- wsg:verification -->` — the Verification bullets |
+| `CLAUDE.md` | `<!-- wsg:imports -->` — the `@<repo>/AGENTS.md` imports (`@AGENTS.md` itself stays outside) |
+| `README.md` | `<!-- wsg:sources -->` — the sources table and the launch commands |
+| `.claude/settings.json` | `permissions.additionalDirectories` only; every other key stays |
+| whole files | `.claude/rules/<name>.md` (written when its source is attached), `mr-target-branch.txt`, the `repo` pointer |
+
+Text that people and agents write — why, definition of done, out of scope, invariants, links, the
+ticket — lives only in `AGENTS.md`, outside the markers, and never in `wsg.json`: a copy there would
+drift from what the agent reads. Text outside the markers is never modified. A marker pair deleted
+by hand is put back with a warning; half a pair, or a `settings.json` that doesn't parse, makes
+`wsg add` refuse before it changes anything.
+
+Workspaces created by wsg 0.1 have no `wsg.json`: `wsg check` reports on them as before, and
+`wsg add` refuses them.
+
+## Reserved names
+
+A source can't take a name the workspace uses itself — the template would be written through its
+symlink, over a file outside the workspace: `CLAUDE.md`, `AGENTS.md`, `README.md`, `notes.md`,
+`SETUP.md`, `journal.md`, `runs`, `mr-target-branch.txt`, `requirements.md`, `plan.md`, `review.md`,
+`team`, `.claude`, `.claude-memory`, `.learnings`, `.git` (compared case-insensitively). `repo` is
+allowed: the pointer is not created then. Workspace slugs and skill names are kebab-case; the
+`wsg-` prefix is reserved for the skills wsg writes itself.
 
 ## What goes where
 
@@ -75,7 +115,7 @@ A source is what the task works with. Three types:
 | `@`-import chain | — | 4 hops | Claude Code |
 
 Keep the workspace's total always-on budget (parent CLAUDE.md files + its own files + imports)
-within ~20 KiB. Checked by `--check`.
+within ~20 KiB. Checked by `wsg check`.
 
 ## Hard rules
 
@@ -104,8 +144,8 @@ within ~20 KiB. Checked by `--check`.
 certificates, local configs — is missing from a new worktree. The build and unit tests will survive
 that, but the dev server and e2e won't: they read variables from `.env`.
 
-When creating a worktree, the generator lists such files from the main checkout and offers to
-copy them. Selection rule: a file, not a directory, no deeper than three levels, outside `node_modules`,
+When creating a worktree, `wsg add` copies such files from the main checkout (`--carry`; the
+candidates are listed by `--dry-run`). Selection rule: a file, not a directory, no deeper than three levels, outside `node_modules`,
 no larger than 1 MB. What was copied is recorded in `.claude/rules/<repo>.md`, because git doesn't
 sync these files: if you change one in the main checkout, update it in the worktree too.
 

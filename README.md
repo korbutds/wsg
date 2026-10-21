@@ -28,7 +28,7 @@ breaking the work.
 Try it without installing:
 
 ```bash
-npx @korbutds/wsg
+npx @korbutds/wsg new <slug>
 ```
 
 This creates a workspace. The `ws` command that jumps into it needs `wsg` installed globally.
@@ -49,15 +49,15 @@ directory. So its code is printed for `eval` — add this to `~/.zshrc`:
 eval "$(wsg shell-init zsh)"
 ```
 
-If you skip this, `wsg` offers to add it at the end of the first interview.
-The first run also asks which language to talk in: English or Russian.
-
 Then copy the settings and adjust `WS_ROOT`:
 
 ```bash
 mkdir -p ~/.config/wsg
 cp "$(wsg --where)/config.example" ~/.config/wsg/config
 ```
+
+For Claude Code, `wsg install-skills` adds a user-level `wsg-new` skill: any session can then
+create a workspace when you ask for one.
 
 <details>
 <summary>Without npm — from the repository</summary>
@@ -68,7 +68,8 @@ cd wsg
 ./install.sh
 ```
 
-`install.sh` installs dependencies, symlinks `wsg` into `~/.local/bin`, and hooks `ws` into `~/.zshrc`.
+`install.sh` symlinks `wsg` into `~/.local/bin`, hooks `ws` into `~/.zshrc`, and runs
+`wsg install-skills`. There are no dependencies to install.
 </details>
 
 **Requirements:** Node 20.19+ (or 22.13+) and git — for both installation methods. The `ws` function is for zsh.
@@ -78,15 +79,40 @@ cd wsg
 ## Quick start
 
 ```bash
-wsg                    # interview: kind of work, why, sources, invariants
+wsg new oauth-refresh  # create the skeleton and start the agent in it with /wsg-setup
+```
+
+The agent leads the setup dialogue: what the task is and why, how to tell it is done, what is out
+of scope, which repositories it touches. It looks at the repositories itself — branch naming, the
+default branch, the test command in package scripts or CI, files outside git — proposes how to
+attach each one and, after your "ok", calls `wsg add`. It finishes with `wsg check` and tells you
+whether to restart the session. The dialogue follows [docs/setup-guide.md](docs/setup-guide.md)
+(`wsg guide setup`), so any agent can run it: Claude Code gets the `/wsg-setup` skill, others are
+pointed at `SETUP.md`. Re-run `/wsg-setup` later to attach another repository or fill gaps.
+
+```bash
 ws                     # list workspaces with checkout state
 ws <slug>              # go there and launch the agent (asks which one on first run)
 ws <slug> --claude     # this time with claude, whatever the setting (also --codex)
 ws --agent             # choose the agent again
-wsg --check <path>     # check a workspace against the conventions
+wsg check              # check the workspace you are in against the conventions
 ```
 
-What you get:
+The commands the agent (or you) call:
+
+| Command | What it does |
+|---|---|
+| `wsg new <slug> [--title T] [--kind task\|process] [--skill NAME] [--ticket X] [--no-launch]` | Creates the skeleton and starts the agent; `--no-launch` prints the next step instead. |
+| `wsg add <path> [--worktree\|--link\|--reference] [--branch B] [--base REF] [--reuse-branch] [--target T] [--verify CMD] [--carry all\|none\|a,b] [--[no-]clone-node-modules] [--note TEXT] [--dry-run] [--ws SLUG\|PATH]` | Attaches one source to the workspace you are in. Every check happens before anything is touched; a failure rolls back only this source. `--dry-run` prints the plan as JSON. |
+| `wsg check [path\|slug]` | Checks a workspace against the conventions. |
+| `wsg promote [slug\|path] --skill NAME` | Turns a task into a process. |
+| `wsg guide [setup]` | Prints the setup guide the agent follows. |
+| `wsg install-skills` | Installs the `wsg-new` skill into `~/.claude/skills` (or `$CLAUDE_CONFIG_DIR/skills`). |
+
+Exit codes: `0` ok, `1` the check found errors or a step failed and was rolled back, `2` invalid
+input — nothing was changed. `--check` and `--promote` still work as aliases.
+
+What you get once setup is done:
 
 ```
 $WS_ROOT/oauth-refresh/
@@ -94,13 +120,16 @@ $WS_ROOT/oauth-refresh/
 ├── AGENTS.md          task rules; the only source for Codex
 ├── README.md          task card: problem, sources, links, how to launch
 ├── notes.md           current state, code map, open questions
+├── SETUP.md           how to run the setup again, for agents without skills
 ├── mr-target-branch.txt  target branch of the main repository
 ├── repo -> api        pointer to the main repository
 ├── api/               git worktree on the task branch
 ├── web                symlink to a shared checkout
 ├── .claude/
 │   ├── settings.json  own auto-memory, permissions, push ban
-│   └── rules/<repo>.md rules loaded when working with the repo's files
+│   ├── wsg.json       the sources and how each is attached: what wsg add renders from
+│   ├── rules/<repo>.md rules loaded when working with the repo's files
+│   └── skills/wsg-setup/ the setup dialogue, invoked as /wsg-setup
 ├── .claude-memory/    memory for this task only
 └── .learnings/        lessons and failures of this task
 ```
@@ -115,18 +144,18 @@ $WS_ROOT/oauth-refresh/
 | log | `notes.md` → "Current context" | `journal.md` + `runs/<date>-<short-name>.md` |
 | memory | context of one task | accumulates across runs |
 
-A **task** is regular ticket work. A **process** is something that repeats: a release, a regular
-export, a routine change. A process keeps its procedure in a skill that is invoked manually
-(`/release 2.4`, or just `/health` to go through whatever is new), and its run log accumulates
-what broke last time. No tracker needed: runs are named by date.
+A **task** is regular ticket work. A **process** is a repeatable engineering procedure: a release,
+a dependency upgrade, a routine migration. A process keeps its procedure in a skill that is invoked
+manually (`/release 2.4`, or just `/release` to go through whatever is new), and its run log
+accumulates what broke last time. No tracker needed: runs are named by date.
+Create one with `wsg new <slug> --kind process --skill <name>`.
 
-A task that turns out to be repeatable is turned into a process: `wsg --promote <slug>`.
+A task that turns out to be repeatable is turned into a process: `wsg promote <slug> --skill <name>`.
 
-## What the interview does
+## What the setup dialogue asks
 
-It asks not only for paths and branches, but also for what the agent is useless without — a few
-narrow questions, each with an example, each answer in its own section of `AGENTS.md`. The agent
-reads them in every session, so 1–3 lines per answer is the goal.
+Not only paths and branches, but also what the agent is useless without — each answer in its own
+section of `AGENTS.md`. The agent reads them in every session, so 1–3 lines per answer is the goal.
 
 | task | process |
 |---|---|
@@ -137,29 +166,38 @@ reads them in every session, so 1–3 lines per answer is the goal.
 | | **when a run is finished** |
 
 A process's steps are not asked up front: the agent works them out with you on the first run.
-
-Then the sources: type a path, Tab completes. A folder that doesn't exist yet is created together
-with the workspace; with no sources at all, the files live in the workspace itself — keep data you
-need for long in a folder of its own, since a workspace goes away with its task.
-
-Anything left unfilled is marked `FILL IN`, and at the end the script lists those places.
+Until the "Why" section is filled in and a git repository is attached, `wsg check` warns that
+setup is not finished.
 
 ## Sources
 
+A workspace is for code: it needs at least one git repository.
+
 | Type | Attached as |
 |---|---|
-| git repository you edit | `git worktree` inside the workspace, own branch |
-| git repository you read | symlink + `additionalDirectories` |
-| document directory, no git | symlink + `additionalDirectories` |
+| git repository you edit | `git worktree` inside the workspace, own branch (the default for a repository root) |
+| git repository you read | `--link`: symlink + `additionalDirectories` (always for a subdirectory of a repository) |
+| reference directory, no git | `--reference`: symlink + `additionalDirectories`, next to the repositories |
+
+A reference directory holds material the task works from — specs, exports, designs. It has no
+history, so the agent is told to change files there only when you ask; nothing makes it read-only.
 
 When creating a worktree, the generator carries over what git doesn't — `.env`, certificates,
 local configs — and populates `node_modules` with a clone instead of an install. On APFS this is
 copy-on-write: a directory that `du` reports as 2 GB takes about 70 MB and a couple dozen
 seconds instead of a full install.
 
+## Generated parts
+
+`.claude/wsg.json` records the sources and how each is attached. Every `wsg add` re-renders from it
+what the generator owns: the blocks between `<!-- wsg:… -->` markers in `AGENTS.md`, `CLAUDE.md`
+and `README.md`, `permissions.additionalDirectories` in `.claude/settings.json`, the `repo`
+pointer and `mr-target-branch.txt`. Text outside the markers — what the agent and you write — is
+never touched, and other keys in `settings.json` are kept. Details: [docs/conventions.md](docs/conventions.md).
+
 ## Validator
 
-`wsg --check` checks a workspace against the limits documented by the vendors:
+`wsg check` checks a workspace against the limits documented by the vendors:
 
 | File | Target | Ceiling |
 |---|---|---|
@@ -168,7 +206,9 @@ seconds instead of a full install.
 | auto-memory index | — | 200 lines or 25 KB |
 
 Plus: imports resolve and don't point outside the workspace, rules have `paths` set, `settings.json`
-is valid, there is a section with a verification command, `.learnings/` isn't at the root of a git checkout.
+is valid, there is a section with a verification command, `.learnings/` isn't at the root of a git
+checkout, and — for workspaces made by wsg 0.2 — whether setup is finished. Workspaces made by 0.1
+get the same report as before; `wsg add` refuses them, since they have no `wsg.json`.
 
 Run it periodically, not just after creation: files grow.
 
@@ -178,8 +218,8 @@ Run it periodically, not just after creation: files grow.
 
 ```bash
 WS_ROOT="$HOME/workspaces"                               # where workspaces are created
-WSG_AGENT="claude"                                       # what ws launches as the agent
-WSG_LANG="ru"                                            # interview and messages: en or ru
+WSG_AGENT="claude"                                       # the agent wsg new and ws launch
+WSG_LANG="ru"                                            # messages of wsg and ws: en or ru
 WSG_TRACKER_URL="https://tracker.example.com/browse/"    # prefix for the ticket number
 WSG_GLOBAL_MEMORY="$HOME/.config/agent-rules.md"         # your personal rules
 WSG_PARENT_CONTEXT="$HOME/CLAUDE.md"                     # count toward the always-on budget
@@ -187,20 +227,23 @@ WSG_PARENT_CONTEXT="$HOME/CLAUDE.md"                     # count toward the alwa
 
 All optional. Use a different settings file via the `WSG_CONFIG` environment variable.
 
-**Agent.** If `WSG_AGENT` is not set, `ws <slug>` on first run offers the agents found in PATH
-(arrow keys) or a custom command, and saves the choice to the config. `ws --agent` asks again and
+**Agent.** `wsg new` starts `WSG_AGENT` in the new workspace — or `claude` when it is not set and
+claude is on PATH — with the first message `/wsg-setup` (codex gets "Read SETUP.md and follow it";
+any other command is printed for you to run). Only in a terminal: piped or in a script it prints
+the next step, as with `--no-launch` or `WSG_NO_LAUNCH=1`.
+If `WSG_AGENT` is not set, `ws <slug>` on first run offers the agents found in PATH
+(by number) or a custom command, and saves the choice to the config. `ws --agent` asks again and
 replaces it; so does editing the line by hand — `ws` rereads the config on every call. With `claude`, ws resumes the workspace's
 previous session; with `codex`, it attaches symlinked directories via `--add-dir`. Any other command
 (`gemini`, `cursor-agent`, `opencode`…) is run as-is; such an agent reads `AGENTS.md`,
 while the `.claude/` files — path-scoped rules, the push ban, separate memory — only work in Claude Code.
 To bypass the setting once: `ws <slug> --claude`, `ws <slug> --codex` or `ws <slug> --cd`.
 
-**Language.** The interview, the messages of `wsg` itself and `ws` speak English or Russian.
-The first `wsg` run asks which one and saves it as `WSG_LANG`; to switch later, change that line
-(`ws` picks it up in a new terminal). Without a terminal to ask in, the locale decides. The `wsg --check` report stays English. Workspace files are always
-English — agents work best with it, and it costs fewer tokens. If you answer the interview in
-Russian, the workspace gets a first-session task for the agent: translate what you typed into
-English and show you the diff. Other languages aren't detected yet.
+**Language.** The messages of `wsg` itself and `ws` speak English or Russian: `WSG_LANG` in the
+config, otherwise the locale (`ws` picks a change up in a new terminal). The `wsg check` report
+stays English. Workspace files are always English — agents work best with it, and it costs fewer
+tokens. In the setup dialogue you answer in any language; the agent translates into English and
+shows you the text before writing it.
 
 ## Limitations
 
@@ -219,6 +262,7 @@ English and show you the diff. Other languages aren't detected yet.
 
 - [docs/conventions.md](docs/conventions.md) — limits and rules: what is always loaded, what on demand
 - [docs/workflow.md](docs/workflow.md) — workflow, troubleshooting common failures
+- [docs/setup-guide.md](docs/setup-guide.md) — the setup dialogue the agent follows
 
 Sources for the limits: [Claude Code memory](https://code.claude.com/docs/en/memory),
 [worktrees](https://code.claude.com/docs/en/worktrees),
