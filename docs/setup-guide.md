@@ -104,7 +104,8 @@ the owner names:
    A `node_modules` wsg cloned is not checked: changes made inside it are deleted with the worktree.
    Not seen either: a tracked file marked `skip-worktree` or `assume-unchanged` and edited in the
    worktree — it is deleted with it. If a removal fails after the worktree is gone, the rollback
-   adds it back on the same branch, without the carried files and the agreed ignored files.
+   adds the worktree back on the same branch, without the carried files and the agreed ignored
+   files.
 
 **Reference directories** — material the task works from that is not under git (specs, exports,
 designs): `wsg add <dir> --reference --note "<one line: what is in it>"`; the note is one line. They sit next to the

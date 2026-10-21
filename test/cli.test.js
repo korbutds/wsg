@@ -949,6 +949,34 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       assert.deepStrictEqual(fs.readdirSync(path.join(wsR, '.claude')), []);
     });
 
+    // An old empty lock judged stale, and before the takeover lock is ours another takeover puts a
+    // fresh lock in its place, made and not written yet: empty too. Busy, the fresh one kept.
+    {
+      fs.writeFileSync(raceLock, '');
+      const past = new Date(Date.now() - 60000);
+      fs.utimesSync(raceLock, past, past);
+      const realWrite = fs.writeFileSync;
+      fs.writeFileSync = (p, ...a) => {
+        if (String(p).endsWith('.takeover') && fs.writeFileSync !== realWrite) {
+          fs.writeFileSync = realWrite;
+          fs.rmSync(raceLock);
+          realWrite(raceLock, '');
+        }
+        return realWrite(p, ...a);
+      };
+      const log = console.log;
+      console.log = () => {};
+      let e4 = null;
+      try { lockLib.acquire(wsR)(); } catch (e) { e4 = e; } finally { fs.writeFileSync = realWrite; console.log = log; }
+      it('an empty lock made in place of the stale empty one: busy, not taken over', () => {
+        assert.ok(e4 && e4.invalid, String(e4));
+        assert.strictEqual(fs.readFileSync(raceLock, 'utf8'), '');
+        assert.ok(Date.now() - fs.statSync(raceLock).mtimeMs < 5000);
+      });
+      fs.rmSync(raceLock, { force: true });
+      fs.rmSync(`${raceLock}.takeover`, { force: true });
+    }
+
     // The lock's own handler stands aside only for guarded(), not for any other listener.
     const sigScript = `process.on('SIGINT', () => {});
       require(${JSON.stringify(path.join(ROOT, 'lib', 'lock.js'))}).acquire(${JSON.stringify(wsR)});
