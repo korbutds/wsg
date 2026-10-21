@@ -294,7 +294,7 @@ async function cmdRemove(args) {
   if (!flags['--dry-run']) lock(ws);
   let plan;
   try {
-    plan = generate.planRemove(ws, pos[0]);
+    plan = generate.planRemove(ws, pos[0], { deleteIgnored: !!flags['--delete-ignored'] });
   } catch (e) {
     invalid(e.message);
   }
@@ -305,6 +305,7 @@ async function cmdRemove(args) {
       name: r ? r.name : pos[0],
       ...(r ? { path: r.path, mode: r.reference ? 'reference' : r.mode } : {}),
       ...(plan.branch ? { branchKept: plan.branch } : {}),
+      ...(plan.ignored.length ? { ignoredDeleted: plan.ignored } : {}),
       files: plan.errors.length ? [] : plan.files,
       settingsChanged: plan.settingsChanged,
       errors: plan.errors,

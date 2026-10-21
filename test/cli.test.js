@@ -883,8 +883,34 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     it('and the workspace is as it was', () => assert.deepStrictEqual(tree(wsX), before));
     git(api, ['worktree', 'unlock', path.join(wsX, 'api')]);
 
-    const r1 = rm(['api']);
-    it('a clean worktree is removed (carried ignored files do not count)', () => assert.strictEqual(r1.code, 0, r1.all));
+    // Ignored, not carried: made in the worktree later, and git would delete it without a word.
+    fs.writeFileSync(path.join(wsX, 'api', 'local.pem'), 'made here\n');
+    const ign = rm(['api']);
+    it('a worktree with ignored files wsg did not copy is refused, and they are listed', () => {
+      assert.strictEqual(ign.code, 2, ign.all);
+      assert.match(ign.err, /ignored files wsg did not put there[\s\S]*local\.pem[\s\S]*--delete-ignored/);
+      assert.doesNotMatch(ign.err, /\.env/);
+    });
+    it('and nothing is touched', () => {
+      assert.deepStrictEqual(tree(wsX), before);
+      assert.ok(fs.existsSync(path.join(wsX, 'api', 'local.pem')));
+    });
+    const ignDry = rm(['api', '--dry-run']);
+    it('--dry-run lists them, and the refusal', () => {
+      const p = JSON.parse(ignDry.out);
+      assert.strictEqual(ignDry.code, 2, ignDry.all);
+      assert.deepStrictEqual(p.ignoredDeleted, ['local.pem']);
+      assert.match(p.errors.join('\n'), /local\.pem/);
+    });
+    const ignOk = rm(['api', '--dry-run', '--delete-ignored']);
+    it('--delete-ignored --dry-run: no refusal, the files still listed', () => {
+      const p = JSON.parse(ignOk.out);
+      assert.strictEqual(ignOk.code, 0, ignOk.all);
+      assert.deepStrictEqual(p.ignoredDeleted, ['local.pem']);
+    });
+
+    const r1 = rm(['api', '--delete-ignored']);
+    it('with --delete-ignored the worktree is removed (carried ignored files do not count)', () => assert.strictEqual(r1.code, 0, r1.all));
     it('the directory and its registration are gone', () => {
       assert.ok(!fs.existsSync(path.join(wsX, 'api')));
       assert.ok(!git(api, ['worktree', 'list']).includes(path.join(wsX, 'api')));
@@ -920,6 +946,24 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     });
     it('settings.json loses its directory, keeps the hand-added one', () =>
       assert.deepStrictEqual(JSON.parse(fs.readFileSync(settingsFile, 'utf8')).permissions.additionalDirectories, [docs, '/hand/added']));
+
+    // A node_modules wsg cloned is a copy too; one installed in the worktree later is not.
+    const nmRepo = makeRepo('nm-repo');
+    fs.appendFileSync(path.join(nmRepo, '.gitignore'), 'node_modules/\n');
+    git(nmRepo, ['commit', '-qam', 'ignore node_modules']);
+    fs.mkdirSync(path.join(nmRepo, 'node_modules', 'x'), { recursive: true });
+    fs.writeFileSync(path.join(nmRepo, 'node_modules', 'x', 'index.js'), '\n');
+    const nmAdd = add([nmRepo, '--branch', 'task/nm', '--carry', 'none', '--clone-node-modules']);
+    const nmPlan = () => JSON.parse(rm(['nm-repo', '--dry-run']).out);
+    const cloned = W.readState(wsX).sources.find((x) => x.name === 'nm-repo');
+    it('a node_modules wsg cloned does not count as ignored files', () => {
+      assert.strictEqual(nmAdd.code, 0, nmAdd.all);
+      assert.ok(!cloned.cloneNm || fs.existsSync(path.join(wsX, 'nm-repo', 'node_modules')));
+      assert.strictEqual(nmPlan().ignoredDeleted, undefined);
+    });
+    fs.mkdirSync(path.join(wsX, 'nm-repo', 'pkg', 'node_modules'), { recursive: true });
+    fs.writeFileSync(path.join(wsX, 'nm-repo', 'pkg', 'node_modules', 'y.js'), '\n');
+    it('one installed later does', () => assert.deepStrictEqual(nmPlan().ignoredDeleted, ['pkg/node_modules/']));
     it('the guide says how to fix a wrong source', () =>
       assert.match(fs.readFileSync(path.join(ROOT, 'docs', 'setup-guide.md'), 'utf8'), /`wsg remove <name>`/));
   }

@@ -104,7 +104,7 @@ The commands the agent (or you) call:
 |---|---|
 | `wsg new <slug> [--title T] [--kind task\|process] [--skill NAME] [--ticket X] [--no-launch]` | Creates the skeleton and starts the agent; `--no-launch` prints the next step instead. |
 | `wsg add <path> [--worktree\|--link\|--reference] [--branch B] [--base REF] [--reset-to-base] [--target T] [--verify CMD] [--carry all\|none\|a,b] [--[no-]clone-node-modules] [--note TEXT] [--dry-run] [--ws SLUG\|PATH]` | Attaches one source to the workspace you are in. An existing branch is attached as it is, one only on origin is continued; `--reset-to-base` starts it over (with a `backup/…`). Every check happens before anything is touched; a failure rolls back only this source. `--dry-run` prints the plan as JSON. |
-| `wsg remove <name> [--dry-run] [--ws SLUG\|PATH]` | Detaches a source: a clean worktree (its branch is kept) or the symlink, its rule, and its generated parts. The way to fix a source attached with the wrong flags: remove, then add again. |
+| `wsg remove <name> [--delete-ignored] [--dry-run] [--ws SLUG\|PATH]` | Detaches a source: a clean worktree (its branch is kept) or the symlink, its rule, and its generated parts. Ignored files wsg did not copy in are deleted with the worktree only after `--delete-ignored`. The way to fix a source attached with the wrong flags: remove, then add again. |
 | `wsg check [path\|slug]` | Checks a workspace against the conventions. |
 | `wsg promote [slug\|path] --skill NAME` | Turns a task into a process. |
 | `wsg guide [setup]` | Prints the setup guide the agent follows. |
