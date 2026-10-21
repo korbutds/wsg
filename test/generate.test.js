@@ -1041,6 +1041,41 @@ process.on('exit', () => {
     it('--pick-agent is gone: invalid input', () => assert.strictEqual(r.status, 2));
   }
 
+  console.log('\ncode fences are read as CommonMark reads them');
+  {
+    const open = (lines) => generate.openFence(lines.join('\n'));
+    const closed = [
+      ['a 4-backtick fence holding a 3-backtick line', ['````md', '```sh', 'npm test', '````', 'text']],
+      ['a line of inline code that starts with three backticks', ['```wsg add``` is the command', 'text']],
+      ['a ``` line indented 4 spaces (indented code)', ['para', '', '    ```', '    code', 'text']],
+      ['a ~~~ fence', ['~~~', '```', 'inside', '~~~']],
+      ['a ~~~ fence closed by a longer run', ['~~~', 'x', '~~~~~']],
+      ['a closer indented up to 3 spaces, spaces after it', ['```', 'x', '   ```  ']],
+      ['CRLF line endings', ['```sh', 'npm test', '```', 'text'].map((l) => `${l}\r`)],
+      ['CRLF around a 4-backtick fence', ['````', '```', '````', ''].map((l) => `${l}\r`)],
+    ];
+    for (const [name, lines] of closed) it(`closed: ${name}`, () => assert.strictEqual(open(lines), null));
+    const unclosed = [
+      ['a 4-backtick fence is not closed by 3', ['a', '````sh', 'x', '```'], { line: 2, fence: '````' }],
+      ['a ``` fence is not closed by ~~~', ['```', '~~~'], { line: 1, fence: '```' }],
+      ['a ~~~~ fence is not closed by ~~~', ['~~~~', '~~~'], { line: 1, fence: '~~~~' }],
+      ['a closer with text after it is not one', ['```', 'x', '``` not a closer'], { line: 1, fence: '```' }],
+      ['a tilde info string may hold backticks', ['', '~~~ `x`', 'y'], { line: 2, fence: '~~~' }],
+      ['CRLF', ['x', '```sh', 'y'].map((l) => `${l}\r`), { line: 2, fence: '```' }],
+    ];
+    for (const [name, lines, want] of unclosed) it(`unclosed: ${name}`, () => assert.deepStrictEqual(open(lines), want));
+    // The inner ``` doesn't close the outer fence: the quoted pair after it is still code.
+    const quoted = '# x\n\n````md\n```\n<!-- wsg:layout -->\nexample\n<!-- /wsg:layout -->\n````\n\n## Layout\n\n<!-- wsg:layout -->\nold\n<!-- /wsg:layout -->\n';
+    it('markers inside a 4-backtick fence are text, not the block', () => {
+      const r = generate.replaceBlock(quoted, 'AGENTS.md', 'layout', ['new'], /^## Layout/m);
+      assert.ok(r.text.includes('<!-- wsg:layout -->\nexample\n'), r.text);
+      assert.match(r.text, /## Layout\n\n<!-- wsg:layout -->\nnew\n<!-- \/wsg:layout -->/);
+    });
+    it('the refusal names the line and the closer it needs', () => assert.throws(
+      () => generate.replaceBlock('# x\n\n````sh\nx\n```\n', 'AGENTS.md', 'layout', ['l'], /^## Layout/m),
+      /AGENTS\.md: the code block opened on line 3 is never closed[\s\S]*Close it with ````,/));
+  }
+
   try { execFileSync('git', ['-C', repo, 'worktree', 'remove', '--force', path.join(ws, 'api')], { stdio: 'ignore' }); } catch {}
   fs.rmSync(tmp, { recursive: true, force: true });
 
