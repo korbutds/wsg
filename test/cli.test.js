@@ -881,6 +881,63 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       assert.deepStrictEqual(fs.readdirSync(path.join(wsR, '.claude')), []);
     });
 
+    // A third command: the lock was judged stale, then another takeover finished before the
+    // takeover lock was ours. The lock is re-read under it: someone else's is not moved aside, and
+    // no "taking it over" precedes the busy.
+    const lateTakeover = (other) => {
+      fs.writeFileSync(raceLock, staleLock);
+      const realWrite = fs.writeFileSync;
+      const realRename = fs.renameSync;
+      const lines = [];
+      let renames = 0;
+      fs.writeFileSync = (p, ...a) => {
+        if (String(p).endsWith('.takeover') && fs.writeFileSync !== realWrite) {
+          fs.writeFileSync = realWrite;
+          other();
+        }
+        return realWrite(p, ...a);
+      };
+      fs.renameSync = (...a) => { renames++; return realRename(...a); };
+      const log = console.log;
+      console.log = (s) => lines.push(String(s));
+      try {
+        try { lockLib.acquire(wsR)(); return { e: null, lines, renames }; } catch (e) { return { e, lines, renames }; }
+      } finally {
+        fs.writeFileSync = realWrite;
+        fs.renameSync = realRename;
+        console.log = log;
+      }
+    };
+    const l1 = lateTakeover(() => fs.writeFileSync(raceLock, theirs));
+    it('a lock taken over by another before the takeover lock: busy, theirs never moved', () => {
+      assert.ok(l1.e && l1.e.invalid, String(l1.e));
+      assert.match(l1.e.message, /another wsg command is running .*pid \d+, since 2026-02-02/);
+      assert.strictEqual(l1.renames, 0);
+      assert.strictEqual(fs.readFileSync(raceLock, 'utf8'), theirs);
+      assert.deepStrictEqual(fs.readdirSync(path.join(wsR, '.claude')), ['wsg.lock']);
+    });
+    it('and no stale-lock warning before it', () => assert.doesNotMatch(l1.lines.join('\n'), /stale lock/));
+    const l2 = lateTakeover(() => fs.rmSync(raceLock));
+    it('one taken over and already released: busy too, nothing made', () => {
+      assert.ok(l2.e && l2.e.invalid, String(l2.e));
+      assert.deepStrictEqual(fs.readdirSync(path.join(wsR, '.claude')), []);
+    });
+    // A takeover in progress: busy, and the warning didn't come first either.
+    fs.writeFileSync(raceLock, staleLock);
+    fs.writeFileSync(takeover, theirs);
+    const warned = [];
+    const logW = console.log;
+    console.log = (s) => warned.push(String(s));
+    try { lockLib.acquire(wsR)(); } catch { /* busy, checked above */ } finally { console.log = logW; }
+    it('busy on the takeover lock: no stale-lock warning', () => assert.doesNotMatch(warned.join('\n'), /stale lock/));
+    fs.rmSync(takeover);
+    const l3 = lateTakeover(() => {});
+    it('the lock judged stale still in place: taken over, with the warning', () => {
+      assert.strictEqual(l3.e, null, String(l3.e));
+      assert.match(l3.lines.join('\n'), /stale lock/);
+      assert.deepStrictEqual(fs.readdirSync(path.join(wsR, '.claude')), []);
+    });
+
     // The lock's own handler stands aside only for guarded(), not for any other listener.
     const sigScript = `process.on('SIGINT', () => {});
       require(${JSON.stringify(path.join(ROOT, 'lib', 'lock.js'))}).acquire(${JSON.stringify(wsR)});
