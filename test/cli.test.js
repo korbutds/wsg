@@ -719,6 +719,38 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     it('and nothing is written', () => assert.strictEqual(fs.readFileSync(agentsFile, 'utf8'), dup));
   }
 
+  console.log('\none command at a time');
+  {
+    const wsL = path.join(wsRoot, 'locked');
+    wsg(['new', 'locked', '--no-launch']);
+    const lock = path.join(wsL, '.claude', 'wsg.lock');
+    fs.writeFileSync(lock, JSON.stringify({ pid: process.pid, time: new Date().toISOString() }));
+    const busy = [
+      ['add', wsg(['add', web, '--link'], { cwd: wsL })],
+      ['remove', wsg(['remove', 'web'], { cwd: wsL })],
+      ['promote', wsg(['promote', 'locked', '--skill', 'x'])],
+    ];
+    for (const [name, r] of busy) {
+      it(`${name} while another command holds the lock: exit 2`, () => {
+        assert.strictEqual(r.code, 2, r.all);
+        assert.match(r.err, /another wsg command is running/);
+      });
+    }
+    it('a held lock is left alone', () => assert.ok(fs.existsSync(lock)));
+    it('and nothing was attached', () => assert.ok(!fs.existsSync(path.join(wsL, 'web'))));
+    // A pid that is surely gone: a process that has already exited.
+    const dead = spawnSync('true').pid;
+    fs.writeFileSync(lock, JSON.stringify({ pid: dead, time: '2026-01-01T00:00:00Z' }));
+    const r = wsg(['add', web, '--link'], { cwd: wsL });
+    it('a stale lock is taken over, with a warning', () => {
+      assert.strictEqual(r.code, 0, r.all);
+      assert.match(r.out, /stale lock/);
+    });
+    it('the lock is released after the command', () => assert.ok(!fs.existsSync(lock)));
+    wsg(['add', web, '--link'], { cwd: wsL });
+    it('and after a refused one', () => assert.ok(!fs.existsSync(lock)));
+  }
+
   console.log('\nwsg remove');
   {
     const wsX = path.join(wsRoot, 'rm');

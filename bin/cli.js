@@ -116,6 +116,16 @@ function parse(args, spec, maxPositional) {
 
 const lib = (name) => require(path.join(ROOT, 'lib', `${name}.js`));
 
+// add, remove and promote change wsg.json: one at a time per workspace (lib/lock.js).
+function lock(ws) {
+  try {
+    lib('lock').acquire(ws);
+  } catch (e) {
+    if (e.invalid) invalid(e.message);
+    throw e;
+  }
+}
+
 // The workspace a command acts on: the given slug or path, else the nearest one above the
 // current directory — a shell is often inside one of its worktrees.
 function targetWs(given) {
@@ -206,6 +216,8 @@ async function cmdAdd(args) {
   const S = lib('source');
   const generate = lib('generate');
   const ui = lib('ui');
+  // Held from the checks to the last write: the state they read is the state that gets changed.
+  if (!flags['--dry-run']) lock(ws);
 
   let state;
   try {
@@ -281,6 +293,7 @@ async function cmdRemove(args) {
   const { ws } = found;
   const generate = lib('generate');
   const ui = lib('ui');
+  if (!flags['--dry-run']) lock(ws);
   let plan;
   try {
     plan = generate.planRemove(ws, pos[0]);
@@ -344,6 +357,9 @@ async function cmdPromote(args) {
     const found = lib('workspace').find(process.cwd());
     target = found ? found.ws : process.cwd();
   }
+  // Only a directory that has .claude/ can be a workspace; promote refuses anything else itself.
+  const ws = config.resolveWs(target, cfg);
+  if (fs.existsSync(path.join(ws, '.claude'))) lock(ws);
   return lib('promote').run(target, cfg, { skillName: flags['--skill'] });
 }
 
