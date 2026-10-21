@@ -586,6 +586,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       assert.strictEqual(r.code, 1, r.all);
       assert.match(r.err, /Rolling back/);
     });
+    it('and does not claim it attached anything', () => assert.doesNotMatch(r.out, /Attached/));
     it('the workspace is exactly as before, byte for byte', () => assert.deepStrictEqual(tree(demo), snap));
     it('no worktree is left registered', () => assert.strictEqual(worktrees(web2), 1));
     it('the created branch is deleted', () => assert.ok(!branches(web2).includes('task/doomed')));
@@ -749,6 +750,87 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     it('the lock is released after the command', () => assert.ok(!fs.existsSync(lock)));
     wsg(['add', web, '--link'], { cwd: wsL });
     it('and after a refused one', () => assert.ok(!fs.existsSync(lock)));
+  }
+
+  console.log('\nwsg add: values that end up in markdown');
+  {
+    const wsV = path.join(wsRoot, 'values');
+    wsg(['new', 'values', '--no-launch']);
+    const add = (args) => wsg(['add', ...args], { cwd: wsV });
+    const before = tree(wsV);
+    const bad = [
+      ['a verify command with a newline', [api, '--branch', 'v1', '--verify', 'npm test\nrm -rf x'], /--verify must be one line/],
+      ['a verify command with a backtick', [api, '--branch', 'v1', '--verify', 'npm test `x`'], /--verify can't contain a backtick/],
+      ['a note with a newline', [docs, '--reference', '--note', 'a\nb'], /--note must be one line/],
+      ['a note with a marker', [docs, '--reference', '--note', 'see <!-- wsg:layout -->'], /--note can't contain <!--/],
+      ['a target that is not a branch name', [web, '--link', '--target', 'bad..name'], /--target bad\.\.name is not a valid branch name/],
+    ];
+    for (const [name, args, msg] of bad) {
+      const r = add(args);
+      it(`${name}: exit 2`, () => {
+        assert.strictEqual(r.code, 2, r.all);
+        assert.match(r.err, msg);
+      });
+    }
+    it('refused values touched nothing', () => assert.deepStrictEqual(tree(wsV), before));
+    const d = JSON.parse(add([web, '--link', '--target', 'release/9', '--dry-run']).out);
+    it('a link target that exists nowhere is a warning', () => assert.match(d.warnings.join('\n'), /release\/9 exists neither in .* nor on origin/));
+    const r = add([docs, '--reference', '--note', 'briefs | specs']);
+    it('a pipe in a note does not break the README table', () => {
+      assert.strictEqual(r.code, 0, r.all);
+      assert.match(fs.readFileSync(path.join(wsV, 'README.md'), 'utf8'), /\| `docs` \| reference \| — \| briefs \\\| specs \|/);
+    });
+  }
+
+  console.log('\nsmaller things');
+  {
+    const notWs = wsg(['add', web, '--link', '--ws', docs]);
+    it('--ws to a directory that is no workspace says so', () => {
+      assert.strictEqual(notWs.code, 2);
+      assert.match(notWs.err, /not a wsg workspace/);
+      assert.doesNotMatch(notWs.err, /0\.1/);
+    });
+
+    wsg(['new', 'ru-title', '--title', 'Обновление токена', '--no-launch']);
+    const ruWs = path.join(wsRoot, 'ru-title');
+    it('a title in another language: AGENTS.md and notes.md agree on the translation task', () => {
+      assert.match(fs.readFileSync(path.join(ruWs, 'AGENTS.md'), 'utf8'), /kept in English.*\n.*see "Continue with" in `notes\.md`/);
+      const notes = fs.readFileSync(path.join(ruWs, 'notes.md'), 'utf8');
+      assert.match(notes, /Setup not finished/);
+      assert.match(notes, /Continue with: .*translate/);
+      assert.match(notes, /First-session task — translate into English/);
+    });
+
+    // Ctrl+C while the backup branch is being made: a git that interrupts its own process group
+    // right there. The command runs in a group of its own, so the signal reaches only it.
+    const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+    const gitBin = path.join(tmp, 'git-interrupt');
+    fs.mkdirSync(gitBin);
+    fs.writeFileSync(path.join(gitBin, 'git'),
+      `#!/bin/sh\ncase "$*" in *" branch backup/"*) kill -INT 0; sleep 2;; esac\nexec ${realGit} "$@"\n`, { mode: 0o755 });
+    git(api, ['branch', 'feature/int', 'main']);
+    wsg(['new', 'int', '--no-launch']);
+    const wsI = path.join(wsRoot, 'int');
+    const snap = tree(wsI);
+    const r = spawnSync(process.execPath, [CLI, 'add', api, '--branch', 'feature/int', '--reset-to-base', '--base', 'main'],
+      { cwd: wsI, encoding: 'utf8', detached: true, env: { ...ENV, PATH: `${gitBin}:${ENV.PATH}` } });
+    it('Ctrl+C while making the backup: exit 130', () => assert.strictEqual(r.status, 130, r.stdout + r.stderr));
+    it('and the workspace is as it was', () => assert.deepStrictEqual(tree(wsI), snap));
+    it('no backup branch is left', () => assert.ok(!branches(api).some((b) => b.startsWith('backup/feature-int'))));
+
+    // Unreadable: neither shell can source it, and the plain reader fails too.
+    const broken = path.join(tmp, 'broken-config');
+    fs.writeFileSync(broken, 'WS_ROOT=/x\n', { mode: 0o000 });
+    for (const args of [['--help'], ['--version'], ['--where'], ['shell-init', 'zsh'], ['guide'], ['install-skills']]) {
+      const b = wsg(args, { env: { WSG_CONFIG: broken } });
+      it(`wsg ${args.join(' ')} works with a broken config`, () => assert.strictEqual(b.code, 0, b.all));
+    }
+    it('a command that needs the config still reports it', () => {
+      const b = wsg(['check', 'demo'], { env: { WSG_CONFIG: broken } });
+      assert.strictEqual(b.code, 1);
+      assert.match(b.err, /cannot read settings/);
+    });
+    it('the usage names exit 130', () => assert.match(wsg(['--help']).out, /130/));
   }
 
   console.log('\nwsg remove');

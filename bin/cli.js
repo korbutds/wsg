@@ -73,7 +73,6 @@ if (cmd === 'guide') {
   process.exit(0);
 }
 
-if (cfgError) die(t('cli.cannotReadSettings', { msg: cfgError.message }));
 
 function guardPlatform() {
   if (os.platform() === 'win32') {
@@ -133,7 +132,12 @@ function targetWs(given) {
   if (given) {
     const ws = config.resolveWs(given, cfg);
     if (!fs.existsSync(ws)) invalid(t('cli.noWorkspace', { ws }));
-    return { ws, legacy: !W.hasState(ws) };
+    if (W.hasState(ws)) return { ws, legacy: false };
+    // 0.1 marks: ws-kind, or — older still — a CLAUDE.md in a directory that is not a repository.
+    const old = fs.existsSync(path.join(ws, '.claude', 'ws-kind'))
+      || (fs.existsSync(path.join(ws, 'CLAUDE.md')) && !fs.existsSync(path.join(ws, '.git')));
+    if (!old) invalid(t('cli.notWorkspace', { ws }));
+    return { ws, legacy: true };
   }
   return W.find(process.cwd());
 }
@@ -268,9 +272,9 @@ async function cmdAdd(args) {
   for (const w of res.warnings) ui.warn(w);
   for (const n of res.notes) ui.info(`  ${n}`);
   guardPlatform();
-  ui.head(t('cli.added', { name: res.spec.name }));
   try {
     const { settingsChanged } = await generate.add(ws, res.spec, cfg);
+    ui.head(t('cli.added', { name: res.spec.name }));
     if (settingsChanged) ui.info(t('cli.restart', { path: res.spec.path }));
   } catch (e) {
     if (e && e.name === 'Interrupted') {
@@ -378,6 +382,10 @@ function cmdInstallSkills(args) {
   return code;
 }
 
+// Commands that don't read the settings work even when they are broken, so a bad config can
+// be diagnosed and the install finished.
+const NO_CONFIG = new Set(['install-skills']);
+
 const COMMANDS = {
   new: cmdNew,
   add: cmdAdd,
@@ -393,6 +401,7 @@ const COMMANDS = {
 (async () => {
   const run = COMMANDS[cmd];
   if (!run) invalid(cmd.startsWith('-') ? t('cli.unknownArg', { arg: cmd }) : t('cli.unknownCommand', { cmd }));
+  if (cfgError && !NO_CONFIG.has(cmd)) die(t('cli.cannotReadSettings', { msg: cfgError.message }));
   try {
     process.exit(await run(rest));
   } catch (e) {

@@ -111,7 +111,9 @@ The commands the agent (or you) call:
 | `wsg install-skills` | Installs the `wsg-new` skill into `~/.claude/skills` (or `$CLAUDE_CONFIG_DIR/skills`). |
 
 Exit codes: `0` ok, `1` the check found errors or a step failed and was rolled back, `2` invalid
-input — nothing was changed. `--check` and `--promote` still work as aliases.
+input — nothing was changed, `130` cancelled with Ctrl+C (or a closed terminal, `kill`) and rolled
+back. `--check` and `--promote` still work as aliases. `--help`, `--version`, `--where`,
+`shell-init`, `guide` and `install-skills` work even when the settings file can't be read.
 
 What you get once setup is done:
 
