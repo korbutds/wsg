@@ -1509,6 +1509,28 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
 
   console.log('\nwsg guide, install-skills, the rest of the CLI');
   {
+    // A reader that closes the pipe early (`| true`, `| head`): the exit code stays the command's,
+    // no stack trace.
+    const wsP = path.join(wsRoot, 'epipe');
+    wsg(['new', 'epipe', '--no-launch']);
+    wsg(['add', web, '--link'], { cwd: wsP });
+    const closedOut = (args) => new Promise((resolve) => {
+      const c = require('node:child_process').spawn(process.execPath, [CLI, ...args], { cwd: wsP, env: ENV, stdio: ['ignore', 'pipe', 'pipe'] });
+      c.stdout.destroy();
+      let err = '';
+      c.stderr.on('data', (d) => { err += d; });
+      c.on('close', (status, signal) => resolve({ status, signal, err }));
+    });
+    const piped = await closedOut(['remove', 'web', '--dry-run']);
+    it('remove --dry-run with stdout closed: exit 0, no EPIPE', () => {
+      assert.strictEqual(piped.status, 0, `${piped.status} ${piped.signal} ${piped.err}`);
+      assert.doesNotMatch(piped.err, /EPIPE|Unhandled/);
+    });
+    const pipedBad = await closedOut(['remove', 'nope', '--dry-run']);
+    it('and a refused one still exits 2', () => {
+      assert.strictEqual(pipedBad.status, 2, `${pipedBad.status} ${pipedBad.signal} ${pipedBad.err}`);
+      assert.doesNotMatch(pipedBad.err, /EPIPE|Unhandled/);
+    });
     const g1 = wsg(['guide', 'setup']);
     const guide = fs.readFileSync(path.join(ROOT, 'docs', 'setup-guide.md'), 'utf8');
     it('wsg guide setup prints the guide', () => assert.strictEqual(g1.out, guide));

@@ -405,9 +405,19 @@ const COMMANDS = {
   const run = COMMANDS[cmd];
   if (!run) invalid(cmd.startsWith('-') ? t('cli.unknownArg', { arg: cmd }) : t('cli.unknownCommand', { cmd }));
   if (cfgError && !NO_CONFIG.has(cmd)) die(t('cli.cannotReadSettings', { msg: cfgError.message }));
+  // A reader that went away (`wsg remove --dry-run | head`): there is no one to show the rest to,
+  // and a stack trace would replace the exit code. The command finishes; its code is the exit code.
+  let code = null;
+  const onStreamError = (e) => {
+    if (!e || e.code !== 'EPIPE') throw e;
+    if (code !== null) process.exit(code);
+  };
+  process.stdout.on('error', onStreamError);
+  process.stderr.on('error', onStreamError);
   try {
-    const code = await run(rest);
+    code = await run(rest);
     // A pipe takes output asynchronously: exiting at once would cut a long --dry-run at 64 KiB.
+    // On a pipe gone the write fails, and its callback still runs.
     let pending = 2;
     const done = () => { if (--pending === 0) process.exit(code); };
     process.stdout.write('', done);
