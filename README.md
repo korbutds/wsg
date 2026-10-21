@@ -259,6 +259,10 @@ shows you the text before writing it.
   `.worktreeinclude`, and auto-cleanup. `wsg` helps where those fall short: a task spanning several
   repositories, a task knowledge layer, and a limits validator.
 - No command to delete a workspace — for now, three commands by hand.
+- **What `wsg remove` doesn't see.** A tracked file marked `skip-worktree` or `assume-unchanged`
+  and edited in the worktree looks clean to git: it is deleted with the worktree. If a removal
+  fails after the worktree is gone, the rollback adds the worktree back on the same branch, but
+  without the carried files and the ignored files you agreed to lose.
 - **Workspace trust.** Until Claude Code's trust dialog has been accepted once in a workspace (an
   interactive session there), a `claude -p` run in it ignores `permissions.allow` from its
   `.claude/settings.json` — Claude Code says so on stderr. The first `wsg new` launch is
