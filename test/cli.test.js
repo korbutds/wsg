@@ -828,6 +828,69 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       assert.match(rc.stderr, /another wsg command is running/);
     });
     fs.rmSync(lock, { force: true });
+
+    // Takeovers go one at a time: one in progress holds <lock>.takeover.
+    const takeover = `${raceLock}.takeover`;
+    const quietAcquire = () => {
+      const log = console.log;
+      console.log = () => {};
+      try { lockLib.acquire(wsR)(); return null; } catch (e) { return e; } finally { console.log = log; }
+    };
+    const staleLock = JSON.stringify({ pid: dead, time: '2026-01-01T00:00:00Z' });
+    fs.writeFileSync(raceLock, staleLock);
+    fs.writeFileSync(takeover, theirs);
+    const e3 = quietAcquire();
+    it('a takeover in progress: busy, naming the takeover lock, both files left alone', () => {
+      assert.ok(e3 && e3.invalid, String(e3));
+      assert.match(e3.message, /another wsg command is running[\s\S]*wsg\.lock\.takeover/);
+      assert.strictEqual(fs.readFileSync(raceLock, 'utf8'), staleLock);
+      assert.strictEqual(fs.readFileSync(takeover, 'utf8'), theirs);
+    });
+    // One left by a killed command: its pid is gone and it is old.
+    fs.writeFileSync(takeover, staleLock);
+    const old = new Date(Date.now() - 60000);
+    fs.utimesSync(takeover, old, old);
+    const e4 = quietAcquire();
+    it('a takeover lock left by a dead command is removed, and the lock taken over', () => {
+      assert.strictEqual(e4, null, String(e4));
+      assert.deepStrictEqual(fs.readdirSync(path.join(wsR, '.claude')), []);
+    });
+    // An empty one, old: stale too.
+    fs.writeFileSync(raceLock, staleLock);
+    fs.writeFileSync(takeover, '');
+    fs.utimesSync(takeover, old, old);
+    const e5 = quietAcquire();
+    it('an old empty takeover lock is stale too', () => {
+      assert.strictEqual(e5, null, String(e5));
+      assert.deepStrictEqual(fs.readdirSync(path.join(wsR, '.claude')), []);
+    });
+    // A lock just created and not yet written reads as empty: its holder is starting, not gone.
+    fs.writeFileSync(raceLock, '');
+    const e6 = quietAcquire();
+    it('an empty lock just made: busy, left alone', () => {
+      assert.ok(e6 && e6.invalid, String(e6));
+      assert.strictEqual(fs.readFileSync(raceLock, 'utf8'), '');
+    });
+    fs.writeFileSync(raceLock, 'not json');
+    const e7 = quietAcquire();
+    it('an unreadable lock just made: busy too', () => assert.ok(e7 && e7.invalid, String(e7)));
+    fs.utimesSync(raceLock, old, old);
+    const e8 = quietAcquire();
+    it('an old unreadable one is taken over', () => {
+      assert.strictEqual(e8, null, String(e8));
+      assert.deepStrictEqual(fs.readdirSync(path.join(wsR, '.claude')), []);
+    });
+
+    // The lock's own handler stands aside only for guarded(), not for any other listener.
+    const sigScript = `process.on('SIGINT', () => {});
+      require(${JSON.stringify(path.join(ROOT, 'lib', 'lock.js'))}).acquire(${JSON.stringify(wsR)});
+      process.kill(process.pid, 'SIGINT');
+      setTimeout(() => process.exit(0), 500);`;
+    const rs = spawnSync(process.execPath, ['-e', sigScript], { cwd: tmp, encoding: 'utf8', env: ENV });
+    it('Ctrl+C with the lock held outside guarded(): exit 130, the lock released', () => {
+      assert.strictEqual(rs.status, 130, rs.stdout + rs.stderr);
+      assert.ok(!fs.existsSync(raceLock));
+    });
     fs.rmSync(wsR, { recursive: true, force: true });
 
     // Ctrl+C while the source is still being resolved, before the rollback is armed: a git that
@@ -844,6 +907,22 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     it('and the lock is released', () => assert.ok(!fs.existsSync(lock)));
     it('and the workspace is as it was', () => assert.deepStrictEqual(tree(wsL), snapL));
     it('no branch is left', () => assert.ok(!branches(api).includes('task/lock-int')));
+
+    // promote is synchronous: no handler could run during it. Ctrl+C stops it as it always did,
+    // instead of being swallowed with exit 0; the lock left names a dead pid.
+    const gitPromote = path.join(tmp, 'git-interrupt-promote');
+    fs.mkdirSync(gitPromote);
+    fs.writeFileSync(path.join(gitPromote, 'git'),
+      `#!/bin/sh\ncase "$*" in *"rev-parse --show-toplevel"*) kill -INT 0; sleep 2;; esac\nexec ${realGit} "$@"\n`, { mode: 0o755 });
+    wsg(['new', 'prom-int', '--no-launch']);
+    const rp = spawnSync(process.execPath, [CLI, 'promote', 'prom-int', '--skill', 'weekly'],
+      { cwd: tmp, encoding: 'utf8', detached: true, env: { ...ENV, PATH: `${gitPromote}:${ENV.PATH}` } });
+    it('Ctrl+C during promote stops it, not exit 0', () => assert.strictEqual(rp.signal, 'SIGINT', `${rp.status} ${rp.signal} ${rp.stdout}${rp.stderr}`));
+    const after = wsg(['promote', 'prom-int', '--skill', 'weekly']);
+    it('the next command takes the lock it left over', () => {
+      assert.strictEqual(after.code, 0, after.all);
+      assert.match(after.out, /stale lock/);
+    });
   }
 
   console.log('\nwsg add: values that end up in markdown');

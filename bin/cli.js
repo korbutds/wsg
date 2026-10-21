@@ -117,9 +117,10 @@ const lib = (name) => require(path.join(ROOT, 'lib', `${name}.js`));
 const { FLAGS } = lib('flags');
 
 // add, remove and promote change wsg.json: one at a time per workspace (lib/lock.js).
-function lock(ws) {
+// opts: as acquire takes them.
+function lock(ws, opts) {
   try {
-    lib('lock').acquire(ws);
+    lib('lock').acquire(ws, opts);
   } catch (e) {
     if (e.invalid) invalid(e.message);
     throw e;
@@ -362,8 +363,9 @@ async function cmdPromote(args) {
     target = found ? found.ws : process.cwd();
   }
   // Only a directory that has .claude/ can be a workspace; promote refuses anything else itself.
+  // promote is synchronous to the end: a signal handler would never run, only swallow Ctrl+C.
   const ws = config.resolveWs(target, cfg);
-  if (fs.existsSync(path.join(ws, '.claude'))) lock(ws);
+  if (fs.existsSync(path.join(ws, '.claude'))) lock(ws, { signals: false });
   return lib('promote').run(target, cfg, { skillName: flags['--skill'] });
 }
 
