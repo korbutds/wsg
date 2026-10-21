@@ -631,6 +631,17 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       assert.match(r3.out, /WARN AGENTS\.md: the <!-- wsg:layout --> markers were missing/);
       assert.match(fs.readFileSync(agentsFile, 'utf8'), /## Layout\n<!-- wsg:layout -->\n- `web` — symlink/);
     });
+    // A formatter indented the pair: no second block next to it, a refusal naming the line.
+    const flat = fs.readFileSync(agentsFile, 'utf8');
+    const shifted = flat.replace(/^(<!-- \/?wsg:layout -->)$/gm, '  $1');
+    fs.writeFileSync(agentsFile, shifted);
+    const r4 = wsg(['add', docs, '--reference'], { cwd: wsM });
+    it('an indented pair refuses the add: exit 2, naming the line', () => {
+      assert.strictEqual(r4.code, 2, r4.all);
+      const line = shifted.split('\n').indexOf('  <!-- wsg:layout -->') + 1;
+      assert.match(r4.err, new RegExp(`AGENTS\\.md: line ${line} holds a <!-- wsg:layout --> marker indented`));
+      assert.strictEqual(fs.readFileSync(agentsFile, 'utf8'), shifted);
+    });
   }
 
   console.log('\nwsg add: writes stay inside the workspace');

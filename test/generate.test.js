@@ -139,6 +139,12 @@ process.on('exit', () => {
     it('--check skips an import inside a 4-backtick fence holding a ``` line', () => assert.strictEqual(quiet(() => check.run(ws, cfg)), 0));
     fs.writeFileSync(agentsMd, agentsOrig + '\n````md\n```\n````\n\n@docs/missing.md\n');
     it('--check still fails a broken import after such a fence', () => assert.strictEqual(quiet(() => check.run(ws, cfg)), 1));
+    // An indented ``` in a list item's example doesn't close the column-0 fence around it.
+    fs.writeFileSync(agentsMd, agentsOrig + '\n```markdown\n- run:\n\n    ```bash\n    npm test\n    ```\n@docs/missing.md\n```\n');
+    it('--check skips an import in a fence after an indented ``` line', () => assert.strictEqual(quiet(() => check.run(ws, cfg)), 0));
+    // A lone ``` in an indented code block opens no fence: nothing is left unclosed.
+    fs.writeFileSync(agentsMd, agentsOrig + '\nTo open a fence type:\n\n    ```\n\nDone.\n');
+    it('--check passes a lone ``` in indented code', () => assert.strictEqual(quiet(() => check.run(ws, cfg)), 0));
     fs.writeFileSync(agentsMd, agentsOrig);
   }
 
@@ -1051,29 +1057,53 @@ process.on('exit', () => {
 
   console.log('\ncode fences are read as CommonMark reads them');
   {
-    const open = (lines) => generate.openFence(lines.join('\n'));
-    const closed = [
-      ['a 4-backtick fence holding a 3-backtick line', ['````md', '```sh', 'npm test', '````', 'text']],
-      ['a line of inline code that starts with three backticks', ['```wsg add``` is the command', 'text']],
-      ['a ``` line in a 4-space indented code block, closed in the same indent', ['para', '', '    ```', '    code', '    ```', 'text']],
-      ['a fence in a list item, indented 4 spaces', ['1.  Example:', '', '    ```md', '    <!-- wsg:layout -->', '    x', '    <!-- /wsg:layout -->', '    ```', 'text']],
-      ['a fence in a list item, closed at a different indent', ['- step', '', '    ```sh', '    npm test', '  ```', 'text']],
-      ['a ~~~ fence', ['~~~', '```', 'inside', '~~~']],
-      ['a ~~~ fence closed by a longer run', ['~~~', 'x', '~~~~~']],
-      ['a closer indented, spaces after it', ['```', 'x', '      ```  ']],
-      ['CRLF line endings', ['```sh', 'npm test', '```', 'text'].map((l) => `${l}\r`)],
-      ['CRLF around a 4-backtick fence', ['````', '```', '````', ''].map((l) => `${l}\r`)],
+    // One table for every case, generate and check read fences through the same function. open: the
+    // fence left unclosed, as [line, the closer it needs]; inside: the lines in a fence, 1-based.
+    const range = (a, b) => Array.from({ length: b - a + 1 }, (_, i) => a + i);
+    const crlf = (lines) => lines.map((l) => `${l}\r`);
+    const table = [
+      ['a 4-backtick fence holding a 3-backtick fence', ['````md', '```sh', 'npm test', '```', '````', 'text'], null, range(1, 5)],
+      ['a 4-backtick fence holding a lone ``` line', ['````md', '```sh', 'npm test', '````', 'text'], null, range(1, 4)],
+      ['a line of inline code starting with ```', ['```wsg add``` is the command', 'text'], null, []],
+      ['a ~~~ fence holding ```', ['~~~', '```', 'inside', '~~~', 'text'], null, range(1, 4)],
+      ['a ``` fence holding ~~~', ['```', '~~~', 'inside', '```', 'text'], null, range(1, 4)],
+      ['a ~~~ fence closed by a longer run', ['~~~', 'x', '~~~~~', 'text'], null, range(1, 3)],
+      ['unclosed: a 4-backtick fence is not closed by 3', ['a', '````sh', 'x', '```'], [2, '````'], range(2, 4)],
+      ['unclosed: a ``` fence is not closed by ~~~', ['```', '~~~'], [1, '```'], range(1, 2)],
+      ['unclosed: a ~~~~ fence is not closed by ~~~', ['~~~~', '~~~'], [1, '~~~~'], range(1, 2)],
+      ['unclosed: a closer with text after it is not one', ['```', 'x', '``` not a closer'], [1, '```'], range(1, 3)],
+      ['unclosed: a tilde info string may hold backticks', ['', '~~~ `x`', 'y'], [2, '~~~'], range(2, 3)],
+      ['unclosed: a closer indented 4 past the opener is content', ['```', 'x', '    ```'], [1, '```'], range(1, 3)],
+      ['a closer indented 3, spaces after it', ['```', 'x', '   ```  ', 'text'], null, range(1, 3)],
+      ['CRLF', crlf(['```sh', 'npm test', '```', 'text']), null, range(1, 3)],
+      ['CRLF around a 4-backtick fence', crlf(['````', '```', '````', '']), null, range(1, 3)],
+      ['unclosed: CRLF', crlf(['x', '```sh', 'y']), [2, '```'], range(2, 3)],
+      ['a fence in a list item, at indent 4, closed at 4', ['1.  Example:', '', '    ```md', '    <!-- wsg:layout -->', '    x', '    <!-- /wsg:layout -->', '    ```', 'text'], null, range(3, 7)],
+      ['a fence in a list item, opened at 4, closed at 2', ['- step', '', '    ```sh', '    npm test', '  ```', 'text'], null, range(3, 5)],
+      ['a fence in a nested list item', ['- a', '  - b', '', '      ```sh', '      x', '      ```', 'text'], null, range(4, 6)],
+      ['a fence opened on the list item line', ['- ```sh', '  npm test', '  ```', 'text'], null, range(1, 3)],
+      ['unclosed: a fence opened on the list item line', ['1. ```sh', '   npm test'], [1, '```'], range(1, 2)],
+      ['a column-0 fence holding a list item with an indented fence', ['```markdown', '- run:', '', '    ```bash', '    npm test', '    ```', '```', 'text'], null, range(1, 7)],
+      ['a lone ``` in an indented code block', ['To open a fence type:', '', '    ```', '', 'text'], null, []],
+      ['a ``` pair in an indented code block', ['para', '', '    ```', '    code', '    ```', 'text'], null, []],
+      ['an indented ``` continuing a paragraph', ['para', '    ```', 'text'], null, []],
+      ['a list ended by a paragraph: indented ``` is code again', ['- item', '', 'para', '', '    ```', 'text'], null, []],
+      ['indented code inside a list item', ['- step', '', '        ```', 'text'], null, []],
+      // wsg doesn't read blockquotes; a fence there is text, opened or not.
+      ['a fence in a blockquote is not read', ['> ```sh', '> x', 'text'], null, []],
+      ['tabs: a fence in a list item indented by a tab', ['- step', '', '\t```sh', '\tnpm test', '\t```', 'text'], null, range(3, 5)],
+      ['tabs: a tab-indented ``` after a paragraph is code', ['para', '', '\t```', 'text'], null, []],
+      ['tabs: a tab after the closer', ['```', 'x', '```\t', 'text'], null, range(1, 3)],
     ];
-    for (const [name, lines] of closed) it(`closed: ${name}`, () => assert.strictEqual(open(lines), null));
-    const unclosed = [
-      ['a 4-backtick fence is not closed by 3', ['a', '````sh', 'x', '```'], { line: 2, fence: '````' }],
-      ['a ``` fence is not closed by ~~~', ['```', '~~~'], { line: 1, fence: '```' }],
-      ['a ~~~~ fence is not closed by ~~~', ['~~~~', '~~~'], { line: 1, fence: '~~~~' }],
-      ['a closer with text after it is not one', ['```', 'x', '``` not a closer'], { line: 1, fence: '```' }],
-      ['a tilde info string may hold backticks', ['', '~~~ `x`', 'y'], { line: 2, fence: '~~~' }],
-      ['CRLF', ['x', '```sh', 'y'].map((l) => `${l}\r`), { line: 2, fence: '```' }],
-    ];
-    for (const [name, lines, want] of unclosed) it(`unclosed: ${name}`, () => assert.deepStrictEqual(open(lines), want));
+    for (const [name, lines, open, inside] of table) {
+      it(`fences: ${name}`, () => {
+        const r = generate.fencedLines(lines);
+        assert.deepStrictEqual(
+          { open: r.open, inside: r.inside.flatMap((x, i) => (x ? [i + 1] : [])) },
+          { open: open && { line: open[0], closer: open[1] }, inside });
+        assert.deepStrictEqual(generate.openFence(lines.join('\n')), r.open);
+      });
+    }
     // The inner ``` doesn't close the outer fence: the quoted pair after it is still code.
     const quoted = '# x\n\n````md\n```\n<!-- wsg:layout -->\nexample\n<!-- /wsg:layout -->\n````\n\n## Layout\n\n<!-- wsg:layout -->\nold\n<!-- /wsg:layout -->\n';
     it('markers inside a 4-backtick fence are text, not the block', () => {
@@ -1096,6 +1126,19 @@ process.on('exit', () => {
       const r = generate.replaceBlock(indented, 'AGENTS.md', 'layout', ['new'], /^## Layout/m);
       assert.ok(r.text.includes('- like this:\n  <!-- wsg:layout -->\n'), r.text);
       assert.match(r.text, /<!-- wsg:layout -->\nnew\n<!-- \/wsg:layout -->/);
+    });
+    // With no pair at column 0, an indented marker is the real one moved by an edit: refused, not
+    // taken for an example with a second block added next to it.
+    const movedPair = '# x\n\n## Layout\n\n  <!-- wsg:layout -->\n  old\n  <!-- /wsg:layout -->\n';
+    it('an indented pair with none at column 0 is refused, naming the line', () => assert.throws(
+      () => generate.replaceBlock(movedPair, 'AGENTS.md', 'layout', ['new'], /^## Layout/m),
+      /AGENTS\.md: line 5 holds a <!-- wsg:layout --> marker indented/));
+    it('so is an indented closing marker alone', () => assert.throws(
+      () => generate.replaceBlock('## Layout\n\n\t<!-- /wsg:layout -->\n', 'AGENTS.md', 'layout', ['new'], /^## Layout/m),
+      /AGENTS\.md: line 3 holds a <!-- wsg:layout --> marker indented/));
+    it('an indented marker in a fence is still an example', () => {
+      const r = generate.replaceBlock('## Layout\n\n```\n  <!-- wsg:layout -->\n```\n', 'AGENTS.md', 'layout', ['new'], /^## Layout/m);
+      assert.strictEqual(r.restored, true);
     });
     it('a real marker with trailing spaces still counts', () => {
       const r = generate.replaceBlock('## Layout\n\n<!-- wsg:layout -->  \nold\n<!-- /wsg:layout -->\n', 'AGENTS.md', 'layout', ['new'], /^## Layout/m);
