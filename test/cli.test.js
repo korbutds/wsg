@@ -1838,6 +1838,28 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     });
     it('the guide says how to record a ticket after wsg new', () => assert.match(guide, /`Ticket:` line[\s\S]{0,200}WSG_TRACKER_URL/));
     it('the guide says what --dry-run needs', () => assert.match(guide, /--dry-run[\s\S]{0,300}--branch/));
+    // The advisor at each point where the setup would otherwise put questions to the owner.
+    const part = (from, to) => guide.slice(guide.indexOf(from), to ? guide.indexOf(to) : undefined);
+    it('ground rules: questions go through the advisor, the owner sees only OWNER and THIRD-PARTY', () => {
+      const p = part('## Ground rules', '## 1.');
+      assert.match(p, /`wsg-advisor`/);
+      assert.match(p, /`wsg guide advisor`/);
+      assert.match(p, /OWNER and THIRD-PARTY/);
+      assert.match(p, /Never say the advisor ran when it did not/);
+    });
+    it('section 1 starts with context from the advisor and checks the draft', () => assert.match(part('## 1.', 'Go through these in order'), /advisor[\s\S]*draft/));
+    it('section 2 has a plan review before the "ok"', () => {
+      const p = part('## 2.', '## 3.');
+      assert.ok(p.indexOf('plan review') > 0 && p.indexOf('plan review') < p.indexOf('**Wait for "ok"**'));
+      assert.match(p, /plan review[\s\S]{0,200}wsg remove <name> --dry-run/);
+    });
+    it('section 4 carries unresolved OWNER items into the summary', () => assert.match(part('## 4.', '## Running setup again'), /OWNER items the advisor left/));
+    it('the wsg-setup skill points to the advisor', () => {
+      const text = fs.readFileSync(path.join(ROOT, 'templates', 'claude', 'wsg-setup', 'SKILL.md'), 'utf8');
+      assert.match(text, /`wsg-advisor` subagent first \(without it,\n`wsg guide advisor` followed inline\)/);
+    });
+    it('running setup again names wsg refresh', () => assert.match(part('## Running setup again'), /`wsg refresh --dry-run`[\s\S]*`wsg refresh`/));
+
 
     const skill = path.join(claudeDir, 'skills', 'wsg-new', 'SKILL.md');
     const i1 = wsg(['install-skills']);

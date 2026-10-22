@@ -10,3 +10,6 @@ Run `wsg guide setup` and follow it for: $ARGUMENTS
 
 With nothing after the command, go through the guide from the start; in a workspace that is
 already set up, fill only the gaps. Without `wsg` on PATH, use `npx @korbutds/wsg` instead.
+
+Questions and decisions for the owner go through the `wsg-advisor` subagent first (without it,
+`wsg guide advisor` followed inline), as the guide says.

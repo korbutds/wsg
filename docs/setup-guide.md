@@ -15,8 +15,16 @@ worktrees, branch backups, copying files outside git, settings — and checks th
 - Look before you ask: whatever the repositories can tell you, find out yourself and propose it.
 - During setup never edit anything inside a repository, never commit, never push.
 - Run `wsg` from the workspace root. If `wsg` is not on PATH, use `npx @korbutds/wsg`.
+- Before you show the owner any list of questions or decisions, run it through the `wsg-advisor`
+  subagent — or, if your tool has none or it does not start, through `wsg guide advisor` followed
+  inline. Show the owner only its OWNER and THIRD-PARTY items, plus one line for the rest ("N
+  answered by checks, K context items found"). Never say the advisor ran when it did not.
 
 ## 1. The task
+
+Start with context: if the owner gave a ticket or a spec, send them to the advisor first (stage
+setup) — it reads the ticket, its comments and links, and the sibling workspaces that met the same
+ticket. Propose what that context answers; check your draft with the advisor before you show it.
 
 Go through these in order. Each answer goes into its section of `AGENTS.md`, replacing `FILL IN`.
 
@@ -85,6 +93,10 @@ the owner names:
      comma-separated list (`all` by default);
    - **node_modules** — clone it from the main checkout (APFS copy-on-write, macOS; the default
      when it has one) or install later: `--clone-node-modules` / `--no-clone-node-modules`.
+
+   Before you show it, send the planned `wsg add` commands to the advisor for a plan review — and,
+   when a source is being fixed, its `wsg remove <name> --dry-run` too. Fix what it flags; what it
+   leaves to the owner goes into the proposal.
 3. **Wait for "ok"**, then run it, e.g.:
 
    ```bash
@@ -132,7 +144,8 @@ the owner asks.
 2. Update `notes.md` → "Current context": remove "Setup not finished", write one line on where the
    work stands and what the first session should do (usually: reconnaissance, no edits).
 3. Show the owner a short summary: the task in one line, the sources with their branches, the
-   verification command, anything left open.
+   verification command, anything left open — including the OWNER items the advisor left
+   unresolved.
 4. Tell them whether to restart the session. It is needed when `wsg add` printed
    "settings.json changed: restart…" — linked directories become readable only in a new session.
    Worktrees are inside the workspace and need no restart. To restart: `ws <slug>` (if the `ws`
