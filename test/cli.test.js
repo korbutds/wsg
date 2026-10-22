@@ -1507,6 +1507,11 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     const renamed = JSON.parse(rm(['big-repo', '--dry-run']).out).errors.join('\n');
     it('a staged rename is shown as old -> new', () => assert.match(renamed, /\n {4}R {2}a\.ts -> b\.ts(\n|$)/));
     git(bigWt, ['mv', 'b.ts', 'a.ts']);
+    // A name holding " -> " is quoted: otherwise a -> b -> c.ts doesn't say which name is which.
+    git(bigWt, ['mv', 'a.ts', 'b -> c.ts']);
+    const arrowed = JSON.parse(rm(['big-repo', '--dry-run']).out).errors.join('\n');
+    it('a name holding " -> " is quoted', () => assert.match(arrowed, /\n {4}R {2}a\.ts -> "b -> c\.ts"(\n|$)/));
+    git(bigWt, ['mv', 'b -> c.ts', 'a.ts']);
 
     const bigOk = rm(['big-repo']);
     it('once git can list them, the source is removed', () => assert.strictEqual(bigOk.code, 0, bigOk.all));
