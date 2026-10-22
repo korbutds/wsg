@@ -152,7 +152,8 @@ For each `wsg add` or `wsg remove` command in the brief:
   A `node_modules` wsg cloned is not checked, and a tracked file marked `skip-worktree` or
   `assume-unchanged` and edited in the worktree is not seen.
 - **Generated parts.** Text between `<!-- wsg:… -->` markers in `AGENTS.md`, `CLAUDE.md` and
-  `README.md` is rendered from `.claude/wsg.json`; nobody edits it by hand, nor `.claude/wsg.json`.
+  `README.md` is rendered from `.claude/wsg.json` by `wsg add`, `wsg remove` and `wsg refresh`;
+  nobody edits it by hand, nor `.claude/wsg.json`.
   A source attached with the wrong flags is fixed by `wsg remove` and `wsg add` again.
 - **Push and MR** are the owner's: the workspace settings deny `git push`.
 - **Dry runs and checks** change nothing: `wsg add <path> … --dry-run`, `wsg remove <name> --dry-run`,

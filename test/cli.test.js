@@ -706,6 +706,95 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     it('a process workspace has it too', () => assert.match(fs.readFileSync(path.join(wsP, 'AGENTS.md'), 'utf8'), /^This is a process workspace[^\n]*\n<!-- wsg:advisor -->\n/m));
   }
 
+  console.log('\nwsg refresh');
+  {
+    const wsR = path.join(wsRoot, 'refresh');
+    wsg(['new', 'refresh', '--no-launch']);
+    wsg(['add', web, '--link'], { cwd: wsR });
+    const agentsFile = path.join(wsR, 'AGENTS.md');
+    const current = fs.readFileSync(agentsFile, 'utf8');
+    const before = tree(wsR);
+    const r0 = wsg(['refresh'], { cwd: wsR });
+    it('an up-to-date workspace: nothing to do, exit 0', () => {
+      assert.strictEqual(r0.code, 0, r0.all);
+      assert.match(r0.out, /up to date/);
+      assert.deepStrictEqual(tree(wsR), before);
+    });
+    // As a 0.2.0 workspace: no advisor block, and an owner's note outside the markers.
+    const old = current.replace(/<!-- wsg:advisor -->\n[\s\S]*?<!-- \/wsg:advisor -->\n/, '').replace('## Code map', 'Owner note.\n\n## Code map');
+    fs.writeFileSync(agentsFile, old);
+    const oldTree = tree(wsR);
+    const d1 = wsg(['refresh', '--dry-run'], { cwd: wsR });
+    let plan = null;
+    try { plan = JSON.parse(d1.out); } catch { /* reported below */ }
+    it('--dry-run lists the files it would change, as JSON, touching nothing', () => {
+      assert.strictEqual(d1.code, 0, d1.all);
+      assert.deepStrictEqual(plan.files, ['AGENTS.md']);
+      assert.strictEqual(plan.workspace, wsR);
+      assert.ok(plan.warnings.some((w) => /added the <!-- wsg:advisor --> block/.test(w)), JSON.stringify(plan.warnings));
+      assert.deepStrictEqual(tree(wsR), oldTree);
+    });
+    const r1 = wsg(['refresh'], { cwd: wsR });
+    it('wsg refresh adds the block, and says which files it updated', () => {
+      assert.strictEqual(r1.code, 0, r1.all);
+      assert.match(r1.out, /added the <!-- wsg:advisor --> block \(new in wsg 0\.3\.0\)/);
+      assert.match(r1.out, /Updated: AGENTS\.md/);
+    });
+    it('and changes nothing else', () => {
+      assert.strictEqual(fs.readFileSync(agentsFile, 'utf8'), current.replace('## Code map', 'Owner note.\n\n## Code map'));
+      const now = tree(wsR);
+      delete now['AGENTS.md'];
+      delete oldTree['AGENTS.md'];
+      assert.deepStrictEqual(now, oldTree);
+    });
+    it('the lock is released', () => assert.ok(!fs.existsSync(path.join(wsR, '.claude', 'wsg.lock'))));
+    it('--ws names the workspace from outside', () => {
+      const r = wsg(['refresh', '--ws', 'refresh']);
+      assert.strictEqual(r.code, 0, r.all);
+      assert.match(r.out, /up to date/);
+    });
+    fs.writeFileSync(agentsFile, current.replace('<!-- /wsg:layout -->\n', ''));
+    const broken = fs.readFileSync(agentsFile, 'utf8');
+    const r2 = wsg(['refresh'], { cwd: wsR });
+    it('a broken pair refuses it: exit 2, nothing changed', () => {
+      assert.strictEqual(r2.code, 2, r2.all);
+      assert.match(r2.err, /wsg:layout --> block has 1 opening and 0 closing markers/);
+      assert.strictEqual(fs.readFileSync(agentsFile, 'utf8'), broken);
+    });
+    const d2 = wsg(['refresh', '--dry-run'], { cwd: wsR });
+    it('and its dry run reports the error: exit 2', () => {
+      assert.strictEqual(d2.code, 2, d2.all);
+      assert.match(JSON.parse(d2.out).errors[0], /1 opening and 0 closing/);
+    });
+    fs.writeFileSync(agentsFile, current);
+    // settings.json that lost a linked directory: put back, with the restart notice.
+    const settingsFile = path.join(wsR, '.claude', 'settings.json');
+    const sj = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
+    delete sj.permissions.additionalDirectories;
+    fs.writeFileSync(settingsFile, `${JSON.stringify(sj, null, 2)}\n`);
+    const r3 = wsg(['refresh'], { cwd: wsR });
+    it('a linked directory missing from settings.json is put back, with the restart notice', () => {
+      assert.strictEqual(r3.code, 0, r3.all);
+      assert.deepStrictEqual(JSON.parse(fs.readFileSync(settingsFile, 'utf8')).permissions.additionalDirectories, [web]);
+      assert.match(r3.out, /restart the agent session/);
+    });
+    it('outside a workspace: exit 2', () => assert.strictEqual(wsg(['refresh']).code, 2));
+    it('an unknown flag: exit 2', () => assert.strictEqual(wsg(['refresh', '--force'], { cwd: wsR }).code, 2));
+    it('an extra argument: exit 2', () => assert.strictEqual(wsg(['refresh', 'x'], { cwd: wsR }).code, 2));
+    // A 0.1 workspace has no state to render from.
+    const legacy = path.join(wsRoot, 'legacy-refresh');
+    fs.mkdirSync(path.join(legacy, '.claude'), { recursive: true });
+    fs.writeFileSync(path.join(legacy, '.claude', 'ws-kind'), 'task\n');
+    fs.writeFileSync(path.join(legacy, 'AGENTS.md'), '# old\n');
+    const r4 = wsg(['refresh', '--ws', legacy]);
+    it('a 0.1 workspace is refused: exit 2, untouched', () => {
+      assert.strictEqual(r4.code, 2, r4.all);
+      assert.match(r4.err, /created by wsg 0\.1/);
+      assert.strictEqual(fs.readFileSync(path.join(legacy, 'AGENTS.md'), 'utf8'), '# old\n');
+    });
+    it('the usage names it', () => assert.match(wsg(['--help']).out, /wsg refresh \[--dry-run\] \[--ws SLUG\|PATH\]/));
+  }
+
   console.log('\nwsg add: writes stay inside the workspace');
   {
     const wsS = path.join(wsRoot, 'safe');

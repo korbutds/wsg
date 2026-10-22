@@ -144,3 +144,7 @@ the owner asks.
 
 `/wsg-setup` (or this guide) can be run again at any time. Then don't start over: read the files,
 fill only what is still `FILL IN`, attach the sources the owner adds, and finish with section 4.
+
+A workspace made by an earlier wsg may lack a generated part this version writes (`wsg check`
+says so): `wsg refresh --dry-run` lists the files it would change, `wsg refresh` updates only the
+generated parts and leaves everything else as it is.

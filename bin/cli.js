@@ -343,6 +343,50 @@ async function cmdRemove(args) {
   return 0;
 }
 
+// Brings the generated parts in line with this wsg and the state: a block new in this version, or
+// markers deleted by hand. Nothing else is touched; --dry-run lists what would change.
+function cmdRefresh(args) {
+  const { flags } = parse(args, FLAGS.refresh, 0);
+  const found = targetWs(flags['--ws']);
+  if (!found) invalid(t('cli.notInWorkspace'));
+  if (found.legacy) invalid(t('cli.legacyWorkspace', { ws: found.ws }));
+  const { ws } = found;
+  const generate = lib('generate');
+  const W = lib('workspace');
+  const ui = lib('ui');
+  if (flags['--dry-run']) {
+    let rendered = null;
+    let error = '';
+    try {
+      rendered = generate.computeRender(ws, W.readState(ws), null);
+    } catch (e) {
+      error = e.message;
+    }
+    process.stdout.write(`${JSON.stringify({
+      workspace: ws,
+      files: rendered ? generate.changedFiles(rendered) : [],
+      settingsChanged: rendered ? rendered.settingsChanged : false,
+      errors: error ? [error] : [],
+      warnings: rendered ? rendered.warnings : [],
+    }, null, 2)}\n`);
+    return error ? INVALID : 0;
+  }
+  lock(ws);
+  guardPlatform();
+  let rendered;
+  try {
+    // Everything is computed before the first write: a broken pair refuses it with nothing changed.
+    rendered = generate.renderGenerated(ws);
+  } catch (e) {
+    invalid(e.message);
+  }
+  const files = generate.changedFiles(rendered);
+  if (files.length) ui.head(t('cli.refreshed', { list: files.join(', ') }));
+  else ui.ok(t('cli.refreshNone'));
+  if (rendered.settingsChanged) ui.info(t('cli.refreshRestart'));
+  return 0;
+}
+
 function cmdCheck(args) {
   const { pos } = parse(args, FLAGS.check, 1);
   let ws;
@@ -408,6 +452,7 @@ const COMMANDS = {
   new: cmdNew,
   add: cmdAdd,
   remove: cmdRemove,
+  refresh: cmdRefresh,
   check: cmdCheck,
   promote: cmdPromote,
   'install-skills': cmdInstallSkills,
