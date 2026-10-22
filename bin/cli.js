@@ -371,10 +371,22 @@ async function cmdPromote(args) {
 }
 
 function cmdInstallSkills(args) {
-  parse(args, FLAGS['install-skills'], 0);
+  const { flags } = parse(args, FLAGS['install-skills'], 0);
   const ui = lib('ui');
+  const skills = lib('skills');
   let code = 0;
-  for (const { file, status } of lib('skills').install()) {
+  if (flags['--uninstall']) {
+    for (const { file, status } of skills.uninstall()) {
+      if (status === 'removed') ui.ok(t('cli.skillRemoved', { file }));
+      else if (status === 'absent') ui.ok(t('cli.skillAbsent', { file }));
+      else {
+        ui.fail(t('cli.skillNotOurs', { file }));
+        code = 1;
+      }
+    }
+    return code;
+  }
+  for (const { file, status } of skills.install()) {
     if (status === 'written') ui.ok(t('cli.skillWritten', { file }));
     else if (status === 'unchanged') ui.ok(t('cli.skillUnchanged', { file }));
     else {

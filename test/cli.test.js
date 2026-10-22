@@ -1635,6 +1635,50 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       assert.ok(fs.existsSync(path.join(home, '.claude', 'skills', 'wsg-new', 'SKILL.md')));
     });
 
+    // --uninstall takes back only what install wrote: a file without the marker stays, exit 1.
+    const S = require(path.join(ROOT, 'lib', 'skills.js'));
+    it('install-skills --uninstall: an owner\'s file without the marker is kept, exit 1', () => {
+      const u = wsg(['install-skills', '--uninstall']);
+      assert.strictEqual(u.code, 1, u.all);
+      assert.match(u.out, /kept/);
+      assert.strictEqual(fs.readFileSync(skill, 'utf8'), '---\nname: wsg-new\n---\nmy own\n');
+    });
+    fs.rmSync(skill);
+    wsg(['install-skills']);
+    fs.writeFileSync(path.join(claudeDir, 'skills', 'other.md'), 'not ours\n');
+    const u1 = wsg(['install-skills', '--uninstall']);
+    it('--uninstall removes every file it wrote: exit 0', () => {
+      assert.strictEqual(u1.code, 0, u1.all);
+      assert.match(u1.out, /removed/);
+      for (const { file } of S.status({ ...ENV })) assert.ok(!fs.existsSync(file), file);
+    });
+    it('and the skill directory it emptied, but not skills/ itself', () => {
+      assert.ok(!fs.existsSync(path.dirname(skill)));
+      assert.strictEqual(fs.readFileSync(path.join(claudeDir, 'skills', 'other.md'), 'utf8'), 'not ours\n');
+    });
+    const u2 = wsg(['install-skills', '--uninstall']);
+    it('--uninstall again: nothing installed, exit 0', () => {
+      assert.strictEqual(u2.code, 0, u2.all);
+      assert.match(u2.out, /not installed/);
+    });
+    it('--uninstall takes no value: exit 2', () => assert.strictEqual(wsg(['install-skills', '--uninstall=1']).code, 2));
+    it('an outdated file it wrote is reported as outdated, an edited one without the marker as unmarked', () => {
+      const env = { HOME: home, CLAUDE_CONFIG_DIR: path.join(tmp, 'status-claude'), CODEX_HOME: path.join(tmp, 'status-codex') };
+      assert.deepStrictEqual(S.status(env).map((x) => x.status), S.ITEMS.map(() => 'missing'));
+      S.install(env);
+      assert.deepStrictEqual(S.status(env).map((x) => x.status), S.ITEMS.map(() => 'current'));
+      for (const { file } of S.status(env)) fs.appendFileSync(file, 'old\n');
+      assert.deepStrictEqual(S.status(env).map((x) => x.status), S.ITEMS.map(() => 'outdated'));
+      for (const { file } of S.status(env)) fs.writeFileSync(file, 'mine\n');
+      assert.deepStrictEqual(S.status(env).map((x) => x.status), S.ITEMS.map(() => 'unmarked'));
+    });
+    it('an empty CLAUDE_CONFIG_DIR or CODEX_HOME means the default under HOME', () => {
+      assert.strictEqual(S.configDir({ HOME: home, CLAUDE_CONFIG_DIR: '' }), path.join(home, '.claude'));
+      assert.strictEqual(S.codexDir({ HOME: home, CODEX_HOME: '' }), path.join(home, '.codex'));
+      assert.strictEqual(S.codexDir({ HOME: home, CODEX_HOME: '/x/codex' }), '/x/codex');
+    });
+    wsg(['install-skills']);
+
     const bare = wsg([]);
     it('bare wsg prints the usage and exits 0', () => {
       assert.strictEqual(bare.code, 0);
