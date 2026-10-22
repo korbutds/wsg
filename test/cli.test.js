@@ -1576,23 +1576,32 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     // Every wsg command and flag the guide names exists, and every flag of add and remove is named:
     // an agent follows the guide literally, and an unknown flag is exit 2 in the middle of setup.
     const { FLAGS, GLOBAL } = require(path.join(ROOT, 'lib', 'flags.js'));
-    const spans = [];
-    let fence = false;
-    for (const line of guide.split('\n')) {
-      if (/^\s*```/.test(line)) { fence = !fence; continue; }
-      if (fence) spans.push(line.trim());
-      else for (const m of line.matchAll(/`([^`]+)`/g)) spans.push(m[1]);
-    }
-    const allFlags = new Set([...GLOBAL, ...Object.values(FLAGS).flatMap(Object.keys)]);
-    const problems = [];
-    for (const span of spans) {
-      for (const m of span.matchAll(/(?:^|[\s(])wsg\s+([a-z][a-z-]*)([^|&;]*)/g)) {
-        const cmd = m[1];
-        if (!FLAGS[cmd]) { problems.push(`unknown command: wsg ${cmd}`); continue; }
-        for (const f of m[2].match(/--[a-z][a-z-]*/g) || []) if (!(f in FLAGS[cmd])) problems.push(`wsg ${cmd} has no ${f}`);
+    // The code spans of a markdown text: `inline` ones and the lines of fenced blocks.
+    const codeSpans = (text) => {
+      const out = [];
+      let fence = false;
+      for (const line of text.split('\n')) {
+        if (/^\s*```/.test(line)) { fence = !fence; continue; }
+        if (fence) out.push(line.trim());
+        else for (const m of line.matchAll(/`([^`]+)`/g)) out.push(m[1]);
       }
-      if (/^--[a-z]/.test(span)) for (const f of span.match(/--[a-z][a-z-]*/g)) if (!allFlags.has(f)) problems.push(`no such flag: ${f}`);
-    }
+      return out;
+    };
+    const allFlags = new Set([...GLOBAL, ...Object.values(FLAGS).flatMap(Object.keys)]);
+    const flagProblems = (text) => {
+      const out = [];
+      for (const span of codeSpans(text)) {
+        for (const m of span.matchAll(/(?:^|[\s(])wsg\s+([a-z][a-z-]*)([^|&;]*)/g)) {
+          const cmd = m[1];
+          if (!FLAGS[cmd]) { out.push(`unknown command: wsg ${cmd}`); continue; }
+          for (const f of m[2].match(/--[a-z][a-z-]*/g) || []) if (!(f in FLAGS[cmd])) out.push(`wsg ${cmd} has no ${f}`);
+        }
+        if (/^--[a-z]/.test(span)) for (const f of span.match(/--[a-z][a-z-]*/g)) if (!allFlags.has(f)) out.push(`no such flag: ${f}`);
+      }
+      return out;
+    };
+    const spans = codeSpans(guide);
+    const problems = flagProblems(guide);
     it('every wsg command and flag in the guide exists', () => assert.deepStrictEqual(problems, []));
     it('the guide names every flag of add and remove', () => {
       const named = new Set(spans.flatMap((x) => x.match(/--[a-z][a-z-]*/g) || []));
@@ -1655,6 +1664,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     it('and the skill directory it emptied, but not skills/ itself', () => {
       assert.ok(!fs.existsSync(path.dirname(skill)));
       assert.strictEqual(fs.readFileSync(path.join(claudeDir, 'skills', 'other.md'), 'utf8'), 'not ours\n');
+      assert.ok(fs.statSync(path.join(claudeDir, 'agents')).isDirectory(), 'agents/ is the user\'s, never removed');
     });
     const u2 = wsg(['install-skills', '--uninstall']);
     it('--uninstall again: nothing installed, exit 0', () => {
@@ -1679,6 +1689,72 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     });
     wsg(['install-skills']);
 
+    // The advisor: a thin agent file, the procedure in docs/advisor-guide.md.
+    const advisorGuide = fs.readFileSync(path.join(ROOT, 'docs', 'advisor-guide.md'), 'utf8');
+    const agentTpl = fs.readFileSync(path.join(ROOT, 'templates', 'claude', 'agents', 'wsg-advisor.md'), 'utf8');
+    const agentFile = path.join(claudeDir, 'agents', 'wsg-advisor.md');
+    it('install-skills writes the wsg-advisor agent', () => assert.strictEqual(fs.readFileSync(agentFile, 'utf8'), agentTpl));
+    // Frontmatter Claude Code reads: first in the file, one line per key.
+    const front = (text) => {
+      const m = text.match(/^---\n([\s\S]*?)\n---\n/);
+      if (!m) return null;
+      return Object.fromEntries(m[1].split('\n').map((l) => [l.slice(0, l.indexOf(':')), l.slice(l.indexOf(':') + 1).trim()]));
+    };
+    const fm = front(agentTpl);
+    it('the agent file starts with its frontmatter', () => assert.ok(fm, 'no frontmatter at the start'));
+    it('its name is the file name, its description one line', () => {
+      assert.strictEqual(fm.name, 'wsg-advisor');
+      assert.ok(fm.description && fm.description.length > 80, fm.description);
+      assert.deepStrictEqual(Object.keys(fm).filter((k) => !/^[a-zA-Z]+$/.test(k)), []);
+    });
+    it('no tools allowlist: it would hide the MCP tools', () => assert.ok(!('tools' in fm)));
+    it('write tools are denied, no memory, the caller\'s model, in the foreground', () => {
+      assert.deepStrictEqual(fm.disallowedTools.split(/,\s*/).sort(), ['Edit', 'NotebookEdit', 'Write']);
+      assert.ok(!('memory' in fm));
+      assert.strictEqual(fm.model, 'inherit');
+      assert.strictEqual(fm.background, 'false');
+    });
+    it('it carries the marker after the frontmatter', () => assert.match(agentTpl, /^---\n[\s\S]*?\n---\n<!-- generated by wsg -->\n/));
+    const contract = (text) => (text.match(/```\nANSWERED\n[\s\S]*?\n```/) || [''])[0];
+    it('the agent and the guide give the same output contract', () => {
+      assert.ok(contract(agentTpl), 'no contract in the agent file');
+      assert.strictEqual(contract(agentTpl), contract(advisorGuide));
+    });
+    it('the contract has every section', () => {
+      for (const sct of ['ANSWERED', 'OWNER (needs a human decision)', 'THIRD-PARTY', 'CONTEXT (setup/recon only)', 'PLAN REVIEW (only if commands were passed)', 'SKIPPED']) {
+        assert.match(contract(agentTpl), new RegExp(`^${sct.replace(/[()/]/g, '\\$&')}$`, 'm'), sct);
+      }
+    });
+    it('the agent points to wsg guide advisor, with the npx fallback', () => {
+      assert.match(agentTpl, /`wsg guide advisor`/);
+      assert.match(agentTpl, /`npx @korbutds\/wsg guide advisor`/);
+    });
+    it('the agent and the guide keep the same hard rules', () => {
+      for (const s of ['SKIPPED tracker: no tool available', '"default, reversible"', '`--reset-to-base`', 'get, list, search, fetch or find', '`wsg add … --dry-run`', '`wsg remove … --dry-run`']) {
+        assert.ok(agentTpl.includes(s), `agent: ${s}`);
+        assert.ok(advisorGuide.includes(s), `guide: ${s}`);
+      }
+    });
+    const ga = wsg(['guide', 'advisor']);
+    it('wsg guide advisor prints the advisor guide', () => {
+      assert.strictEqual(ga.code, 0);
+      assert.strictEqual(ga.out, advisorGuide);
+    });
+    it('an unknown guide names the topics there are', () => assert.match(wsg(['guide', 'nope']).err, /advisor, setup/));
+    it('every wsg command and flag in the advisor guide exists', () => assert.deepStrictEqual(flagProblems(advisorGuide), []));
+    it('every wsg command and flag in the agent file exists', () => assert.deepStrictEqual(flagProblems(agentTpl), []));
+    it('the advisor guide covers the evidence order, the caller and the inline mode', () => {
+      for (const s of ['## The brief', '## Read-only', '## Procedure', '## What stays with the owner', '## Output contract',
+        '## Plan review', '## wsg facts', '## For the caller', '## Inline mode', 'WS_ROOT', '**not** linked', 'git log', 'carryCandidates',
+        'settings.local.json', 'not a sandbox', 'N answered by checks, K context items found']) assert.ok(advisorGuide.includes(s), s);
+    });
+    it('the evidence order is code, owner rules, wsg facts, siblings, history, tracker', () => {
+      const order = ['**The code.**', '**The owner\'s rules.**', '**wsg facts.**', '**Sibling workspaces.**', '**History.**', '**The tracker**'];
+      const at = order.map((x) => advisorGuide.indexOf(x));
+      assert.ok(at.every((i) => i > 0), JSON.stringify(at));
+      assert.deepStrictEqual([...at].sort((a, b) => a - b), at);
+    });
+
     const bare = wsg([]);
     it('bare wsg prints the usage and exits 0', () => {
       assert.strictEqual(bare.code, 0);
@@ -1696,7 +1772,8 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     let files = [];
     try { files = JSON.parse(r.stdout)[0].files.map((f) => f.path); } catch { /* reported below */ }
     it('ships the templates and the guide', () => {
-      for (const f of ['templates/claude/wsg-setup/SKILL.md', 'templates/claude/wsg-new/SKILL.md', 'docs/setup-guide.md']) assert.ok(files.includes(f), f);
+      for (const f of ['templates/claude/wsg-setup/SKILL.md', 'templates/claude/wsg-new/SKILL.md', 'templates/claude/agents/wsg-advisor.md',
+        'docs/setup-guide.md', 'docs/advisor-guide.md']) assert.ok(files.includes(f), f);
     });
     it('ships no interview', () => assert.ok(!files.some((f) => /interview|pathPrompt/.test(f))));
     const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));

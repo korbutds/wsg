@@ -68,7 +68,10 @@ if (cmd === 'guide') {
   const topic = rest[0] || 'setup';
   if (rest.length > 1) invalid(t('cli.extraArg', { arg: rest[1] }));
   const file = path.join(ROOT, 'docs', `${topic}-guide.md`);
-  if (!/^[a-z]+$/.test(topic) || !fs.existsSync(file)) invalid(t('cli.guideTopic', { topic }));
+  if (!/^[a-z]+$/.test(topic) || !fs.existsSync(file)) {
+    const topics = fs.readdirSync(path.join(ROOT, 'docs')).filter((f) => f.endsWith('-guide.md')).map((f) => f.slice(0, -9));
+    invalid(t('cli.guideTopic', { topic, topics: topics.sort().join(', ') }));
+  }
   process.stdout.write(fs.readFileSync(file, 'utf8'));
   process.exit(0);
 }
