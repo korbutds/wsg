@@ -68,7 +68,7 @@ each one is attached (`path`, `name`, `mode`, `branch`, `base`, `target`, `verif
 
 | Where | What |
 |---|---|
-| `AGENTS.md` | `<!-- wsg:layout -->` — the source lines of Layout; `<!-- wsg:verification -->` — the Verification bullets |
+| `AGENTS.md` | `<!-- wsg:advisor -->` — the one-line rule that questions for the owner go through the advisor first; `<!-- wsg:layout -->` — the source lines of Layout; `<!-- wsg:verification -->` — the Verification bullets |
 | `CLAUDE.md` | `<!-- wsg:imports -->` — the `@<repo>/AGENTS.md` imports (`@AGENTS.md` itself stays outside) |
 | `README.md` | `<!-- wsg:sources -->` — the sources table and the launch commands |
 | `.claude/settings.json` | `permissions.additionalDirectories` only; every other key stays |
@@ -77,7 +77,7 @@ each one is attached (`path`, `name`, `mode`, `branch`, `base`, `target`, `verif
 Text that people and agents write — why, definition of done, out of scope, invariants, links, the
 ticket — lives only in `AGENTS.md`, outside the markers, and never in `wsg.json`: a copy there would
 drift from what the agent reads. Text outside the markers is never modified. A marker pair deleted
-by hand is put back with a warning; half a pair, or a `settings.json` that doesn't parse, makes
+by hand is put back with a warning (a block new in this wsg version is added with a note that it is new); half a pair, or a `settings.json` that doesn't parse, makes
 `wsg add` refuse before it changes anything.
 
 Workspaces created by wsg 0.1 have no `wsg.json`: `wsg check` reports on them as before, and

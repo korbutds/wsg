@@ -644,6 +644,68 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     });
   }
 
+  console.log('\nthe advisor block');
+  {
+    const wsA = path.join(wsRoot, 'advisor-block');
+    wsg(['new', 'advisor-block', '--no-launch']);
+    const agentsFile = path.join(wsA, 'AGENTS.md');
+    const text = fs.readFileSync(agentsFile, 'utf8');
+    const block = text.match(/^<!-- wsg:advisor -->\n([\s\S]*?)\n<!-- \/wsg:advisor -->$/m);
+    it('a new workspace has the advisor block right after the intro line', () => {
+      assert.ok(block, text);
+      assert.match(text, /^This is a task workspace[^\n]*\n<!-- wsg:advisor -->\n/m);
+    });
+    it('the rule is one line, imports nothing, and names both ways to the advisor', () => {
+      assert.strictEqual(block[1].split('\n').length, 1);
+      assert.doesNotMatch(block[1], /@/);
+      assert.match(block[1], /wsg-advisor subagent/);
+      assert.match(block[1], /`wsg guide advisor`/);
+      assert.match(block[1], /never say the advisor ran when it did not/);
+    });
+    it('the six owner-rules lines are not part of it', () => assert.doesNotMatch(block[1], /git push|Co-Authored-By/));
+    // A workspace from wsg 0.2.0: no block. wsg add brings it in, with news rather than a repair warning.
+    const old = text.replace(/<!-- wsg:advisor -->\n[\s\S]*?<!-- \/wsg:advisor -->\n/, '');
+    fs.writeFileSync(agentsFile, old);
+    const r1 = wsg(['add', web, '--link'], { cwd: wsA });
+    const after = fs.readFileSync(agentsFile, 'utf8');
+    it('wsg add adds the block to a workspace that lacks it', () => {
+      assert.strictEqual(r1.code, 0, r1.all);
+      assert.match(after, /^This is a task workspace[^\n]*\n<!-- wsg:advisor -->\n[^\n]+\n<!-- \/wsg:advisor -->\n\n## Why/m);
+    });
+    it('saying it is new in 0.3.0, not that markers were missing', () => {
+      assert.match(r1.out, /AGENTS\.md: added the <!-- wsg:advisor --> block \(new in wsg 0\.3\.0\)/);
+      assert.doesNotMatch(r1.out, /wsg:advisor --> markers were missing/);
+    });
+    it('the rest of AGENTS.md is as it was, apart from the new source', () => {
+      const strip = (x) => x.replace(/<!-- wsg:advisor -->\n[\s\S]*?<!-- \/wsg:advisor -->\n/, '').replace(/<!-- wsg:layout -->\n[\s\S]*?<!-- \/wsg:layout -->/, '').replace(/<!-- wsg:verification -->\n[\s\S]*?<!-- \/wsg:verification -->/, '');
+      assert.strictEqual(strip(after), strip(old));
+    });
+    const r2 = wsg(['add', docs, '--reference', '--dry-run'], { cwd: wsA });
+    it('once it is there, nothing more is said', () => assert.doesNotMatch(r2.all, /wsg:advisor/));
+    fs.writeFileSync(agentsFile, after.replace('<!-- /wsg:advisor -->\n', ''));
+    const r3 = wsg(['add', docs, '--reference'], { cwd: wsA });
+    it('half an advisor pair refuses the add, like any block', () => {
+      assert.strictEqual(r3.code, 2, r3.all);
+      assert.match(r3.err, /the <!-- wsg:advisor --> block has 1 opening and 0 closing markers/);
+    });
+    fs.writeFileSync(agentsFile, after.replace(/^<!-- (\/?)wsg:advisor -->$/gm, '  <!-- $1wsg:advisor -->'));
+    const r4 = wsg(['add', docs, '--reference'], { cwd: wsA });
+    it('an indented advisor pair refuses the add', () => {
+      assert.strictEqual(r4.code, 2, r4.all);
+      assert.match(r4.err, /holds a <!-- wsg:advisor --> marker indented/);
+    });
+    // Without the intro line there is no anchor: the block goes to the end, as for any block.
+    fs.writeFileSync(agentsFile, old.replace(/^This is a task workspace.*\n/m, ''));
+    const r5 = wsg(['add', docs, '--reference'], { cwd: wsA });
+    it('with the intro line gone, the block is added at the end', () => {
+      assert.strictEqual(r5.code, 0, r5.all);
+      assert.match(fs.readFileSync(agentsFile, 'utf8'), /\n\n<!-- wsg:advisor -->\n[^\n]+\n<!-- \/wsg:advisor -->\n$/);
+    });
+    const wsP = path.join(wsRoot, 'advisor-proc');
+    wsg(['new', 'advisor-proc', '--kind', 'process', '--skill', 'release', '--no-launch']);
+    it('a process workspace has it too', () => assert.match(fs.readFileSync(path.join(wsP, 'AGENTS.md'), 'utf8'), /^This is a process workspace[^\n]*\n<!-- wsg:advisor -->\n/m));
+  }
+
   console.log('\nwsg add: writes stay inside the workspace');
   {
     const wsS = path.join(wsRoot, 'safe');
