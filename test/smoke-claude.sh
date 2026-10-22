@@ -11,6 +11,8 @@
 #   3. Open item 2: a directory `wsg add --reference` writes into additionalDirectories while a
 #      session runs — readable in that session? In a new one? A directory never attached is the
 #      control: it must stay unreadable, or the other two prove nothing.
+#   4. The wsg-advisor agent: listed as a subagent; run with --agent and asked to edit notes.md,
+#      it leaves the file unchanged (it has no Write or Edit tool).
 # Open item 1 (agents written mid-session are picked up live) belongs to the team, phase 2.
 #
 # Outcome recorded on 2026-10-21 with Claude Code 2.1.306 and haiku:
@@ -19,6 +21,7 @@
 #   unverified; `wsg add` keeps printing its restart notice when settings.json changes.
 #   In -p mode a workspace whose trust dialog was never accepted ignores permissions.allow from
 #   its .claude/settings.json (Claude Code says so on stderr); see README, Limitations.
+# Step 4 is new in 0.3.0 and has no recorded outcome yet.
 #
 # The temp dir and the session history Claude Code keeps for it are removed at the end.
 
@@ -57,7 +60,8 @@ fresh() {
   WORKSPACES+=("$WS_ROOT/$1")
 }
 # ask <dir> <prompt> [options]: the prompt goes first, since --allowedTools takes a list.
-ask() { local dir="$1" prompt="$2"; shift 2; (cd "$dir" && claude -p "$prompt" --model "$MODEL" "$@" 2>/dev/null) || true; }
+# No MCP servers: no check needs one, and a long tool list makes every request cost more.
+ask() { local dir="$1" prompt="$2"; shift 2; (cd "$dir" && claude -p "$prompt" --model "$MODEL" --strict-mcp-config "$@" 2>/dev/null) || true; }
 pass=0 fail=0
 report() { if [ "$2" = yes ]; then echo "  ok    $1"; pass=$((pass + 1)); else echo "  FAIL  $1"; fail=$((fail + 1)); fi; }
 has() { case "$1" in *"$2"*) echo yes ;; *) echo no ;; esac; }
@@ -91,6 +95,20 @@ else
   echo "  info  readable in the same session: $(has "$mid" REF-TOKEN)"
   echo "  info  readable in a new session:    $(has "$after" REF-TOKEN)"
 fi
+
+echo "4. the wsg-advisor agent"
+fresh four; W4="$WS_ROOT/four"
+# The template as a project-level agent, so the user's own ~/.claude is left alone; it is the same
+# file wsg install-skills writes to ~/.claude/agents.
+mkdir -p "$W4/.claude/agents"
+cp "$SRC/templates/claude/agents/wsg-advisor.md" "$W4/.claude/agents/wsg-advisor.md"
+out="$(ask "$W4" "Without tools: list the names of the subagent types you can start with the Agent tool, one per line." --max-turns 1)"
+report "wsg-advisor is listed as a subagent" "$(has "$out" wsg-advisor)"
+before="$(shasum "$W4/notes.md")"
+out="$(ask "$W4" "Append the line SMOKE-EDIT-5c2 to notes.md in the current directory." --agent wsg-advisor --max-turns 4 --permission-mode acceptEdits)"
+after="$(shasum "$W4/notes.md")"
+report "asked to edit notes.md, the advisor leaves it unchanged" "$([ "$before" = "$after" ] && echo yes || echo no)"
+echo "  info  its reply: $(printf '%s' "$out" | head -c 300 | tr '\n' ' ')"
 
 echo
 echo "passed: $pass, failed: $fail"

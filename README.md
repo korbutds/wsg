@@ -56,8 +56,9 @@ mkdir -p ~/.config/wsg
 cp "$(wsg --where)/config.example" ~/.config/wsg/config
 ```
 
-For Claude Code, `wsg install-skills` adds a user-level `wsg-new` skill: any session can then
-create a workspace when you ask for one.
+`wsg install-skills` adds the user-level parts: for Claude Code, the `wsg-new` skill (any session
+can then create a workspace when you ask for one) and the `wsg-advisor` agent; for Codex, the
+`wsg-advisor` agent (see [Advisor](#advisor)). `wsg install-skills --uninstall` removes them.
 
 <details>
 <summary>Without npm — from the repository</summary>
@@ -69,7 +70,8 @@ cd wsg
 ```
 
 `install.sh` symlinks `wsg` into `~/.local/bin`, hooks `ws` into `~/.zshrc`, and runs
-`wsg install-skills`. There are no dependencies to install.
+`wsg install-skills` — so a clone install gets the advisor agents too. There are no dependencies
+to install.
 </details>
 
 **Requirements:** Node 20.19+ (or 22.13+) and git — for both installation methods. The `ws` function is for zsh.
@@ -105,10 +107,11 @@ The commands the agent (or you) call:
 | `wsg new <slug> [--title T] [--kind task\|process] [--skill NAME] [--ticket X] [--no-launch]` | Creates the skeleton and starts the agent; `--no-launch` prints the next step instead. |
 | `wsg add <path> [--worktree\|--link\|--reference] [--branch B] [--base REF] [--reset-to-base] [--target T] [--verify CMD] [--carry all\|none\|a,b] [--[no-]clone-node-modules] [--note TEXT] [--dry-run] [--ws SLUG\|PATH]` | Attaches one source to the workspace you are in. An existing branch is attached as it is, one only on origin is continued; `--reset-to-base` starts it over (with a `backup/…`). Every check happens before anything is touched; a failure rolls back only this source. `--dry-run` prints the plan as JSON. |
 | `wsg remove <name> [--delete-ignored] [--dry-run] [--ws SLUG\|PATH]` | Detaches a source: a clean worktree (its branch is kept) or the symlink, its rule, and its generated parts. Ignored files that exist nowhere else (made in the worktree, or carried in and changed since) are deleted with the worktree only after `--delete-ignored`; a `node_modules` wsg cloned is not checked, so changes inside it are not protected. The way to fix a source attached with the wrong flags: remove, then add again. |
+| `wsg refresh [--dry-run] [--ws SLUG\|PATH]` | Brings the generated parts up to date with this wsg — e.g. adds the advisor block to a workspace made by 0.2 — and touches nothing else. `--dry-run` prints the files it would change as JSON. |
 | `wsg check [path\|slug]` | Checks a workspace against the conventions. |
 | `wsg promote [slug\|path] --skill NAME` | Turns a task into a process. |
-| `wsg guide [setup]` | Prints the setup guide the agent follows. |
-| `wsg install-skills` | Installs the `wsg-new` skill into `~/.claude/skills` (or `$CLAUDE_CONFIG_DIR/skills`). |
+| `wsg guide [setup\|advisor]` | Prints a guide an agent follows: the setup dialogue, or the advisor's procedure. |
+| `wsg install-skills [--uninstall]` | Installs the `wsg-new` skill into `~/.claude/skills` and the `wsg-advisor` agent into `~/.claude/agents` (or under `$CLAUDE_CONFIG_DIR`) and `~/.codex/agents` (or `$CODEX_HOME/agents`). Overwrites only files it wrote — they carry a marker — and refuses others with exit 1. `--uninstall` removes only its own files. |
 
 Exit codes: `0` ok, `1` the check found errors or a step failed and was rolled back, `2` invalid
 input — nothing was changed, `130` cancelled with Ctrl+C (or a closed terminal, `kill`) and rolled
@@ -194,9 +197,10 @@ seconds instead of a full install.
 
 `.claude/wsg.json` records the sources and how each is attached. Every `wsg add` re-renders from it
 what the generator owns: the blocks between `<!-- wsg:… -->` markers in `AGENTS.md`, `CLAUDE.md`
-and `README.md`, `permissions.additionalDirectories` in `.claude/settings.json`, the `repo`
+and `README.md` (in `AGENTS.md`, also the one-line advisor rule), `permissions.additionalDirectories` in `.claude/settings.json`, the `repo`
 pointer and `mr-target-branch.txt`. Text outside the markers — what the agent and you write — is
-never touched, and other keys in `settings.json` are kept. Details: [docs/conventions.md](docs/conventions.md).
+never touched, and other keys in `settings.json` are kept. `wsg refresh` re-renders them without
+attaching anything — for a workspace made by an earlier wsg. Details: [docs/conventions.md](docs/conventions.md).
 
 ## Validator
 
@@ -210,10 +214,44 @@ never touched, and other keys in `settings.json` are kept. Details: [docs/conven
 
 Plus: imports resolve and don't point outside the workspace, rules have `paths` set, `settings.json`
 is valid, there is a section with a verification command, `.learnings/` isn't at the root of a git
-checkout, and — for workspaces made by wsg 0.2 — whether setup is finished. Workspaces made by 0.1
+checkout, and — for workspaces made by wsg 0.2 and later — whether setup is finished, whether
+`AGENTS.md` has the advisor block, and whether the agent the workspace starts with has the
+`wsg-advisor` agent installed and current (a warning, never an error). Workspaces made by 0.1
 get the same report as before; `wsg add` refuses them, since they have no `wsg.json`.
 
 Run it periodically, not just after creation: files grow.
+
+## Advisor
+
+A workspace agent tends to ask its owner what it could have found out itself: what CI runs, what
+your rules say about MRs, how wsg treats a git repository given as `--reference`, an answer that
+sits in a comment on a ticket nobody linked. `wsg-advisor` is a second, read-only agent that checks
+those questions first, so that only real decisions reach you.
+
+- **How it is called.** A one-line rule in a generated block of `AGENTS.md` (`<!-- wsg:advisor -->`):
+  questions and decisions for the owner, and planned `wsg add`/`wsg remove` commands, go through the
+  advisor first. The setup guide does the same at each step. `wsg refresh` adds the block to a
+  workspace made by an earlier wsg.
+- **What it does.** It looks for evidence in a fixed order — the code and CI, your rules
+  (`AGENTS.md`, `notes.md`, `.claude/wsg.json`), facts about wsg, sibling workspaces under
+  `WS_ROOT`, git history, the tracker if a read tool for it is configured — and replies in a fixed
+  contract: ANSWERED (each with its evidence), OWNER, THIRD-PARTY (a draft, never sent), CONTEXT,
+  PLAN REVIEW, SKIPPED. The workspace agent shows you only the OWNER and THIRD-PARTY items and one
+  summary line.
+- **What it never does.** Push, MR, messages to people, `--reset-to-base`, scope changes and
+  exceptions to your rules always stay yours; an advisor answer is never your consent. It writes
+  nothing and never talks to you.
+- **Where it lives.** User-level, written by `wsg install-skills`: `~/.claude/agents/wsg-advisor.md`
+  for Claude Code, `~/.codex/agents/wsg-advisor.toml` for Codex. It works in existing workspaces;
+  running `wsg install-skills` again upgrades it. `wsg new` and `wsg add` never install it.
+- **The procedure** lives in [docs/advisor-guide.md](docs/advisor-guide.md) (`wsg guide advisor`);
+  the agent files are thin: a new procedure arrives with an upgrade of wsg, without reinstalling them.
+
+**Codex.** Codex has custom agents, but it reliably spawns one only when that is the main thing it
+is asked; told to by `AGENTS.md`, it often doesn't. So the rule lets the workspace agent follow
+`wsg guide advisor` inline instead, and forbids it to claim the advisor ran when it did not. MCP
+calls from a Codex subagent under `codex exec` can be blocked by the approval policy; the advisor
+then reports the tracker as skipped. Any other agent that reads `AGENTS.md` follows the guide inline.
 
 ## Settings
 
@@ -259,6 +297,11 @@ shows you the text before writing it.
   `.worktreeinclude`, and auto-cleanup. `wsg` helps where those fall short: a task spanning several
   repositories, a task knowledge layer, and a limits validator.
 - No command to delete a workspace — for now, three commands by hand.
+- **The advisor is not a sandbox.** In Claude Code it has no Write, Edit or NotebookEdit tool; that
+  it only reads with Bash and MCP tools is a rule in its prompt, not something enforced, and it has
+  the MCP tools of the session that calls it. Its answers can be wrong: each one has to cite its
+  evidence, and irreversible steps stay with you. A project-level `.claude/agents/wsg-advisor.md`
+  would shadow the installed one; `wsg check` warns about it.
 - **What `wsg remove` doesn't see.** A tracked file marked `skip-worktree` or `assume-unchanged`
   and edited in the worktree looks clean to git: it is deleted with the worktree. If a removal
   fails after the worktree is gone, the rollback adds the worktree back on the same branch, but
@@ -281,6 +324,7 @@ shows you the text before writing it.
 - [docs/conventions.md](docs/conventions.md) — limits and rules: what is always loaded, what on demand
 - [docs/workflow.md](docs/workflow.md) — workflow, troubleshooting common failures
 - [docs/setup-guide.md](docs/setup-guide.md) — the setup dialogue the agent follows
+- [docs/advisor-guide.md](docs/advisor-guide.md) — what the advisor checks, in what order, and how it answers
 
 Sources for the limits: [Claude Code memory](https://code.claude.com/docs/en/memory),
 [worktrees](https://code.claude.com/docs/en/worktrees),

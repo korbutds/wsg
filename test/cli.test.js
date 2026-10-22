@@ -2034,6 +2034,37 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       assert.deepStrictEqual([...at].sort((a, b) => a - b), at);
     });
 
+    // The guide's facts and README say the same: an agent answers from the guide, a person reads README.
+    const readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8');
+    const limitations = readme.slice(readme.indexOf('## Limitations'), readme.indexOf('## Documentation'));
+    it('README and the guide both say the advisor is not a sandbox', () => {
+      assert.match(limitations, /\*\*The advisor is not a sandbox\.\*\*/);
+      assert.match(advisorGuide, /it is not a sandbox/);
+    });
+    it('README and the guide agree on the facts the advisor answers from', () => {
+      const facts = [
+        [/reference directory, no git \| `--reference`/, /`--reference` is only for a directory \*\*not\*\* under git/],
+        [/\(its branch is kept\)/, /takes only a clean worktree and keeps its branch/],
+        [/only after `--delete-ignored`/, /they go only with `--delete-ignored`/],
+        [/`skip-worktree` or `assume-unchanged`/, /`skip-worktree` or\s+`assume-unchanged`/],
+        [/`--dry-run` prints the plan as JSON/, /prints the plan as JSON and changes nothing/],
+        [/Push and MR creation are done manually by the owner|push ban/, /\*\*Push and MR\*\* are the owner's/],
+      ];
+      for (const [inReadme, inGuide] of facts) {
+        assert.match(readme, inReadme);
+        assert.match(advisorGuide, inGuide);
+      }
+    });
+    it('README names refresh, install-skills --uninstall and the advisor guide', () => {
+      for (const x of ['`wsg refresh [--dry-run] [--ws SLUG\\|PATH]`', '`wsg install-skills [--uninstall]`', '`wsg guide [setup\\|advisor]`', '## Advisor', '**Codex.**', 'docs/advisor-guide.md']) assert.ok(readme.includes(x), x);
+    });
+    it('the version is 0.3.0, in package.json and its lock', () => {
+      assert.strictEqual(wsg(['--version']).out, '0.3.0\n');
+      const lock = JSON.parse(fs.readFileSync(path.join(ROOT, 'package-lock.json'), 'utf8'));
+      assert.strictEqual(lock.version, '0.3.0');
+      assert.strictEqual(lock.packages[''].version, '0.3.0');
+    });
+
     const bare = wsg([]);
     it('bare wsg prints the usage and exits 0', () => {
       assert.strictEqual(bare.code, 0);
