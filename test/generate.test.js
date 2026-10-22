@@ -38,6 +38,9 @@ git(['add', '-A']);
 git(['commit', '-qm', 'init']);
 
 const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
+// What check looks the agent and its config up in: nothing of the machine's own. No claude on
+// PATH and no WSG_AGENT, so the advisor agent is not judged here (cli.test.js does that).
+const CHECK_ENV = { HOME: path.join(tmp, 'home'), PATH: '' };
 
 // ws as the user gets it: rendered by `wsg shell-init zsh`, placeholders replaced.
 const renderWs = (lang) => execFileSync(process.execPath, [path.join(ROOT, 'bin', 'cli.js'), 'shell-init', 'zsh'],
@@ -122,29 +125,29 @@ process.on('exit', () => {
     assert.doesNotMatch(fs.readFileSync(path.join(ws, '.claude/rules/docs.md'), 'utf8'), /git -C docs/));
   it('no placeholders left in a language other than English', () =>
     assert.doesNotMatch(fs.readFileSync(path.join(ws, 'AGENTS.md'), 'utf8') + fs.readFileSync(path.join(ws, 'notes.md'), 'utf8'), /[А-Яа-яЁё]/));
-  it('--check passes', () => assert.strictEqual(quiet(() => check.run(ws, cfg)), 0));
+  it('--check passes', () => assert.strictEqual(quiet(() => check.run(ws, cfg, CHECK_ENV)), 0));
   {
     // Lines Claude Code doesn't import: inside a code block, and an @mention.
     const claudeMd = path.join(ws, 'CLAUDE.md');
     const orig = fs.readFileSync(claudeMd, 'utf8');
     fs.writeFileSync(claudeMd, orig + '\n@backend-team owns the API\n\n```\n@missing/file.md\n```\n');
-    it('--check skips code blocks and @mentions', () => assert.strictEqual(quiet(() => check.run(ws, cfg)), 0));
+    it('--check skips code blocks and @mentions', () => assert.strictEqual(quiet(() => check.run(ws, cfg, CHECK_ENV)), 0));
     fs.writeFileSync(claudeMd, orig + '\n@missing/file.md\n');
-    it('--check still fails a real broken import', () => assert.strictEqual(quiet(() => check.run(ws, cfg)), 1));
+    it('--check still fails a real broken import', () => assert.strictEqual(quiet(() => check.run(ws, cfg, CHECK_ENV)), 1));
     fs.writeFileSync(claudeMd, orig);
     // A ```` fence isn't closed by the ``` line inside it: the import after that line is still code.
     const agentsMd = path.join(ws, 'AGENTS.md');
     const agentsOrig = fs.readFileSync(agentsMd, 'utf8');
     fs.writeFileSync(agentsMd, agentsOrig + '\n````md\n```\n@docs/missing.md\n````\n');
-    it('--check skips an import inside a 4-backtick fence holding a ``` line', () => assert.strictEqual(quiet(() => check.run(ws, cfg)), 0));
+    it('--check skips an import inside a 4-backtick fence holding a ``` line', () => assert.strictEqual(quiet(() => check.run(ws, cfg, CHECK_ENV)), 0));
     fs.writeFileSync(agentsMd, agentsOrig + '\n````md\n```\n````\n\n@docs/missing.md\n');
-    it('--check still fails a broken import after such a fence', () => assert.strictEqual(quiet(() => check.run(ws, cfg)), 1));
+    it('--check still fails a broken import after such a fence', () => assert.strictEqual(quiet(() => check.run(ws, cfg, CHECK_ENV)), 1));
     // An indented ``` in a list item's example doesn't close the column-0 fence around it.
     fs.writeFileSync(agentsMd, agentsOrig + '\n```markdown\n- run:\n\n    ```bash\n    npm test\n    ```\n@docs/missing.md\n```\n');
-    it('--check skips an import in a fence after an indented ``` line', () => assert.strictEqual(quiet(() => check.run(ws, cfg)), 0));
+    it('--check skips an import in a fence after an indented ``` line', () => assert.strictEqual(quiet(() => check.run(ws, cfg, CHECK_ENV)), 0));
     // A lone ``` in an indented code block opens no fence: nothing is left unclosed.
     fs.writeFileSync(agentsMd, agentsOrig + '\nTo open a fence type:\n\n    ```\n\nDone.\n');
-    it('--check passes a lone ``` in indented code', () => assert.strictEqual(quiet(() => check.run(ws, cfg)), 0));
+    it('--check passes a lone ``` in indented code', () => assert.strictEqual(quiet(() => check.run(ws, cfg, CHECK_ENV)), 0));
     fs.writeFileSync(agentsMd, agentsOrig);
   }
 
@@ -175,7 +178,7 @@ process.on('exit', () => {
   it('runs directory created', () => assert.ok(fs.existsSync(path.join(wp, 'runs'))));
   it('AGENTS.md explains how the procedure runs', () =>
     assert.match(fs.readFileSync(path.join(wp, 'AGENTS.md'), 'utf8'), /## How it runs/));
-  it('--check passes', () => assert.strictEqual(quiet(() => check.run(wp, cfg)), 0));
+  it('--check passes', () => assert.strictEqual(quiet(() => check.run(wp, cfg, CHECK_ENV)), 0));
 
   console.log('\nrollback on failure');
   const bad = { ...task, slug: 'rollback-me', repos: [{ ...task.repos[0], branch: 'alice/task/oauth/PROJ-412/deeper' }] };
@@ -619,7 +622,7 @@ process.on('exit', () => {
       const lines = [];
       const log = console.log;
       console.log = (x) => lines.push(String(x));
-      try { check.run(pm, cfg); } finally { console.log = log; }
+      try { check.run(pm, cfg, CHECK_ENV); } finally { console.log = log; }
       assert.match(lines.join('\n'), /WARN.*no steps described, though it has been run/);
     });
 
@@ -692,16 +695,16 @@ process.on('exit', () => {
     const agentsMd = path.join(ws, 'AGENTS.md');
     const origA = fs.readFileSync(agentsMd, 'utf8');
     fs.writeFileSync(agentsMd, origA + '\n@missing-nested.md\n');
-    it('a broken import inside an imported file fails the check', () => assert.strictEqual(quiet(() => check.run(ws, cfg)), 1));
+    it('a broken import inside an imported file fails the check', () => assert.strictEqual(quiet(() => check.run(ws, cfg, CHECK_ENV)), 1));
     fs.writeFileSync(path.join(ws, 'nested.md'), '@AGENTS.md\n');
     fs.writeFileSync(agentsMd, origA + '\n@nested.md\n');
-    it('an import cycle is followed once and passes', () => assert.strictEqual(quiet(() => check.run(ws, cfg)), 0));
+    it('an import cycle is followed once and passes', () => assert.strictEqual(quiet(() => check.run(ws, cfg, CHECK_ENV)), 0));
     const report = () => {
       const lines = [];
       const log = console.log;
       console.log = (x) => lines.push(String(x));
       let code;
-      try { code = check.run(ws, cfg); } finally { console.log = log; }
+      try { code = check.run(ws, cfg, CHECK_ENV); } finally { console.log = log; }
       return { code, text: lines.join('\n') };
     };
     fs.writeFileSync(agentsMd, origA + '\nSee @missing-inline.md for details.\n');
@@ -718,17 +721,17 @@ process.on('exit', () => {
     });
     fs.writeFileSync(path.join(ws, 'inline-target.md'), '@missing-deeper.md\n');
     fs.writeFileSync(agentsMd, origA + '\nSee @inline-target.md for details.\n');
-    it('an existing import in prose is still followed', () => assert.strictEqual(quiet(() => check.run(ws, cfg)), 1));
+    it('an existing import in prose is still followed', () => assert.strictEqual(quiet(() => check.run(ws, cfg, CHECK_ENV)), 1));
     fs.rmSync(path.join(ws, 'inline-target.md'));
     fs.writeFileSync(agentsMd, origA + '\nWrite to user@example.com, see `@not-an-import.md`.\n');
-    it('an e-mail and code are not imports', () => assert.strictEqual(quiet(() => check.run(ws, cfg)), 0));
+    it('an e-mail and code are not imports', () => assert.strictEqual(quiet(() => check.run(ws, cfg, CHECK_ENV)), 0));
     fs.writeFileSync(agentsMd, origA);
     fs.rmSync(path.join(ws, 'nested.md'));
     const out = (dir) => {
       const lines = [];
       const log = console.log;
       console.log = (x) => lines.push(String(x));
-      try { check.run(dir, cfg); } finally { console.log = log; }
+      try { check.run(dir, cfg, CHECK_ENV); } finally { console.log = log; }
       return lines.join('\n');
     };
     const noVerify = await quietAsync(() => generate.run({ ...base, kind: 'task', slug: 'no-verify', title: 'T', stateLabel: 'new feature',
@@ -984,7 +987,7 @@ process.on('exit', () => {
       const lines = [];
       const log = console.log;
       console.log = (x) => lines.push(String(x));
-      try { check.run(dir, cfgT); } finally { console.log = log; }
+      try { check.run(dir, cfgT, CHECK_ENV); } finally { console.log = log; }
       return lines.join('\n');
     };
     it('a new process passes its own check with no warnings at all', () => assert.doesNotMatch(checkOut(proc), /WARN|FAIL/));

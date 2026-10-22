@@ -106,12 +106,15 @@ const quietAsync = async (fn) => {
 const failure = async (fn) => {
   try { await quietAsync(fn); return ''; } catch (e) { return e.message; }
 };
+// What check looks the agent and its config up in: the fake claude and this run's config dirs,
+// never the machine's own.
+const CHECK_ENV = { HOME: home, PATH: fakeBin, CLAUDE_CONFIG_DIR: claudeDir, CODEX_HOME: path.join(tmp, 'codex-config') };
 const report = (dir, cfg) => {
   const lines = [];
   const log = console.log;
   console.log = (x) => lines.push(String(x));
   let code;
-  try { code = check.run(dir, cfg); } finally { console.log = log; }
+  try { code = check.run(dir, cfg, CHECK_ENV); } finally { console.log = log; }
   return { code, text: lines.join('\n') };
 };
 
@@ -704,6 +707,80 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     const wsP = path.join(wsRoot, 'advisor-proc');
     wsg(['new', 'advisor-proc', '--kind', 'process', '--skill', 'release', '--no-launch']);
     it('a process workspace has it too', () => assert.match(fs.readFileSync(path.join(wsP, 'AGENTS.md'), 'utf8'), /^This is a process workspace[^\n]*\n<!-- wsg:advisor -->\n/m));
+  }
+
+  console.log('\nwsg check: the advisor');
+  {
+    const wsC = path.join(wsRoot, 'advisor-check');
+    wsg(['new', 'advisor-check', '--no-launch']);
+    const S = require(path.join(ROOT, 'lib', 'skills.js'));
+    const env = { HOME: home, PATH: fakeBin, CLAUDE_CONFIG_DIR: path.join(tmp, 'check-claude'), CODEX_HOME: path.join(tmp, 'check-codex') };
+    const run = (over = {}, c = cfg) => {
+      const lines = [];
+      const log = console.log;
+      console.log = (x) => lines.push(String(x));
+      let code;
+      try { code = check.run(wsC, c, { ...env, ...over }); } finally { console.log = log; }
+      return { code, text: lines.join('\n') };
+    };
+    const r0 = run();
+    it('the workspace rule is there: OK', () => assert.match(r0.text, /OK +AGENTS\.md sends questions for the owner through wsg-advisor/));
+    it('claude is the agent and the advisor is not installed: WARN naming install-skills, exit 0', () => {
+      assert.strictEqual(r0.code, 0, r0.text);
+      assert.match(r0.text, /\nAdvisor\n/);
+      assert.match(r0.text, /WARN wsg-advisor for Claude Code is not installed — run wsg install-skills/);
+    });
+    it('the section comes before the budget', () => assert.ok(r0.text.indexOf('\nAdvisor\n') < r0.text.indexOf('Always-on budget')));
+    S.install({ ...env });
+    const claudeAgent = path.join(env.CLAUDE_CONFIG_DIR, 'agents', 'wsg-advisor.md');
+    const r1 = run();
+    it('installed: OK with its path, no WARN', () => {
+      assert.match(r1.text, new RegExp(`OK +wsg-advisor for Claude Code: ${claudeAgent.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+      assert.doesNotMatch(r1.text, /WARN.*advisor/);
+    });
+    fs.appendFileSync(claudeAgent, 'old\n');
+    it('outdated: WARN', () => assert.match(run().text, /WARN .*wsg-advisor\.md is outdated — run wsg install-skills/));
+    fs.writeFileSync(claudeAgent, '---\nname: wsg-advisor\n---\nmine\n');
+    it('someone else\'s file under that name: WARN', () => assert.match(run().text, /WARN .*wsg-advisor\.md was not written by wsg, so it is not wsg's advisor/));
+    S.install({ ...env, CLAUDE_CONFIG_DIR: path.join(tmp, 'check-claude-2') });
+    it('CLAUDE_CONFIG_DIR is where it is looked for', () => assert.doesNotMatch(run({ CLAUDE_CONFIG_DIR: path.join(tmp, 'check-claude-2') }).text, /WARN.*advisor/));
+    it('codex is the agent: the Codex agent is judged instead', () => {
+      const r = run({}, { ...cfg, WSG_AGENT: 'codex --yolo' });
+      assert.match(r.text, /OK +wsg-advisor for Codex: /);
+      fs.rmSync(path.join(env.CODEX_HOME, 'agents', 'wsg-advisor.toml'));
+      assert.match(run({}, { ...cfg, WSG_AGENT: 'codex' }).text, /WARN wsg-advisor for Codex is not installed/);
+      S.install({ ...env });
+    });
+    it('another agent: no WARN, it follows the guide inline', () => {
+      const r = run({}, { ...cfg, WSG_AGENT: 'gemini' });
+      assert.match(r.text, /gemini has no wsg-advisor agent: it follows wsg guide advisor inline/);
+      assert.doesNotMatch(r.text, /WARN.*advisor/);
+    });
+    it('no agent at all: not judged', () => {
+      const r = run({ PATH: '' });
+      assert.match(r.text, /no agent configured/);
+      assert.doesNotMatch(r.text, /WARN.*advisor/);
+    });
+    it('the machine\'s own PATH and config are not read', () => assert.doesNotMatch(run({ PATH: '', HOME: path.join(tmp, 'nobody') }).text, /WARN.*advisor|Claude Code:/));
+    const shadow = path.join(wsC, '.claude', 'agents', 'wsg-advisor.md');
+    fs.writeFileSync(shadow, '---\nname: wsg-advisor\n---\nlocal\n');
+    it('a project-level wsg-advisor shadows the installed one: WARN', () => assert.match(run().text, /WARN \.claude\/agents\/wsg-advisor\.md shadows the wsg-advisor agent/));
+    fs.rmSync(shadow);
+    const agentsFile = path.join(wsC, 'AGENTS.md');
+    const text = fs.readFileSync(agentsFile, 'utf8');
+    fs.writeFileSync(agentsFile, text.replace(/<!-- wsg:advisor -->\n[\s\S]*?<!-- \/wsg:advisor -->\n/, ''));
+    const r2 = run();
+    it('no advisor block: WARN naming wsg refresh, exit 0', () => {
+      assert.strictEqual(r2.code, 0, r2.text);
+      assert.match(r2.text, /WARN AGENTS\.md has no <!-- wsg:advisor --> block: .* run wsg refresh/);
+    });
+    fs.writeFileSync(agentsFile, text.replace(/(<!-- wsg:advisor -->\n[\s\S]*?<!-- \/wsg:advisor -->\n)/, '```\n$1```\n'));
+    it('a block only inside a code fence does not count', () => assert.match(run().text, /WARN AGENTS\.md has no <!-- wsg:advisor --> block/));
+    fs.writeFileSync(agentsFile, text);
+    // A workspace without the state file is judged as before: no advisor findings at all.
+    fs.renameSync(path.join(wsC, '.claude', 'wsg.json'), path.join(wsC, '.claude', 'wsg.json.off'));
+    it('a 0.1 workspace gets no advisor findings', () => assert.doesNotMatch(run().text, /wsg-advisor|\nAdvisor\n/));
+    fs.renameSync(path.join(wsC, '.claude', 'wsg.json.off'), path.join(wsC, '.claude', 'wsg.json'));
   }
 
   console.log('\nwsg refresh');
