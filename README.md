@@ -272,6 +272,9 @@ shows you the text before writing it.
   for a restart whenever it changes `settings.json`. `test/smoke-claude.sh` (manual, needs claude)
   checks this and the setup launch against a real Claude Code.
 - `paths` in rules are untested for a repository attached via a symlink pointing outside.
+- **Code fences wsg reads.** Blockquotes are not parsed: a code fence inside `>` is treated as
+  text. A fence left unclosed inside a list item stays open to the end of the file (CommonMark
+  closes it with the item), so close fences explicitly.
 
 ## Documentation
 

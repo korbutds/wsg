@@ -1089,6 +1089,15 @@ process.on('exit', () => {
       ['an indented ``` continuing a paragraph', ['para', '    ```', 'text'], null, []],
       ['a list ended by a paragraph: indented ``` is code again', ['- item', '', 'para', '', '    ```', 'text'], null, []],
       ['indented code inside a list item', ['- step', '', '        ```', 'text'], null, []],
+      // A line at column 0 ends the list item, a fence line too: indented ``` after it is code.
+      ['a column-0 fence after a list item ends the item', ['- step one', '', '```sh', 'npm i', '```', '', '    ```', 'text'], null, range(3, 5)],
+      ['a column-0 closer of a list-item fence ends the item', ['- step', '', '  ```sh', '  x', '```', '', '    ```', 'text'], null, range(3, 5)],
+      // A thematic break is no list item: indented ``` after it is code.
+      ['a thematic break * * * is no list item', ['* * *', '', '    ```', 'text'], null, []],
+      ['a thematic break - - - is no list item', ['- - -', '', '    ```', 'text'], null, []],
+      ['a thematic break ***', ['***', '', '    ```', 'text'], null, []],
+      ['a thematic break ---', ['---', '', '    ```', 'text'], null, []],
+      ['a list item after a thematic break still holds a fence', ['* * *', '- step', '', '    ```sh', '    x', '    ```', 'text'], null, range(4, 6)],
       // wsg doesn't read blockquotes; a fence there is text, opened or not.
       ['a fence in a blockquote is not read', ['> ```sh', '> x', 'text'], null, []],
       ['tabs: a fence in a list item indented by a tab', ['- step', '', '\t```sh', '\tnpm test', '\t```', 'text'], null, range(3, 5)],
@@ -1110,6 +1119,15 @@ process.on('exit', () => {
       const r = generate.replaceBlock(quoted, 'AGENTS.md', 'layout', ['new'], /^## Layout/m);
       assert.ok(r.text.includes('<!-- wsg:layout -->\nexample\n'), r.text);
       assert.match(r.text, /## Layout\n\n<!-- wsg:layout -->\nnew\n<!-- \/wsg:layout -->/);
+    });
+    // A column-0 fence ends the list item before it: the indented ``` lines after it are code, not a
+    // fence hiding the real pair, so the block is replaced, not added a second time.
+    const afterList = '# x\n\n- step one\n\n```sh\nnpm i\n```\n\n    ```\n\n## Layout\n\n<!-- wsg:layout -->\nold\n<!-- /wsg:layout -->\n\n    ```\n';
+    it('a column-0 fence after a list: the real block is replaced, not added again', () => {
+      const r = generate.replaceBlock(afterList, 'AGENTS.md', 'layout', ['new'], /^## Layout/m);
+      assert.strictEqual(r.text.split('<!-- wsg:layout -->').length, 2, r.text);
+      assert.match(r.text, /## Layout\n\n<!-- wsg:layout -->\nnew\n<!-- \/wsg:layout -->/);
+      assert.strictEqual(r.restored, false);
     });
     // A list item that shows the block as an example: its fence and markers are indented. Neither the
     // fence nor the markers in it are taken for the real pair, which is still found and replaced.
