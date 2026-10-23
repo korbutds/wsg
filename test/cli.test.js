@@ -665,6 +665,10 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       assert.match(block[1], /`wsg guide advisor`/);
       assert.match(block[1], /never say the advisor ran when it did not/);
     });
+    it('it is imperative about when, and about what the owner is shown', () => {
+      assert.match(block[1], /^Before you show the owner questions, decisions or a plan with open points, and before you run `wsg add`\/`wsg remove`, send them to the wsg-advisor subagent;/);
+      assert.match(block[1], /Show the owner only the OWNER and THIRD-PARTY items and one summary line, never the advisor's full reply/);
+    });
     it('the six owner-rules lines are not part of it', () => assert.doesNotMatch(block[1], /git push|Co-Authored-By/));
     // A workspace from wsg 0.2.0: no block. wsg add brings it in, with news rather than a repair warning.
     const old = text.replace(/<!-- wsg:advisor -->\n[\s\S]*?<!-- \/wsg:advisor -->\n/, '');
@@ -707,6 +711,43 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     const wsP = path.join(wsRoot, 'advisor-proc');
     wsg(['new', 'advisor-proc', '--kind', 'process', '--skill', 'release', '--no-launch']);
     it('a process workspace has it too', () => assert.match(fs.readFileSync(path.join(wsP, 'AGENTS.md'), 'utf8'), /^This is a process workspace[^\n]*\n<!-- wsg:advisor -->\n/m));
+
+    // CLAUDE.md: the same rule in Claude Code's terms, where it decides to delegate.
+    const claudeFile = path.join(wsA, 'CLAUDE.md');
+    const ctext = fs.readFileSync(claudeFile, 'utf8');
+    const cblock = ctext.match(/^<!-- wsg:advisor -->\n([\s\S]*?)\n<!-- \/wsg:advisor -->$/m);
+    it('CLAUDE.md of a new workspace has its own advisor block under "Claude Code only"', () => {
+      assert.ok(cblock, ctext);
+      assert.match(ctext, /^## Claude Code only\n\n<!-- wsg:advisor -->\n[^\n]+\n<!-- \/wsg:advisor -->\n\n- Task memory/m);
+    });
+    it('one line: call the subagent with a self-contained brief, show only OWNER and THIRD-PARTY plus a summary line', () => {
+      assert.strictEqual(cblock[1].split('\n').length, 1);
+      assert.doesNotMatch(cblock[1], /@/);
+      assert.strictEqual(cblock[1], 'Before you show the owner questions or decisions, call the wsg-advisor subagent (Agent tool) with a self-contained brief; show the owner only its OWNER and THIRD-PARTY items plus one summary line.');
+    });
+    it('a process workspace has it in CLAUDE.md too', () => assert.match(fs.readFileSync(path.join(wsP, 'CLAUDE.md'), 'utf8'), /^<!-- wsg:advisor -->\n[^\n]+\n<!-- \/wsg:advisor -->$/m));
+    // An older CLAUDE.md: no block. wsg add brings it in, under the heading, as news.
+    const cold = ctext.replace(/<!-- wsg:advisor -->\n[\s\S]*?<!-- \/wsg:advisor -->\n\n/, '');
+    fs.writeFileSync(claudeFile, cold);
+    const docs2 = path.join(tmp, 'docs-claude-md');
+    fs.mkdirSync(docs2, { recursive: true });
+    const c1 = wsg(['add', docs2, '--reference'], { cwd: wsA });
+    const cafter = fs.readFileSync(claudeFile, 'utf8');
+    it('wsg add adds the CLAUDE.md block, right after the heading', () => {
+      assert.strictEqual(c1.code, 0, c1.all);
+      assert.match(cafter, /^## Claude Code only\n<!-- wsg:advisor -->\n[^\n]+\n<!-- \/wsg:advisor -->\n/m);
+      assert.match(c1.out, /CLAUDE\.md: added the <!-- wsg:advisor --> block \(new in wsg 0\.3\.0\)/);
+    });
+    it('the rest of CLAUDE.md is as it was', () => {
+      assert.strictEqual(cafter.replace(/<!-- wsg:advisor -->\n[\s\S]*?<!-- \/wsg:advisor -->\n/, ''), cold);
+    });
+    // Without the heading, the block goes to the end.
+    fs.writeFileSync(claudeFile, cold.replace(/^## Claude Code only\n/m, ''));
+    const c2 = wsg(['refresh'], { cwd: wsA });
+    it('with the heading gone, wsg refresh adds it at the end', () => {
+      assert.strictEqual(c2.code, 0, c2.all);
+      assert.match(fs.readFileSync(claudeFile, 'utf8'), /\n\n<!-- wsg:advisor -->\n[^\n]+\n<!-- \/wsg:advisor -->\n$/);
+    });
   }
 
   console.log('\nwsg check: the advisor');
@@ -794,6 +835,26 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       });
       fs.rmSync(path.join(wsRoot, dir), { recursive: true });
     }
+    it('CLAUDE.md has the advisor block: OK', () => assert.match(run().text, /OK +CLAUDE\.md tells Claude Code to call wsg-advisor before it asks the owner/));
+    const claudeFile = path.join(wsC, 'CLAUDE.md');
+    const ctext = fs.readFileSync(claudeFile, 'utf8');
+    fs.writeFileSync(claudeFile, ctext.replace(/<!-- wsg:advisor -->\n[\s\S]*?<!-- \/wsg:advisor -->\n/, ''));
+    const rc = run();
+    it('CLAUDE.md without it, claude the agent: WARN naming wsg refresh, exit 0', () => {
+      assert.strictEqual(rc.code, 0, rc.text);
+      assert.match(rc.text, /WARN CLAUDE\.md has no <!-- wsg:advisor --> block: Claude Code is less likely to call the advisor — run wsg refresh/);
+    });
+    it('codex or another agent: CLAUDE.md is not judged for it', () => {
+      assert.doesNotMatch(run({}, { ...cfg, WSG_AGENT: 'codex' }).text, /CLAUDE\.md .*wsg:advisor|CLAUDE\.md tells/);
+      assert.doesNotMatch(run({}, { ...cfg, WSG_AGENT: 'gemini' }).text, /CLAUDE\.md .*wsg:advisor|CLAUDE\.md tells/);
+    });
+    fs.writeFileSync(claudeFile, ctext.replace(/(<!-- wsg:advisor -->\n[\s\S]*?<!-- \/wsg:advisor -->\n)/, '```\n$1```\n'));
+    it('a CLAUDE.md block only inside a code fence does not count', () => assert.match(run().text, /WARN CLAUDE\.md has no <!-- wsg:advisor --> block/));
+    fs.writeFileSync(claudeFile, ctext.replace(/<!-- wsg:advisor -->\n[\s\S]*?<!-- \/wsg:advisor -->\n/, ''));
+    fs.renameSync(path.join(wsC, '.claude', 'wsg.json'), path.join(wsC, '.claude', 'wsg.json.off'));
+    it('a 0.1 workspace gets no CLAUDE.md advisor finding', () => assert.doesNotMatch(run().text, /CLAUDE\.md .*wsg:advisor/));
+    fs.renameSync(path.join(wsC, '.claude', 'wsg.json.off'), path.join(wsC, '.claude', 'wsg.json'));
+    fs.writeFileSync(claudeFile, ctext);
     const agentsFile = path.join(wsC, 'AGENTS.md');
     const text = fs.readFileSync(agentsFile, 'utf8');
     fs.writeFileSync(agentsFile, text.replace(/<!-- wsg:advisor -->\n[\s\S]*?<!-- \/wsg:advisor -->\n/, ''));
@@ -2113,9 +2174,17 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     });
     it('the Codex agent starts with the marker as a comment', () => assert.match(codexTpl, /^# generated by wsg\n# `wsg install-skills` rewrites this file; delete the line above/));
     const tomlStr = (key) => (codexTpl.match(new RegExp(`^${key} = "([^"\\n]*)"$`, 'm')) || [])[1];
-    it('its name is the file name, its description the Claude one', () => {
+    it('its name is the file name, its description the Claude one but for the trigger', () => {
       assert.strictEqual(tomlStr('name'), 'wsg-advisor');
-      assert.strictEqual(tomlStr('description'), fm.description);
+      const tail = (d) => d.slice(d.indexOf('. Fresh eyes'));
+      assert.ok(tail(fm.description).length > 80);
+      assert.strictEqual(tail(tomlStr('description')), tail(fm.description));
+    });
+    // Claude Code delegates on the description: a strong trigger first. Codex spawns on request.
+    it('the descriptions start with when to call it: MUST BE USED for Claude Code, Spawn it for Codex', () => {
+      const when = 'before you show the owner any list of questions, decisions or a plan with open points, and before you run `wsg add` or `wsg remove`.';
+      assert.ok(fm.description.startsWith(`MUST BE USED ${when}`), fm.description);
+      assert.ok(tomlStr('description').startsWith(`Spawn it ${when}`), tomlStr('description'));
     });
     it('its instructions are the body of the Claude agent', () => {
       const m = codexTpl.match(/^developer_instructions = '''\n([\s\S]*?)\n'''$/m);
@@ -2250,6 +2319,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
         assert.match(advisorGuide, inGuide);
       }
     });
+    it('README says CLAUDE.md has an advisor block too', () => assert.match(readme, /`CLAUDE\.md` has a block of the same name telling Claude Code to call the subagent/));
     it('README names refresh, install-skills --uninstall and the advisor guide', () => {
       for (const x of ['`wsg refresh [--dry-run] [--ws SLUG\\|PATH]`', '`wsg install-skills [--uninstall]`', '`wsg guide [setup\\|advisor]`', '## Advisor', '**Codex.**', 'docs/advisor-guide.md']) assert.ok(readme.includes(x), x);
     });

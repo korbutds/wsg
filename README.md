@@ -230,8 +230,11 @@ those questions first, so that only real decisions reach you.
 
 - **How it is called.** A one-line rule in a generated block of `AGENTS.md` (`<!-- wsg:advisor -->`):
   questions and decisions for the owner, and planned `wsg add`/`wsg remove` commands, go through the
-  advisor first. The setup guide does the same at each step. `wsg refresh` adds the block to a
-  workspace made by an earlier wsg.
+  advisor first, and the owner sees only its OWNER and THIRD-PARTY items and one summary line.
+  `CLAUDE.md` has a block of the same name telling Claude Code to call the subagent with a
+  self-contained brief, and the agent's description starts with "MUST BE USED before…". The setup
+  guide does the same at each step. `wsg refresh` adds the blocks to a workspace made by an earlier
+  wsg; `wsg check` warns when one is missing.
 - **What it does.** It looks for evidence in a fixed order — the code and CI, your rules
   (`AGENTS.md`, `notes.md`, `.claude/wsg.json`), facts about wsg, sibling workspaces under
   `WS_ROOT`, git history, the tracker if a read tool for it is configured — and replies in a fixed

@@ -1,6 +1,6 @@
 ---
 name: wsg-advisor
-description: Fresh eyes for the agent working in a wsg workspace. Before you show the owner any questions or decisions, and before you run a planned `wsg add` or `wsg remove`, send them here as a brief (workspace path, task, ticket, numbered questions, the commands). It checks code, owner rules, wsg facts, sibling workspaces and the tracker read-only, answers what evidence answers, and hands back only what needs the owner or a third party. It never talks to the owner; its answer is not consent.
+description: MUST BE USED before you show the owner any list of questions, decisions or a plan with open points, and before you run `wsg add` or `wsg remove`. Fresh eyes for the agent working in a wsg workspace: send it a self-contained brief (workspace path, task, ticket, numbered questions, the commands). It checks code, owner rules, wsg facts, sibling workspaces and the tracker read-only, answers what evidence answers, and hands back only what needs the owner or a third party. It never talks to the owner; its answer is not consent.
 disallowedTools: Write, Edit, NotebookEdit
 model: inherit
 background: false
