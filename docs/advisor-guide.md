@@ -46,16 +46,23 @@ Enforced in part, and it is not a sandbox. In Claude Code the advisor has no Wri
 nor Agent, Monitor or the worktree tools, and a hook in its agent file checks every tool call
 against a list before it runs. Read, Grep, Glob, WebFetch, WebSearch and ToolSearch pass; a Bash
 command outside the list above is blocked, and so is any other tool (a subagent, a cron, a
-workflow) but MCP. An MCP tool passes when its name says it only reads: the words after
-`mcp__<server>__` (split on `_`, `-` and camelCase) hold no write verb (create, update, set,
-replace, mark, toggle, archive, resolve a thread, run, export, download… and `and`), and the first
-verb is a read one (get, list, search, fetch, find, read, query, view, describe, show, lookup,
-filter); a name with no verb passes only when it ends in info, stat, metric, status, overview,
-history or details. A tool it cannot tell is blocked. A list is not a sandbox: what a listed command or tool can reach, the advisor
-can read. A project-level copy of the agent in a folder Claude Code was not told to trust runs
-without the hook. In Codex the advisor's agent file sets `sandbox_mode = "read-only"`; whether Codex
-applies it to a spawned agent under a writable parent session is not verified, so that it writes
-nothing, MCP tools included, is still the rule.
+workflow) but MCP. The list goes down to the options: each command, and each git subcommand, has
+a table of the options it takes, and one not in it blocks — `git diff --ext-diff`,
+`git show --textconv`, `rg --pre`, `rg --hostname-bin`, `find -exec`, an abbreviated long option,
+a URL or a path for `git ls-remote`, a control character or a Unicode space anywhere. An MCP tool passes when its name
+says it only reads: the words after `mcp__<server>__` (split on `_`, `-`, `__` and camelCase) hold
+no write verb (create, update, set, replace, mark, toggle, archive, resolve a thread, run, export,
+download, make… and `and`, `or`), no query language (sql, graphql, cypher, a bare `query`), and the
+first word is a read verb (get, list, search, fetch, find, read, query, view, describe, show,
+lookup, count, filter) — or the second, after a prefix such as `wiki_get_page`; a name with no
+verb passes only as one word or a prefix and a noun: info, stat, metric, status, overview, history
+or details (`user_info`). A tool it cannot tell is blocked. A tool that reads can still have a side
+effect its name does not show — a `get_file` that saves the file, a `read_thread` that marks it
+read: accepted, not blocked. A list is not a sandbox: what a listed command or tool can reach,
+the advisor can read. A project-level copy of the agent in a folder Claude Code was not told to
+trust runs without the hook. In Codex the advisor's agent file sets `sandbox_mode = "read-only"`;
+whether Codex applies it to a spawned agent under a writable parent session is not verified, so
+that it writes nothing, MCP tools included, is still the rule.
 
 ## Procedure
 

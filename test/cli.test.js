@@ -2387,15 +2387,17 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       assert.match(readme, /a hook in its agent file blocks any tool\s+call that is not on its read-only list/);
       assert.match(advisorGuide, /a hook in its agent file checks every tool call\s+against a list/);
       assert.match(advisorGuide, /so is any other tool \(a subagent, a cron, a\s+workflow\) but MCP/);
-      assert.match(advisorGuide, /the first\s+verb is a read one/);
-      assert.match(advisorGuide, /A project-level copy of the agent in a folder Claude Code was not told to trust runs\s+without the hook/);
+      assert.match(advisorGuide, /the\s+first word is a read verb[\s\S]{0,120}or the second, after a prefix/);
+      assert.match(advisorGuide, /each command, and each git subcommand, has\s+a table of the options it takes, and one not in it blocks/);
+      assert.match(advisorGuide, /a `get_file` that saves the file, a `read_thread` that marks it\s+read: accepted, not blocked/);
+      assert.match(advisorGuide, /A project-level copy of the agent in a folder Claude Code was not told to\s+trust runs\s+without the hook/);
       assert.doesNotMatch(advisorGuide, /None of this is enforced by wsg/);
     });
     // The list in the rules is the list the guard lets through: what the agent is told it may run, runs.
     it('every command in the advisor\'s Bash rule passes the guard', () => {
       const G = require(path.join(ROOT, 'lib', 'advisor-guard.js'));
       for (const c of ['git log', 'git show', 'git diff', 'git status', 'git blame', 'git grep', 'git rev-parse', 'git merge-base',
-        'git ls-files', 'git for-each-ref', 'git symbolic-ref', 'git ls-remote', 'git branch --list', 'git branch -v', 'git branch -a',
+        'git ls-files', 'git for-each-ref', 'git symbolic-ref HEAD', 'git ls-remote', 'git branch --list', 'git branch -v', 'git branch -a',
         'git branch -r', 'git branch --show-current', 'git -C /tmp log', 'wsg guide advisor', 'wsg check', 'wsg --where',
         'wsg add x --dry-run', 'wsg remove x --dry-run', 'ls', 'cat a', 'head a', 'tail a', 'wc a', 'grep a b', 'rg a', 'find .', 'pwd',
         'npx @korbutds/wsg guide advisor']) assert.ok(G.decide({ tool_name: 'Bash', tool_input: { command: c } }).allow, c);
