@@ -11,8 +11,8 @@
 #   3. Open item 2: a directory `wsg add --reference` writes into additionalDirectories while a
 #      session runs — readable in that session? In a new one? A directory never attached is the
 #      control: it must stay unreadable, or the other two prove nothing.
-#   4. The wsg-advisor agent: listed as a subagent; run with --agent and asked to edit notes.md,
-#      it leaves the file unchanged (it has no Write or Edit tool).
+#   4. The wsg-advisor agent: in the `agents` of the stream-json init event; run with --agent and
+#      asked to edit notes.md, it leaves the file unchanged (it has no Write or Edit tool).
 # Open item 1 (agents written mid-session are picked up live) belongs to the team, phase 2.
 #
 # Outcome recorded on 2026-10-21 with Claude Code 2.1.306 and haiku:
@@ -30,6 +30,7 @@ set -euo pipefail
 MODEL="${1:-haiku}"
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 command -v claude >/dev/null || { echo "claude is not on PATH" >&2; exit 1; }
+command -v node >/dev/null || { echo "node is not on PATH" >&2; exit 1; }
 
 TMP="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/wsg-smoke-XXXXXX")" && pwd -P)"
 PROJECTS="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects"
@@ -102,8 +103,17 @@ fresh four; W4="$WS_ROOT/four"
 # file wsg install-skills writes to ~/.claude/agents.
 mkdir -p "$W4/.claude/agents"
 cp "$SRC/templates/claude/agents/wsg-advisor.md" "$W4/.claude/agents/wsg-advisor.md"
-out="$(ask "$W4" "Without tools: list the names of the subagent types you can start with the Agent tool, one per line." --max-turns 1)"
-report "wsg-advisor is listed as a subagent" "$(has "$out" wsg-advisor)"
+# The agents Claude Code loaded, from the init event of the stream — not the model's reply, which
+# could name wsg-advisor just because AGENTS.md does.
+out="$(ask "$W4" "Reply OK." --max-turns 1 --output-format stream-json --verbose)"
+agents="$(printf '%s' "$out" | node -e '
+  let s = ""; process.stdin.on("data", (d) => { s += d; }).on("end", () => {
+    const init = s.split("\n").map((l) => { try { return JSON.parse(l); } catch { return null; } })
+      .find((e) => e && e.type === "system" && e.subtype === "init");
+    const list = (init && Array.isArray(init.agents) ? init.agents : []).map((a) => (typeof a === "string" ? a : a && a.name));
+    process.stdout.write(list.join("\n"));
+  });')"
+report "wsg-advisor is in the agents of the init event" "$(printf '%s\n' "$agents" | grep -qx wsg-advisor && echo yes || echo no)"
 before="$(shasum "$W4/notes.md")"
 out="$(ask "$W4" "Append the line SMOKE-EDIT-5c2 to notes.md in the current directory." --agent wsg-advisor --max-turns 4 --permission-mode acceptEdits)"
 after="$(shasum "$W4/notes.md")"

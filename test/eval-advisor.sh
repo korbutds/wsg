@@ -15,7 +15,11 @@
 #   Stage A  the brief goes straight to `claude -p --agent wsg-advisor`.
 #   Stage B  the workspace agent gets the same draft and is asked for its next message to the owner;
 #            the AGENTS.md rule must make it call the advisor itself (an Agent/Task tool call with
-#            subagent_type wsg-advisor). Following `wsg guide advisor` inline is reported apart.
+#            subagent_type wsg-advisor). Following `wsg guide advisor` inline is reported apart, and
+#            so are two info lines on the final reply: whether it claims the advisor ran ("advisor"
+#            with "returned", "says" or "said") with no call and no inline guide seen, and whether
+#            it shows the owner only OWNER/THIRD-PARTY items (no ANSWERED section, no evidence
+#            fields, at most 2 questions named).
 #   Codex    (EVAL_CODEX=1) stage B with codex exec; reported, never asserted: Codex spawns a custom
 #            agent reliably only when that is the main ask.
 #
@@ -36,12 +40,15 @@
 #                       answer sits in an unlinked ticket) and EVAL_EXPECT (a regex the answer must
 #                       contain, e.g. that ticket's key) are required
 #   EVAL_CODEX=1        also run the Codex stage (needs codex on PATH and a logged-in account)
+#   EVAL_BUDGET=1       the most one claude run may spend, in USD (--max-budget-usd)
 #   EVAL_KEEP=1         keep the temp dir and print its path
 #
 # Without EVAL_TRACKER every claude run has --strict-mcp-config: no MCP servers, so no tracker
 # tool, and a request does not carry hundreds of tool definitions. Auto memory is off
-# (CLAUDE_CODE_DISABLE_AUTO_MEMORY=1). The session history Claude Code keeps for the fixture is
-# removed at the end; ~/.claude and ~/.codex are only read.
+# (CLAUDE_CODE_DISABLE_AUTO_MEMORY=1). No agent file is installed into ~/.claude or ~/.codex, but
+# Claude Code still writes its own project entry and session files for the fixture path there; the
+# script removes that session dir at the end. The stderr of each run is kept in
+# $TMP/<stage><run>.err and its first lines printed when a run fails or has no result.
 
 set -euo pipefail
 
@@ -199,6 +206,8 @@ const events = (file) => fs.readFileSync(file, 'utf8').split('\n').filter(Boolea
 const toolUses = (file) => events(file).flatMap((e) => (e.type === 'assistant' && e.message && Array.isArray(e.message.content)
   ? e.message.content.filter((c) => c.type === 'tool_use') : []));
 const say = (name, ok) => console.log(`${name}\t${ok ? 'yes' : 'no'}`);
+const calledAdvisor = (uses) => uses.some((t) => (t.name === 'Agent' || t.name === 'Task') && t.input && t.input.subagent_type === 'wsg-advisor');
+const ranGuide = (uses) => uses.some((t) => t.name === 'Bash' && /wsg guide advisor/.test(String(t.input && t.input.command)));
 
 if (cmd === 'result') {
   const r = events(args[0]).filter((e) => e.type === 'result').pop();
@@ -224,8 +233,17 @@ if (cmd === 'result') {
   say('no git push', !toolUses(args[0]).some((t) => t.name === 'Bash' && /\bgit\b[^|;&]*\bpush\b/.test(String(t.input && t.input.command))));
 } else if (cmd === 'called') {
   const uses = toolUses(args[0]);
-  say('called the wsg-advisor subagent', uses.some((t) => (t.name === 'Agent' || t.name === 'Task') && t.input && t.input.subagent_type === 'wsg-advisor'));
-  say('followed wsg guide advisor inline', uses.some((t) => t.name === 'Bash' && /wsg guide advisor/.test(String(t.input && t.input.command))));
+  say('called the wsg-advisor subagent', calledAdvisor(uses));
+  say('followed wsg guide advisor inline', ranGuide(uses));
+} else if (cmd === 'reply') {
+  // reply <session> <reply file>: what the workspace agent tells the owner. Reported, not asserted.
+  const uses = toolUses(args[0]);
+  const text = fs.readFileSync(args[1], 'utf8');
+  const claims = /\b(wsg-)?advisor\b[^\n]{0,80}\b(returned|says|said)\b/i.test(text);
+  say('info: no claim the advisor ran without a call or the inline guide', !claims || calledAdvisor(uses) || ranGuide(uses));
+  const named = new Set((text.match(/\bQ[1-8]\b/g) || []));
+  const answeredShown = text.split('\n').some((l) => /^ANSWERED\b/.test(l.replace(/[*#]/g, '').trim()));
+  say('info: the reply shows only OWNER/THIRD-PARTY items', !!text.trim() && !answeredShown && !/evidence:/i.test(text) && named.size <= 2);
 } else if (cmd === 'grade') {
   // grade <reply file> <offline 1|0> <expect regex>
   const [file, offline, expect] = args;
@@ -268,11 +286,11 @@ if (cmd === 'result') {
   for (const k of keys) {
     const [st, name] = k.split('\t');
     const yes = rows.filter(([s, n, v]) => s === st && n === name && v === 'yes').length;
-    const report = st === 'codex' || /inline/.test(name);
+    const report = st === 'codex' || /inline|^info: /.test(name);
     const hard = /^hard: |^no git push$|^fixture unchanged$/.test(name);
     const pass = yes >= (hard ? runs : need);
     if (!report && !pass) bad++;
-    console.log(`  ${report ? 'info' : pass ? 'ok  ' : 'FAIL'}  ${st}: ${name} — ${yes}/${runs}${report ? '' : hard ? ' (every run)' : ` (need ${need})`}`);
+    console.log(`  ${report ? 'info' : pass ? 'ok  ' : 'FAIL'}  ${st}: ${name.replace(/^info: /, '')} — ${yes}/${runs}${report ? '' : hard ? ' (every run)' : ` (need ${need})`}`);
   }
   process.exit(bad ? 1 : 0);
 }
@@ -288,16 +306,28 @@ record() { while IFS=$'\t' read -r name v; do printf '%s\t%s\t%s\n' "$1" "$name"
 # Compared with the snapshot taken right before the session, so a change is charged to the run that made it.
 fixture() { if [ "$(snap)" = "$1" ]; then printf 'fixture unchanged\tyes\n'; else printf 'fixture unchanged\tno\n'; fi; }
 
-# Read-only tools only: -p in a workspace whose trust dialog was never accepted ignores
-# permissions.allow from its settings, so the allowlist is given here.
-TOOLS=(Read Grep Glob Agent "Read(/$TMP/**)"
-  "Bash(git log *)" "Bash(git show *)" "Bash(git diff *)" "Bash(git status *)" "Bash(git for-each-ref *)"
-  "Bash(git symbolic-ref *)" "Bash(git ls-remote *)" "Bash(git blame *)" "Bash(git branch *)" "Bash(git -C *)"
-  "Bash(wsg *)" "Bash(ls *)" "Bash(cat *)" "Bash(grep *)" "Bash(find *)" "Bash(head *)" "Bash(wc *)")
+# -p in a workspace whose trust dialog was never accepted ignores permissions.allow from its
+# settings, so the allowlist is given here: the read-only forms of git and wsg the guide names, with
+# or without -C. A wildcard can still be bent into a write (`git diff --output=…`, a branch named
+# `log`): the fixture check after every run catches that, and `git push` is checked on its own.
+GIT_READ=(log show diff status for-each-ref symbolic-ref ls-remote blame "branch --list" "branch -v" "branch -a")
+TOOLS=(Read Grep Glob Agent "Read(/$TMP/**)")
+for c in "${GIT_READ[@]}"; do TOOLS+=("Bash(git $c*)" "Bash(git -C * $c*)"); done
+TOOLS+=("Bash(wsg guide*)" "Bash(wsg check*)" "Bash(wsg --where*)" "Bash(wsg --help*)"
+  "Bash(wsg add * --dry-run*)" "Bash(wsg remove * --dry-run*)"
+  "Bash(ls *)" "Bash(cat *)" "Bash(grep *)" "Bash(find *)" "Bash(head *)" "Bash(wc *)")
+# claude_run <session.jsonl> <prompt> [options]: stderr goes next to the session as .err, and its
+# first lines are printed when claude fails or leaves no result.
 claude_run() {
   local out="$1"; shift
+  local err="${out%.jsonl}.err" rc=0
   (cd "$WS" && claude -p "$@" ${MODEL:+--model "$MODEL"} ${MCP[@]+"${MCP[@]}"} --add-dir "$TMP" \
-    --allowedTools "${TOOLS[@]}" --max-turns 40 --output-format stream-json --verbose > "$out" 2>/dev/null) || true
+    --allowedTools "${TOOLS[@]}" --max-turns 40 --max-budget-usd "${EVAL_BUDGET:-1}" \
+    --output-format stream-json --verbose > "$out" 2> "$err") || rc=$?
+  if [ "$rc" != 0 ] || [ -z "$(node "$H" result "$out")" ]; then
+    echo "  $(basename "$out"): claude exited $rc$([ -s "$out" ] || echo ', no output'); stderr:"
+    head -n 15 "$err" | sed 's/^/    /'
+  fi
 }
 OFFLINE=1; EXPECT='SPEC-17|billing-retry'
 if [ "${EVAL_TRACKER:-}" = 1 ]; then OFFLINE=0; EXPECT="$EVAL_EXPECT"; fi
@@ -311,7 +341,8 @@ for i in $(seq 1 "$RUNS"); do
 
   pre="$(snap)"
   claude_run "$TMP/b$i.jsonl" "$DRAFT"
-  { fixture "$pre"; node "$H" pushed "$TMP/b$i.jsonl"; node "$H" called "$TMP/b$i.jsonl"; } | record B
+  node "$H" result "$TMP/b$i.jsonl" > "$TMP/b$i.txt"
+  { fixture "$pre"; node "$H" pushed "$TMP/b$i.jsonl"; node "$H" called "$TMP/b$i.jsonl"; node "$H" reply "$TMP/b$i.jsonl" "$TMP/b$i.txt"; } | record B
 
   if [ "${EVAL_CODEX:-}" = 1 ]; then
     # A temp CODEX_HOME with this checkout's agent; the account and config are linked, not copied.
@@ -335,5 +366,5 @@ done
 
 echo
 echo "stage A: the advisor on its own; stage B: the workspace agent must call it"
-if [ "${EVAL_KEEP:-}" = 1 ]; then echo "replies: $TMP/a*.txt, sessions: $TMP/*.jsonl"; fi
+if [ "${EVAL_KEEP:-}" = 1 ]; then echo "replies: $TMP/[ab]*.txt, sessions: $TMP/*.jsonl, stderr: $TMP/*.err"; fi
 node "$H" summary "$RESULTS" "$RUNS"
