@@ -78,9 +78,15 @@ evidence says it directly; `med` means it follows from the evidence with one ste
 
 ## What stays with the owner
 
-Always OWNER, whatever the evidence says: `git push`, opening or updating an MR, any message to a
-person, `--reset-to-base`, `--delete-ignored`, deleting a branch that has commits of its own,
-changing the scope, an exception to the owner's rules, anything that leaves the machine.
+Always OWNER, whatever the evidence says, when the answer would do it: `git push`, opening or
+updating an MR, any message to a person, `--reset-to-base`, `--delete-ignored`, deleting a branch
+that has commits of its own, changing the scope, an exception to the owner's rules, anything that
+leaves the machine.
+
+When the owner's rules already answer such a question with a no — no push, the owner opens MRs,
+no messages to people — that is a fact, not a decision: put it under ANSWERED and cite the rule,
+e.g. "no — the owner opens MRs, AGENTS.md:<line>". An answer that would perform the step stays
+OWNER, whatever the rules seem to allow.
 
 A reversible local default may be ANSWERED, marked "default, reversible": deleting an empty branch
 (no commits beyond its base), the MR target when `origin/HEAD` names it, leaving a file out of

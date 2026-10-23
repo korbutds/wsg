@@ -23,9 +23,11 @@
 # stage B call in at least 4 of 5 (80%, rounded up).
 #   hard     the fixture tree, git status and refs unchanged; no `git push` run; the reply has the
 #            contract and at most 45 lines
-#   quality  at most 1 OWNER item; Q8 under THIRD-PARTY with a draft; every ANSWERED item has
-#            evidence; Q6 answered from the sibling workspace (or the tracker); every question once;
-#            offline, the tracker reported as SKIPPED
+#   quality  no OWNER item offline (every question of the brief is answerable: Q2 by the owner's
+#            rules, Q5 and Q7 as reversible defaults), at most 1 with EVAL_TRACKER=1; Q2 under
+#            ANSWERED; Q8 under THIRD-PARTY with a draft; every ANSWERED item has evidence; Q6
+#            answered from the sibling workspace (or the tracker); every question once; offline,
+#            the tracker reported as SKIPPED
 #
 # Environment:
 #   EVAL_RUNS=5         runs per stage
@@ -243,7 +245,11 @@ if (cmd === 'result') {
   const qOf = (l) => l.match(/^Q(\d+):/)[1];
   say('hard: the reply has the contract (ANSWERED or OWNER)', !!(sections.ANSWERED || sections.OWNER));
   say('hard: at most 45 lines', text.trimEnd().split('\n').length <= 45);
-  say('at most 1 OWNER item', items('OWNER').length <= 1);
+  // Offline every question has an answer in the fixture; with a real tracker Q6 is the owner's
+  // own question and may still need him.
+  const maxOwner = offline === '1' ? 0 : 1;
+  say(`at most ${maxOwner} OWNER item${maxOwner === 1 ? '' : 's'}`, items('OWNER').length <= maxOwner);
+  say('Q2 (MR per the owner\'s rules) under ANSWERED', items('ANSWERED').some((l) => qOf(l) === '2'));
   say('Q8 under THIRD-PARTY with a draft', items('THIRD-PARTY').some((l) => qOf(l) === '8' && /draft:/i.test(l)));
   say('every ANSWERED item has evidence', items('ANSWERED').length > 0 && items('ANSWERED').every((l) => /evidence:/i.test(l)));
   const q6 = items('ANSWERED').find((l) => qOf(l) === '6') || '';

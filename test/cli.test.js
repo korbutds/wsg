@@ -1985,6 +1985,16 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
         assert.ok(advisorGuide.includes(s), `guide: ${s}`);
       }
     });
+    // A question the owner's rules already answer with a no is not put to the owner again; doing
+    // the step is.
+    it('a no from the owner\'s rules is ANSWERED citing the rule, performing the step stays OWNER', () => {
+      const rule = '"no — the owner opens MRs, AGENTS.md:<line>"';
+      assert.ok(agentTpl.includes(rule), 'agent');
+      assert.ok(advisorGuide.includes(rule), 'guide');
+      assert.match(agentTpl, /An answer that would push, open an MR, message people[\s\S]{0,200}always goes under\s+OWNER/);
+      assert.match(advisorGuide, /An answer that would perform the step stays\s+OWNER/);
+      assert.doesNotMatch(agentTpl, /Push, MR, messages to people, `--reset-to-base`, scope changes and\s+exceptions to the owner's rules always go under OWNER/);
+    });
     // The same agent for Codex: a TOML file, the instructions the same text as the Claude body.
     const codexTpl = fs.readFileSync(path.join(ROOT, 'templates', 'codex', 'agents', 'wsg-advisor.toml'), 'utf8');
     const codexFile = path.join(home, '.codex', 'agents', 'wsg-advisor.toml');

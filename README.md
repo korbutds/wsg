@@ -239,8 +239,9 @@ those questions first, so that only real decisions reach you.
   PLAN REVIEW, SKIPPED. The workspace agent shows you only the OWNER and THIRD-PARTY items and one
   summary line.
 - **What it never does.** Push, MR, messages to people, `--reset-to-base`, scope changes and
-  exceptions to your rules always stay yours; an advisor answer is never your consent. It writes
-  nothing and never talks to you.
+  exceptions to your rules always stay yours; an advisor answer is never your consent. When your
+  rules already say no to one of them ("the owner opens MRs"), it answers the agent with that rule
+  instead of asking you. It writes nothing and never talks to you.
 - **Where it lives.** User-level, written by `wsg install-skills`: `~/.claude/agents/wsg-advisor.md`
   for Claude Code, `~/.codex/agents/wsg-advisor.toml` for Codex. It works in existing workspaces;
   running `wsg install-skills` again upgrades it. `wsg new` and `wsg add` never install it.
