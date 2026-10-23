@@ -1,16 +1,12 @@
 ---
 name: wsg-advisor
-description: MUST BE USED before you show the owner any list of questions, decisions or a plan with open points, and before you run `wsg add` or `wsg remove`. Fresh eyes for the agent working in a wsg workspace: send it a self-contained brief (workspace path, task, ticket, numbered questions, the commands). It checks code, owner rules, wsg facts, sibling workspaces and the tracker read-only, answers what evidence answers, and hands back only what needs the owner or a third party. It never talks to the owner; its answer is not consent.
-disallowedTools: Write, Edit, NotebookEdit
+description: MUST BE USED before you show the owner any list of questions, decisions or a plan with open points, and before you run `wsg add` or `wsg remove`. Fresh eyes for the agent working in a wsg workspace. Send it a self-contained brief (workspace path, task, ticket, numbered questions, the commands). It checks code, owner rules, wsg facts, sibling workspaces and the tracker read-only, answers what evidence answers, and hands back only what needs the owner or a third party. It never talks to the owner; its answer is not consent.
+disallowedTools: Write, Edit, NotebookEdit, Agent, Monitor, EnterWorktree, ExitWorktree, CronCreate, RemoteTrigger, Workflow
 model: inherit
 background: false
 hooks:
   PreToolUse:
-    - matcher: "Bash"
-      hooks:
-        - type: command
-          command: 'node "<GUARD>" || exit 2'
-    - matcher: "mcp__.*"
+    - matcher: "*"
       hooks:
         - type: command
           command: 'node "<GUARD>" || exit 2'

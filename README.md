@@ -248,8 +248,8 @@ those questions first, so that only real decisions reach you.
 - **Where it lives.** User-level, written by `wsg install-skills`: `~/.claude/agents/wsg-advisor.md`
   for Claude Code, `~/.codex/agents/wsg-advisor.toml` for Codex — only when Codex is there
   (`CODEX_HOME` is set, `~/.codex` exists or `codex` is on PATH), otherwise it is reported as
-  skipped. The Claude Code advisor has no write tools, and a hook in its agent file blocks any Bash
-  or MCP call that is not on its read-only list; the Codex one runs in a read-only sandbox. It
+  skipped. The Claude Code advisor has no write tools, and a hook in its agent file blocks any tool
+  call that is not on its read-only list; the Codex one runs in a read-only sandbox. It
   works in existing workspaces;
   running `wsg install-skills` again upgrades it. `wsg new` and `wsg add` never install it.
 - **The procedure** lives in [docs/advisor-guide.md](docs/advisor-guide.md) (`wsg guide advisor`);
@@ -305,11 +305,12 @@ shows you the text before writing it.
   `.worktreeinclude`, and auto-cleanup. `wsg` helps where those fall short: a task spanning several
   repositories, a task knowledge layer, and a limits validator.
 - No command to delete a workspace — for now, three commands by hand.
-- **The advisor is not a sandbox.** In Claude Code it has no Write, Edit or NotebookEdit tool, and
-  a `PreToolUse` hook in its agent file runs `lib/advisor-guard.js` before every Bash and MCP call:
-  a Bash command must be one plain read command from a list (no pipes, redirection or `$`), an MCP
-  tool's name must say it reads (get, list, search…) and not that it writes; anything else, and a
-  guard that cannot run, blocks the call. That is a list, not a sandbox: whatever a listed command
+- **The advisor is not a sandbox.** In Claude Code it has no Write, Edit, NotebookEdit, Agent or
+  Monitor tool, and a `PreToolUse` hook in its agent file runs `lib/advisor-guard.js` before every
+  tool call: Read, Grep, Glob, WebFetch, WebSearch and ToolSearch pass, a Bash command must be one
+  plain read command from a list (no pipes, redirection, `#` or `$`), an MCP tool's name must say
+  it reads (get, list, search…) and not that it writes; anything else — another tool, a name it
+  cannot tell, a guard that cannot run — blocks the call. That is a list, not a sandbox: whatever a listed command
   or tool can reach, the advisor can read, and it has the MCP tools of the session that calls it.
   The hook path is absolute: after the package moves, `wsg check` reports the agent as broken until
   `wsg install-skills` runs again. In Codex the advisor agent runs in a read-only sandbox
