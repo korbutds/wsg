@@ -57,8 +57,8 @@ cp "$(wsg --where)/config.example" ~/.config/wsg/config
 ```
 
 `wsg install-skills` adds the user-level parts: for Claude Code, the `wsg-new` skill (any session
-can then create a workspace when you ask for one) and the `wsg-advisor` agent; for Codex, the
-`wsg-advisor` agent (see [Advisor](#advisor)). `wsg install-skills --uninstall` removes them.
+can then create a workspace when you ask for one) and the `wsg-advisor` agent; for Codex, when it
+is installed, the `wsg-advisor` agent (see [Advisor](#advisor)). `wsg install-skills --uninstall` removes them.
 
 <details>
 <summary>Without npm — from the repository</summary>
@@ -111,7 +111,7 @@ The commands the agent (or you) call:
 | `wsg check [path\|slug]` | Checks a workspace against the conventions. |
 | `wsg promote [slug\|path] --skill NAME` | Turns a task into a process. |
 | `wsg guide [setup\|advisor]` | Prints a guide an agent follows: the setup dialogue, or the advisor's procedure. |
-| `wsg install-skills [--uninstall]` | Installs the `wsg-new` skill into `~/.claude/skills` and the `wsg-advisor` agent into `~/.claude/agents` (or under `$CLAUDE_CONFIG_DIR`) and `~/.codex/agents` (or `$CODEX_HOME/agents`). Overwrites only files it wrote — they carry a marker — and refuses others with exit 1. `--uninstall` removes only its own files. |
+| `wsg install-skills [--uninstall]` | Installs the `wsg-new` skill into `~/.claude/skills` and the `wsg-advisor` agent into `~/.claude/agents` (or under `$CLAUDE_CONFIG_DIR`) and, when Codex is there, `~/.codex/agents` (or `$CODEX_HOME/agents`). Overwrites only files it wrote — they carry a marker — and refuses others with exit 1. `--uninstall` removes only its own files. |
 
 Exit codes: `0` ok, `1` the check found errors or a step failed and was rolled back, `2` invalid
 input — nothing was changed, `130` cancelled with Ctrl+C (or a closed terminal, `kill`) and rolled
@@ -243,7 +243,10 @@ those questions first, so that only real decisions reach you.
   rules already say no to one of them ("the owner opens MRs"), it answers the agent with that rule
   instead of asking you. It writes nothing and never talks to you.
 - **Where it lives.** User-level, written by `wsg install-skills`: `~/.claude/agents/wsg-advisor.md`
-  for Claude Code, `~/.codex/agents/wsg-advisor.toml` for Codex. It works in existing workspaces;
+  for Claude Code, `~/.codex/agents/wsg-advisor.toml` for Codex — only when Codex is there
+  (`CODEX_HOME` is set, `~/.codex` exists or `codex` is on PATH), otherwise it is reported as
+  skipped. The Claude Code advisor is read-only by its rules and `disallowedTools`; the Codex one
+  also runs in a read-only sandbox. It works in existing workspaces;
   running `wsg install-skills` again upgrades it. `wsg new` and `wsg add` never install it.
 - **The procedure** lives in [docs/advisor-guide.md](docs/advisor-guide.md) (`wsg guide advisor`);
   the agent files are thin: a new procedure arrives with an upgrade of wsg, without reinstalling them.
@@ -300,9 +303,11 @@ shows you the text before writing it.
 - No command to delete a workspace — for now, three commands by hand.
 - **The advisor is not a sandbox.** In Claude Code it has no Write, Edit or NotebookEdit tool; that
   it only reads with Bash and MCP tools is a rule in its prompt, not something enforced, and it has
-  the MCP tools of the session that calls it. Its answers can be wrong: each one has to cite its
-  evidence, and irreversible steps stay with you. A project-level `.claude/agents/wsg-advisor.md`
-  would shadow the installed one; `wsg check` warns about it.
+  the MCP tools of the session that calls it. In Codex the advisor agent runs in a read-only sandbox
+  (`sandbox_mode = "read-only"`), so its shell cannot write; its MCP tools only read by the same
+  rule. Its answers can be wrong: each one has to cite its evidence, and irreversible steps stay
+  with you. A project-level `.claude/agents/wsg-advisor.md` or `.codex/agents/wsg-advisor.toml`, in
+  the workspace or a directory above it, would shadow the installed one; `wsg check` warns about it.
 - **What `wsg remove` doesn't see.** A tracked file marked `skip-worktree` or `assume-unchanged`
   and edited in the worktree looks clean to git: it is deleted with the worktree. If a removal
   fails after the worktree is gone, the rollback adds the worktree back on the same branch, but

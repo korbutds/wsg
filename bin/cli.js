@@ -436,6 +436,7 @@ function cmdInstallSkills(args) {
   for (const { file, status } of skills.install()) {
     if (status === 'written') ui.ok(t('cli.skillWritten', { file }));
     else if (status === 'unchanged') ui.ok(t('cli.skillUnchanged', { file }));
+    else if (status === 'skipped') ui.dim(t('cli.skillSkipped', { file }));
     else {
       ui.fail(t('cli.skillRefused', { file }));
       code = 1;

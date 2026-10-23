@@ -766,6 +766,24 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     fs.writeFileSync(shadow, '---\nname: wsg-advisor\n---\nlocal\n');
     it('a project-level wsg-advisor shadows the installed one: WARN', () => assert.match(run().text, /WARN \.claude\/agents\/wsg-advisor\.md shadows the wsg-advisor agent/));
     fs.rmSync(shadow);
+    const codexShadow = path.join(wsC, '.codex', 'agents', 'wsg-advisor.toml');
+    fs.mkdirSync(path.dirname(codexShadow), { recursive: true });
+    fs.writeFileSync(codexShadow, 'name = "wsg-advisor"\n');
+    it('a project-level Codex wsg-advisor shadows the installed one: WARN', () => assert.match(run().text, /WARN \.codex\/agents\/wsg-advisor\.toml shadows the wsg-advisor agent/));
+    fs.rmSync(path.join(wsC, '.codex'), { recursive: true });
+    // In a directory above the workspace too; the user-level file itself is not a shadow.
+    const esc = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    for (const [dir, rel] of [['.claude', 'wsg-advisor.md'], ['.codex', 'wsg-advisor.toml']]) {
+      const above = path.join(wsRoot, dir, 'agents', rel);
+      fs.mkdirSync(path.dirname(above), { recursive: true });
+      fs.writeFileSync(above, 'local\n');
+      it(`${dir}/agents/${rel} in a directory above the workspace: WARN with its path`, () => assert.match(run().text, new RegExp(`WARN ${esc(above)} shadows the wsg-advisor agent`)));
+      it(`but not when it is the user-level ${dir} itself`, () => {
+        const r = run({ CLAUDE_CONFIG_DIR: path.join(wsRoot, '.claude'), CODEX_HOME: path.join(wsRoot, '.codex') });
+        assert.doesNotMatch(r.text, /shadows/);
+      });
+      fs.rmSync(path.join(wsRoot, dir), { recursive: true });
+    }
     const agentsFile = path.join(wsC, 'AGENTS.md');
     const text = fs.readFileSync(agentsFile, 'utf8');
     fs.writeFileSync(agentsFile, text.replace(/<!-- wsg:advisor -->\n[\s\S]*?<!-- \/wsg:advisor -->\n/, ''));
@@ -1937,6 +1955,44 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       assert.strictEqual(S.codexDir({ HOME: home, CODEX_HOME: '' }), path.join(home, '.codex'));
       assert.strictEqual(S.codexDir({ HOME: home, CODEX_HOME: '/x/codex' }), '/x/codex');
     });
+    // The Codex agent only where Codex is: CODEX_HOME, ~/.codex or codex on PATH. PATH here is only
+    // the fake claude's dir, so the machine's own codex is not found.
+    {
+      const bare = path.join(tmp, 'no-codex');
+      const bareEnv = { HOME: path.join(bare, 'home'), CLAUDE_CONFIG_DIR: path.join(bare, 'claude'), CODEX_HOME: '', PATH: fakeBin };
+      fs.mkdirSync(bareEnv.HOME, { recursive: true });
+      const codexAgent = path.join(bareEnv.HOME, '.codex', 'agents', 'wsg-advisor.toml');
+      const n = wsg(['install-skills'], { env: bareEnv });
+      it('no Codex: its agent is skipped, the Claude parts installed, exit 0', () => {
+        assert.strictEqual(n.code, 0, n.all);
+        assert.match(n.out, /skipped .*wsg-advisor\.toml: no Codex here/);
+        assert.ok(!fs.existsSync(path.join(bareEnv.HOME, '.codex')), '~/.codex was created');
+        assert.ok(fs.existsSync(path.join(bareEnv.CLAUDE_CONFIG_DIR, 'agents', 'wsg-advisor.md')));
+      });
+      it('the skip is said in Russian too', () => assert.match(wsg(['install-skills'], { env: { ...bareEnv, WSG_LANG: 'ru' } }).out, /пропущен .*wsg-advisor\.toml: Codex здесь нет/));
+      const codexBin = path.join(bare, 'codex-bin');
+      fs.mkdirSync(codexBin);
+      fs.writeFileSync(path.join(codexBin, 'codex'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+      const p = wsg(['install-skills'], { env: { ...bareEnv, PATH: `${fakeBin}:${codexBin}` } });
+      it('codex on PATH: the agent goes to ~/.codex/agents', () => {
+        assert.strictEqual(p.code, 0, p.all);
+        assert.ok(fs.existsSync(codexAgent));
+      });
+      fs.rmSync(path.join(bareEnv.HOME, '.codex', 'agents'), { recursive: true });
+      it('~/.codex there, codex not on PATH: installed too', () => {
+        assert.strictEqual(wsg(['install-skills'], { env: bareEnv }).code, 0);
+        assert.ok(fs.existsSync(codexAgent));
+      });
+      it('codexPresent: CODEX_HOME, ~/.codex or codex on PATH; an empty CODEX_HOME is unset', () => {
+        const none = { HOME: path.join(bare, 'nobody'), PATH: fakeBin };
+        assert.strictEqual(S.codexPresent({ ...none, CODEX_HOME: '' }), false);
+        assert.strictEqual(S.codexPresent({ ...none, CODEX_HOME: path.join(bare, 'x') }), true);
+        assert.strictEqual(S.codexPresent({ ...none, PATH: codexBin }), true);
+        assert.strictEqual(S.codexPresent({ ...bareEnv }), true);
+      });
+    }
+    // From here on Codex is "installed" under HOME, whatever this machine has.
+    fs.mkdirSync(path.join(home, '.codex'), { recursive: true });
     wsg(['install-skills']);
 
     // The advisor: a thin agent file, the procedure in docs/advisor-guide.md.
@@ -2017,6 +2073,59 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       assert.strictEqual(m[1], body);
     });
     it('Codex memories are off for it', () => assert.match(codexTpl, /^\[features\]\nmemories = false$/m));
+    // A minimal TOML reader for the subset the template uses: comments, [tables], key = "basic",
+    // key = '''multi-line literal''', true/false. Anything else is an error, so a broken file fails.
+    const parseToml = (text) => {
+      const root = {};
+      let table = root;
+      const ls = text.split('\n');
+      for (let i = 0; i < ls.length; i++) {
+        const l = ls[i];
+        if (/^\s*(#.*)?$/.test(l)) continue;
+        let m = l.match(/^\[([A-Za-z0-9_-]+)\]\s*$/);
+        if (m) {
+          if (m[1] in root) throw new Error(`line ${i + 1}: table ${m[1]} again`);
+          table = root[m[1]] = {};
+          continue;
+        }
+        m = l.match(/^([A-Za-z0-9_-]+) = (.*)$/);
+        if (!m) throw new Error(`line ${i + 1}: not a key = value: ${l}`);
+        const [, key, raw] = m;
+        if (key in table) throw new Error(`line ${i + 1}: duplicate key ${key}`);
+        let v;
+        if (raw === "'''") {
+          const end = ls.indexOf("'''", i + 1);
+          if (end < 0) throw new Error(`line ${i + 1}: unterminated ''' string`);
+          v = ls.slice(i + 1, end).join('\n');
+          i = end;
+        } else if (/^"(?:[^"\\]|\\["\\nt])*"$/.test(raw)) {
+          v = JSON.parse(raw);
+        } else if (raw === 'true' || raw === 'false') {
+          v = raw === 'true';
+        } else throw new Error(`line ${i + 1}: unsupported value: ${raw}`);
+        table[key] = v;
+      }
+      return root;
+    };
+    it('the minimal TOML reader rejects what Codex would', () => {
+      assert.throws(() => parseToml('a = "x"\na = "y"\n'), /duplicate/);
+      assert.throws(() => parseToml('a = "x\n'), /unsupported/);
+      assert.throws(() => parseToml("a = '''\nx\n"), /unterminated/);
+      assert.throws(() => parseToml('sandbox_mode = read-only\n'), /unsupported/);
+    });
+    it('the Codex agent is valid TOML with a read-only sandbox at the top level', () => {
+      const t = parseToml(codexTpl);
+      assert.strictEqual(t.name, 'wsg-advisor');
+      assert.strictEqual(t.sandbox_mode, 'read-only');
+      assert.strictEqual(typeof t.developer_instructions, 'string');
+      assert.deepStrictEqual(t.features, { memories: false });
+    });
+    it('README and the guide say the Codex advisor runs in a read-only sandbox', () => {
+      const readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8');
+      assert.match(advisorGuide, /In Codex the advisor agent runs in a read-only sandbox\s+\(`sandbox_mode = "read-only"`/);
+      assert.match(readme.slice(readme.indexOf('## Limitations')), /In Codex the advisor agent runs in a read-only sandbox/);
+      assert.match(readme, /The Claude Code advisor is read-only by its rules and `disallowedTools`; the Codex one\s+also runs in a read-only sandbox/);
+    });
     it('--uninstall removes the Codex agent too, and keeps agents/', () => {
       const codexHome = path.join(tmp, 'codex-home');
       assert.strictEqual(wsg(['install-skills', '--uninstall'], { env: { CODEX_HOME: codexHome } }).code, 0);

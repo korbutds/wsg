@@ -39,7 +39,11 @@
 #                       EVAL_TICKET (the task's ticket key), EVAL_QUESTION (Q6: a question whose
 #                       answer sits in an unlinked ticket) and EVAL_EXPECT (a regex the answer must
 #                       contain, e.g. that ticket's key) are required
-#   EVAL_CODEX=1        also run the Codex stage (needs codex on PATH and a logged-in account)
+#   EVAL_CODEX=1        also run the Codex stage (needs codex on PATH and a logged-in account).
+#                       It loads the shipped templates/codex/agents/wsg-advisor.toml (sandbox_mode
+#                       included) from a temp CODEX_HOME, so it also shows that Codex accepts the
+#                       template: its stderr is kept in $TMP/c<run>.err, and the lines naming
+#                       wsg-advisor are printed
 #   EVAL_BUDGET=1       the most one claude run may spend, in USD (--max-budget-usd)
 #   EVAL_KEEP=1         keep the temp dir and print its path
 #
@@ -353,7 +357,8 @@ for i in $(seq 1 "$RUNS"); do
       if [ -e "${CODEX_HOME:-$HOME/.codex}/$f" ]; then ln -sf "${CODEX_HOME:-$HOME/.codex}/$f" "$CH/$f"; fi
     done
     pre="$(snap)"
-    (cd "$WS" && CODEX_HOME="$CH" codex exec --json -s read-only --skip-git-repo-check "$DRAFT" > "$TMP/c$i.jsonl" 2>/dev/null) || true
+    (cd "$WS" && CODEX_HOME="$CH" codex exec --json -s read-only --skip-git-repo-check "$DRAFT" > "$TMP/c$i.jsonl" 2> "$TMP/c$i.err") || true
+    if grep -q 'wsg-advisor' "$TMP/c$i.err"; then echo "  c$i: codex stderr on wsg-advisor:"; grep 'wsg-advisor' "$TMP/c$i.err" | head -n 10 | sed 's/^/    /'; fi
     {
       fixture "$pre"
       # A heuristic: the event format of codex exec --json is not pinned down here.
