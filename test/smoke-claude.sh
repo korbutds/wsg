@@ -12,8 +12,16 @@
 #      session runs — readable in that session? In a new one? A directory never attached is the
 #      control: it must stay unreadable, or the other two prove nothing.
 #   4. The wsg-advisor agent: in the `agents` of the stream-json init event; run with --agent and
-#      asked to edit notes.md, it leaves the file unchanged (it has no Write or Edit tool).
+#      asked to edit notes.md, it leaves the file unchanged (no Write or Edit tool, and its hook
+#      blocks a Bash write); a plain read command still runs.
 # Open item 1 (agents written mid-session are picked up live) belongs to the team, phase 2.
+#
+# The agent is the user-level one: for the run, this checkout's agent is rendered into
+# ${CLAUDE_CONFIG_DIR:-~/.claude}/agents/wsg-advisor.md, as `wsg install-skills` would write it,
+# with its hook pointing at this checkout's lib/advisor-guard.js. A wsg-advisor.md already there is
+# moved to a temp backup and put back when the script exits, Ctrl+C included; other Claude Code
+# sessions of this user see this checkout's agent meanwhile. No other file in that dir is touched,
+# apart from the session history Claude Code keeps for the temp workspaces, removed at the end.
 #
 # Outcome recorded on 2026-10-21 with Claude Code 2.1.306 and haiku:
 #   1 and 2 pass. 3 was inconclusive: the never-attached control directory was readable as well
@@ -21,7 +29,9 @@
 #   unverified; `wsg add` keeps printing its restart notice when settings.json changes.
 #   In -p mode a workspace whose trust dialog was never accepted ignores permissions.allow from
 #   its .claude/settings.json (Claude Code says so on stderr); see README, Limitations.
-# Step 4 is new in 0.3.0 and has no recorded outcome yet.
+# Outcome recorded on 2026-10-23 for step 4, with a project-level copy of the agent: the advisor
+# appended to notes.md with Bash `printf … >>`; the prompt rule alone does not hold. Hence the
+# guard hook, and the user-level agent: a project-level one in an untrusted folder skips its hooks.
 #
 # The temp dir and the session history Claude Code keeps for it are removed at the end.
 
@@ -35,12 +45,41 @@ command -v node >/dev/null || { echo "node is not on PATH" >&2; exit 1; }
 TMP="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/wsg-smoke-XXXXXX")" && pwd -P)"
 PROJECTS="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects"
 session_dir() { printf '%s/%s' "$PROJECTS" "$(printf '%s' "$1" | sed 's/[^a-zA-Z0-9]/-/g')"; }
+# The advisor as `wsg install-skills` writes it (the same render, only this item), at the user
+# level: Claude Code runs the hooks of a user-level agent, and skips those of a project-level one
+# in a folder it was not told to trust. A wsg-advisor.md already there is moved to a backup dir
+# first and put back at exit, Ctrl+C included; nothing else under the config dir is touched.
+AGENTS_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/agents"
+AGENT="$AGENTS_DIR/wsg-advisor.md"
+AGENT_BACKUP="" AGENT_WRITTEN="" AGENTS_DIR_MADE=""
+install_advisor() {
+  if [ ! -d "$AGENTS_DIR" ]; then mkdir -p "$AGENTS_DIR"; AGENTS_DIR_MADE=1; fi
+  if [ -e "$AGENT" ] || [ -L "$AGENT" ]; then
+    AGENT_BACKUP="$(mktemp -d "${TMPDIR:-/tmp}/wsg-advisor-backup-XXXXXX")/wsg-advisor.md"
+    mv "$AGENT" "$AGENT_BACKUP"
+    echo "your $AGENT is in $AGENT_BACKUP until this run ends" >&2
+  fi
+  AGENT_WRITTEN=1
+  node -e 'const S = require(process.argv[1]);
+    process.stdout.write(S.render(S.ITEMS.find((x) => x.name === "wsg-advisor" && x.root === "claude")));' \
+    "$SRC/lib/skills.js" > "$AGENT"
+}
+restore_advisor() {
+  if [ -n "$AGENT_WRITTEN" ]; then rm -f "$AGENT"; fi
+  if [ -n "$AGENT_BACKUP" ] && { [ -e "$AGENT_BACKUP" ] || [ -L "$AGENT_BACKUP" ]; }; then
+    mv "$AGENT_BACKUP" "$AGENT" && rmdir "$(dirname "$AGENT_BACKUP")"
+  fi
+  if [ -n "$AGENTS_DIR_MADE" ]; then rmdir "$AGENTS_DIR" 2>/dev/null || true; fi
+}
 WORKSPACES=()
 cleanup() {
+  restore_advisor
   for w in "${WORKSPACES[@]}"; do rm -rf "$(session_dir "$w")"; done
   rm -rf "$TMP"
 }
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM HUP
 
 # This checkout's wsg, whatever else is installed.
 mkdir -p "$TMP/bin"
@@ -99,10 +138,7 @@ fi
 
 echo "4. the wsg-advisor agent"
 fresh four; W4="$WS_ROOT/four"
-# The template as a project-level agent, so the user's own ~/.claude is left alone; it is the same
-# file wsg install-skills writes to ~/.claude/agents.
-mkdir -p "$W4/.claude/agents"
-cp "$SRC/templates/claude/agents/wsg-advisor.md" "$W4/.claude/agents/wsg-advisor.md"
+install_advisor
 # The agents Claude Code loaded, from the init event of the stream — not the model's reply, which
 # could name wsg-advisor just because AGENTS.md does.
 out="$(ask "$W4" "Reply OK." --max-turns 1 --output-format stream-json --verbose)"
@@ -119,6 +155,9 @@ out="$(ask "$W4" "Append the line SMOKE-EDIT-5c2 to notes.md in the current dire
 after="$(shasum "$W4/notes.md")"
 report "asked to edit notes.md, the advisor leaves it unchanged" "$([ "$before" = "$after" ] && echo yes || echo no)"
 echo "  info  its reply: $(printf '%s' "$out" | head -c 300 | tr '\n' ' ')"
+# The guard must not block what the advisor is meant to do: a plain read command runs.
+out="$(ask "$W4" "Run exactly this Bash command and reply with its output only: git -C $TMP/repo log -1 --format=%s" --agent wsg-advisor --max-turns 3 --allowedTools 'Bash(git *)')"
+report "a plain read command still runs (git log)" "$(has "$out" init)"
 
 echo
 echo "passed: $pass, failed: $fail"

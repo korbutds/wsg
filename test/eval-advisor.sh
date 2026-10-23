@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
 # Eval of the wsg-advisor agent against the real Claude Code. Manual, not part of npm test: it needs
-# claude on PATH, a logged-in account and the network, and it spends real requests — 2 × EVAL_RUNS
-# sessions (and EVAL_RUNS more with EVAL_CODEX=1).
+# claude on PATH, a logged-in account and the network, and it spends real requests — EVAL_RUNS
+# sessions per stage in EVAL_STAGES (and EVAL_RUNS more with EVAL_CODEX=1).
 #
 #   test/eval-advisor.sh [model]          default: the account's default model
 #
@@ -35,6 +35,8 @@
 #
 # Environment:
 #   EVAL_RUNS=5         runs per stage
+#   EVAL_STAGES=A,B     the stages to run: A, B or A,B (the default). EVAL_STAGES=B iterates on the
+#                       delegation rule alone, at half the cost
 #   EVAL_TRACKER=1      use the MCP servers of your own config instead of the offline answer; then
 #                       EVAL_TICKET (the task's ticket key), EVAL_QUESTION (Q6: a question whose
 #                       answer sits in an unlinked ticket) and EVAL_EXPECT (a regex the answer must
@@ -49,10 +51,17 @@
 #
 # Without EVAL_TRACKER every claude run has --strict-mcp-config: no MCP servers, so no tracker
 # tool, and a request does not carry hundreds of tool definitions. Auto memory is off
-# (CLAUDE_CODE_DISABLE_AUTO_MEMORY=1). No agent file is installed into ~/.claude or ~/.codex, but
-# Claude Code still writes its own project entry and session files for the fixture path there; the
-# script removes that session dir at the end. The stderr of each run is kept in
-# $TMP/<stage><run>.err and its first lines printed when a run fails or has no result.
+# (CLAUDE_CODE_DISABLE_AUTO_MEMORY=1). The stderr of each run is kept in $TMP/<stage><run>.err and
+# its first lines printed when a run fails or has no result.
+#
+# The agent is the user-level one, since Claude Code skips the hooks of a project-level agent in a
+# folder it was not told to trust: for the run, this checkout's agent is rendered into
+# ${CLAUDE_CONFIG_DIR:-~/.claude}/agents/wsg-advisor.md, as `wsg install-skills` would write it,
+# with its hook pointing at this checkout's lib/advisor-guard.js. A wsg-advisor.md already there is
+# moved to a temp backup and put back when the script exits, Ctrl+C included; other Claude Code
+# sessions of this user see this checkout's agent meanwhile. Nothing else is written to ~/.claude
+# or ~/.codex by the script; Claude Code writes its own project entry and session files for the
+# fixture path, and the script removes that session dir at the end.
 
 set -euo pipefail
 
@@ -62,6 +71,16 @@ SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 command -v claude >/dev/null || { echo "claude is not on PATH" >&2; exit 1; }
 command -v node >/dev/null || { echo "node is not on PATH" >&2; exit 1; }
 case "$RUNS" in '' | *[!0-9]* | 0) echo "EVAL_RUNS must be a positive number" >&2; exit 2 ;; esac
+STAGE_A="" STAGE_B=""
+IFS=',' read -ra stages <<< "${EVAL_STAGES-A,B}"
+for st in ${stages[@]+"${stages[@]}"}; do
+  case "${st// /}" in
+    A | a) STAGE_A=1 ;;
+    B | b) STAGE_B=1 ;;
+    *) echo "EVAL_STAGES must be A, B or A,B, not: ${EVAL_STAGES}" >&2; exit 2 ;;
+  esac
+done
+[ -n "$STAGE_A$STAGE_B" ] || { echo "EVAL_STAGES must be A, B or A,B, not: ${EVAL_STAGES-}" >&2; exit 2; }
 if [ "${EVAL_TRACKER:-}" = 1 ]; then
   for v in EVAL_TICKET EVAL_QUESTION EVAL_EXPECT; do
     [ -n "${!v:-}" ] || { echo "EVAL_TRACKER=1 needs $v (see the header of this script)" >&2; exit 2; }
@@ -72,12 +91,41 @@ if [ "${EVAL_CODEX:-}" = 1 ]; then command -v codex >/dev/null || { echo "EVAL_C
 TMP="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/wsg-eval-XXXXXX")" && pwd -P)"
 PROJECTS="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects"
 session_dir() { printf '%s/%s' "$PROJECTS" "$(printf '%s' "$1" | sed 's/[^a-zA-Z0-9]/-/g')"; }
+# The advisor as `wsg install-skills` writes it (the same render, only this item), at the user
+# level: Claude Code runs the hooks of a user-level agent, and skips those of a project-level one
+# in a folder it was not told to trust. A wsg-advisor.md already there is moved to a backup dir
+# first and put back at exit, Ctrl+C included; nothing else under the config dir is touched.
+AGENTS_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/agents"
+AGENT="$AGENTS_DIR/wsg-advisor.md"
+AGENT_BACKUP="" AGENT_WRITTEN="" AGENTS_DIR_MADE=""
+install_advisor() {
+  if [ ! -d "$AGENTS_DIR" ]; then mkdir -p "$AGENTS_DIR"; AGENTS_DIR_MADE=1; fi
+  if [ -e "$AGENT" ] || [ -L "$AGENT" ]; then
+    AGENT_BACKUP="$(mktemp -d "${TMPDIR:-/tmp}/wsg-advisor-backup-XXXXXX")/wsg-advisor.md"
+    mv "$AGENT" "$AGENT_BACKUP"
+    echo "your $AGENT is in $AGENT_BACKUP until this run ends" >&2
+  fi
+  AGENT_WRITTEN=1
+  node -e 'const S = require(process.argv[1]);
+    process.stdout.write(S.render(S.ITEMS.find((x) => x.name === "wsg-advisor" && x.root === "claude")));' \
+    "$SRC/lib/skills.js" > "$AGENT"
+}
+restore_advisor() {
+  if [ -n "$AGENT_WRITTEN" ]; then rm -f "$AGENT"; fi
+  if [ -n "$AGENT_BACKUP" ] && { [ -e "$AGENT_BACKUP" ] || [ -L "$AGENT_BACKUP" ]; }; then
+    mv "$AGENT_BACKUP" "$AGENT" && rmdir "$(dirname "$AGENT_BACKUP")"
+  fi
+  if [ -n "$AGENTS_DIR_MADE" ]; then rmdir "$AGENTS_DIR" 2>/dev/null || true; fi
+}
 WS=""
 cleanup() {
+  restore_advisor
   if [ -n "$WS" ]; then rm -rf "$(session_dir "$WS")"; fi
   if [ "${EVAL_KEEP:-}" = 1 ]; then echo "kept: $TMP"; else rm -rf "$TMP"; fi
 }
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM HUP
 
 # This checkout's wsg, whatever else is installed.
 mkdir -p "$TMP/bin"
@@ -153,9 +201,7 @@ EOF
 
 wsg new email-flow --title "Order confirmation emails" --ticket "$TICKET" --no-launch >/dev/null
 WS="$WS_ROOT/email-flow"
-# The template as a project-level agent: this checkout's file, and ~/.claude is left alone.
-mkdir -p "$WS/.claude/agents"
-cp "$SRC/templates/claude/agents/wsg-advisor.md" "$WS/.claude/agents/wsg-advisor.md"
+install_advisor
 
 if [ "${EVAL_TRACKER:-}" != 1 ]; then
   wsg new billing-retry --title "Billing retries" --ticket SPEC-17 --no-launch >/dev/null
@@ -338,15 +384,19 @@ if [ "${EVAL_TRACKER:-}" = 1 ]; then OFFLINE=0; EXPECT="$EVAL_EXPECT"; fi
 
 for i in $(seq 1 "$RUNS"); do
   echo "run $i/$RUNS"
-  pre="$(snap)"
-  claude_run "$TMP/a$i.jsonl" "$BRIEF" --agent wsg-advisor
-  node "$H" result "$TMP/a$i.jsonl" > "$TMP/a$i.txt"
-  { fixture "$pre"; node "$H" pushed "$TMP/a$i.jsonl"; node "$H" grade "$TMP/a$i.txt" "$OFFLINE" "$EXPECT"; } | record A
+  if [ -n "$STAGE_A" ]; then
+    pre="$(snap)"
+    claude_run "$TMP/a$i.jsonl" "$BRIEF" --agent wsg-advisor
+    node "$H" result "$TMP/a$i.jsonl" > "$TMP/a$i.txt"
+    { fixture "$pre"; node "$H" pushed "$TMP/a$i.jsonl"; node "$H" grade "$TMP/a$i.txt" "$OFFLINE" "$EXPECT"; } | record A
+  fi
 
-  pre="$(snap)"
-  claude_run "$TMP/b$i.jsonl" "$DRAFT"
-  node "$H" result "$TMP/b$i.jsonl" > "$TMP/b$i.txt"
-  { fixture "$pre"; node "$H" pushed "$TMP/b$i.jsonl"; node "$H" called "$TMP/b$i.jsonl"; node "$H" reply "$TMP/b$i.jsonl" "$TMP/b$i.txt"; } | record B
+  if [ -n "$STAGE_B" ]; then
+    pre="$(snap)"
+    claude_run "$TMP/b$i.jsonl" "$DRAFT"
+    node "$H" result "$TMP/b$i.jsonl" > "$TMP/b$i.txt"
+    { fixture "$pre"; node "$H" pushed "$TMP/b$i.jsonl"; node "$H" called "$TMP/b$i.jsonl"; node "$H" reply "$TMP/b$i.jsonl" "$TMP/b$i.txt"; } | record B
+  fi
 
   if [ "${EVAL_CODEX:-}" = 1 ]; then
     # A temp CODEX_HOME with this checkout's agent; the account and config are linked, not copied.

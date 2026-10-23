@@ -2271,6 +2271,110 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     it('the old --check spelling still works', () => assert.strictEqual(wsg(['--check', demo]).code, 0));
   }
 
+  // The manual scripts against a fake claude: where the advisor comes from, and that the user's own
+  // agent file is back afterwards. No real claude, no real ~/.claude.
+  console.log('\nthe smoke and eval scripts');
+  {
+    const S = require(path.join(ROOT, 'lib', 'skills.js'));
+    const rendered = S.render(S.ITEMS.find((x) => x.name === 'wsg-advisor' && x.root === 'claude'));
+    const sx = path.join(tmp, 'scripts');
+    const sbin = path.join(sx, 'bin');
+    fs.mkdirSync(sbin, { recursive: true });
+    const log = path.join(sx, 'claude.log');
+    // Records each call: whether it had --agent, the user-level agent it saw, a project-level copy.
+    // FAKE_INT: Ctrl+C on the script that started it — the topmost process whose command line is
+    // exactly FAKE_INT, not a subshell of it.
+    fs.writeFileSync(path.join(sbin, 'claude'), `#!/bin/sh
+a="$CLAUDE_CONFIG_DIR/agents/wsg-advisor.md"
+{
+  printf 'call'
+  for x in "$@"; do [ "$x" = --agent ] && printf ' --agent'; done
+  printf '\\n'
+  if [ -f "$a" ]; then cp "$a" "$FAKE_LOG.agent"; echo user-agent; fi
+  if [ -e "$PWD/.claude/agents/wsg-advisor.md" ]; then echo project-copy; fi
+} >> "$FAKE_LOG"
+if [ -n "$FAKE_INT" ]; then
+  p=$PPID top=
+  while [ -n "$p" ] && [ "$p" -gt 1 ]; do
+    [ "$(ps -o command= -p "$p")" = "$FAKE_INT" ] && top=$p
+    p=$(ps -o ppid= -p "$p" | tr -d ' ')
+  done
+  [ -n "$top" ] && kill -INT "$top"
+  sleep 1
+fi
+echo '{"type":"result","result":"none"}'
+`, { mode: 0o755 });
+    const cfgDir = path.join(sx, 'claude-config');
+    const agent = path.join(cfgDir, 'agents', 'wsg-advisor.md');
+    const runScript = (name, env = {}) => {
+      fs.rmSync(log, { force: true });
+      fs.rmSync(`${log}.agent`, { force: true });
+      const r = spawnSync('bash', [path.join(ROOT, 'test', name)], {
+        encoding: 'utf8',
+        env: { PATH: `${sbin}:${process.env.PATH}`, HOME: path.join(sx, 'home'), TMPDIR: sx, CLAUDE_CONFIG_DIR: cfgDir, FAKE_LOG: log, ...env },
+        maxBuffer: 1 << 26,
+      });
+      const calls = fs.existsSync(log) ? fs.readFileSync(log, 'utf8') : '';
+      const seen = fs.existsSync(`${log}.agent`) ? fs.readFileSync(`${log}.agent`, 'utf8') : null;
+      return { code: r.status, all: r.stdout + r.stderr, calls, seen };
+    };
+    const backups = () => fs.readdirSync(sx).filter((f) => f.startsWith('wsg-advisor-backup-'));
+    for (const name of ['eval-advisor.sh', 'smoke-claude.sh']) {
+      const env = name === 'eval-advisor.sh' ? { EVAL_RUNS: '1' } : {};
+      const r1 = runScript(name, env);
+      it(`${name}: claude sees this checkout's agent at the user level, as install-skills renders it`, () => {
+        assert.match(r1.calls, /user-agent/, r1.all);
+        assert.strictEqual(r1.seen, rendered);
+      });
+      it(`${name}: no project-level copy of the agent`, () => assert.doesNotMatch(r1.calls, /project-copy/));
+      it(`${name}: the agent it wrote is gone afterwards, and agents/ it made too`, () => {
+        assert.ok(!fs.existsSync(agent));
+        assert.ok(!fs.existsSync(path.dirname(agent)));
+      });
+      fs.mkdirSync(path.dirname(agent), { recursive: true });
+      fs.writeFileSync(agent, 'mine\n');
+      fs.writeFileSync(path.join(path.dirname(agent), 'other.md'), 'other\n');
+      const r2 = runScript(name, env);
+      it(`${name}: the user's own wsg-advisor.md is moved aside for the run and put back`, () => {
+        assert.strictEqual(r2.seen, rendered, r2.all);
+        assert.strictEqual(fs.readFileSync(agent, 'utf8'), 'mine\n');
+        assert.match(r2.all, /wsg-advisor\.md is in .*wsg-advisor-backup-.* until this run ends/);
+        assert.deepStrictEqual(backups(), []);
+      });
+      it(`${name}: nothing else in agents/ is touched`, () => assert.strictEqual(fs.readFileSync(path.join(path.dirname(agent), 'other.md'), 'utf8'), 'other\n'));
+      const r3 = runScript(name, { ...env, FAKE_INT: `bash ${path.join(ROOT, 'test', name)}` });
+      it(`${name}: Ctrl+C during a run puts it back too`, () => {
+        assert.strictEqual(r3.code, 130, r3.all);
+        assert.strictEqual(r3.calls.split('\n').filter((l) => l.startsWith('call')).length, 1, r3.calls);
+        assert.strictEqual(fs.readFileSync(agent, 'utf8'), 'mine\n');
+        assert.deepStrictEqual(backups(), []);
+      });
+      fs.rmSync(path.dirname(agent), { recursive: true });
+    }
+    const calls = (r) => r.calls.split('\n').filter((l) => l.startsWith('call'));
+    const both = runScript('eval-advisor.sh', { EVAL_RUNS: '1' });
+    it('eval: by default stage A (--agent wsg-advisor) and stage B (the workspace agent) run', () => {
+      assert.deepStrictEqual(calls(both), ['call --agent', 'call'], both.all);
+    });
+    const onlyB = runScript('eval-advisor.sh', { EVAL_RUNS: '2', EVAL_STAGES: 'B' });
+    it('eval: EVAL_STAGES=B runs stage B alone', () => {
+      assert.deepStrictEqual(calls(onlyB), ['call', 'call'], onlyB.all);
+      assert.doesNotMatch(onlyB.all, /  (ok|FAIL)  A: /);
+      assert.match(onlyB.all, / B: called the wsg-advisor subagent/);
+    });
+    const onlyA = runScript('eval-advisor.sh', { EVAL_RUNS: '1', EVAL_STAGES: 'a' });
+    it('eval: EVAL_STAGES=A runs stage A alone', () => assert.deepStrictEqual(calls(onlyA), ['call --agent'], onlyA.all));
+    for (const bad of ['C', 'A,X', '']) {
+      const r = runScript('eval-advisor.sh', { EVAL_RUNS: '1', EVAL_STAGES: bad });
+      it(`eval: EVAL_STAGES=${JSON.stringify(bad)} is refused before anything runs: exit 2`, () => {
+        assert.strictEqual(r.code, 2, r.all);
+        assert.match(r.all, /EVAL_STAGES must be A, B or A,B/);
+        assert.strictEqual(r.calls, '');
+        assert.ok(!fs.existsSync(agent));
+      });
+    }
+  }
+
   console.log('\nthe package');
   {
     const r = spawnSync('npm', ['pack', '--dry-run', '--json', '--ignore-scripts'], { cwd: ROOT, encoding: 'utf8', env: { ...process.env, npm_config_loglevel: 'silent' } });
