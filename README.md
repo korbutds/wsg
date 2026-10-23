@@ -249,7 +249,8 @@ those questions first, so that only real decisions reach you.
   for Claude Code, `~/.codex/agents/wsg-advisor.toml` for Codex — only when Codex is there
   (`CODEX_HOME` is set, `~/.codex` exists or `codex` is on PATH), otherwise it is reported as
   skipped. The Claude Code advisor has no write tools, and a hook in its agent file blocks any tool
-  call that is not on its read-only list; the Codex one runs in a read-only sandbox. It
+  call that is not on its read-only list; the Codex one sets `sandbox_mode = "read-only"`, which is
+  not verified to hold under a writable parent session. It
   works in existing workspaces;
   running `wsg install-skills` again upgrades it. `wsg new` and `wsg add` never install it.
 - **The procedure** lives in [docs/advisor-guide.md](docs/advisor-guide.md) (`wsg guide advisor`);
@@ -313,13 +314,18 @@ shows you the text before writing it.
   cannot tell, a guard that cannot run — blocks the call. That is a list, not a sandbox: whatever a listed command
   or tool can reach, the advisor can read, and it has the MCP tools of the session that calls it.
   The hook path is absolute: after the package moves, `wsg check` reports the agent as broken until
-  `wsg install-skills` runs again. In Codex the advisor agent runs in a read-only sandbox
-  (`sandbox_mode = "read-only"`), so its shell cannot write; its MCP tools only read by the rule in
-  its prompt. Its answers can be wrong: each one has to cite its evidence, and irreversible steps
+  `wsg install-skills` runs again. In Codex the advisor's agent file sets
+  `sandbox_mode = "read-only"`; whether Codex applies it to a spawned agent under a writable parent
+  session is not verified, so that it writes nothing, shell and MCP, is the rule in its prompt. Its answers can be wrong: each one has to cite its evidence, and irreversible steps
   stay with you. A project-level `.claude/agents/wsg-advisor.md` or `.codex/agents/wsg-advisor.toml`,
   in the workspace or a directory above it, would shadow the installed one — and Claude Code skips
   the hooks of a project-level agent in a folder it was not told to trust; `wsg check` warns about
   such a copy.
+- **A repository's own git config.** The advisor's git commands only read, but a repository's
+  config can make git run a program on them: `core.fsmonitor` on `git status`, `diff.external` and
+  textconv drivers on `git diff`, `core.sshCommand` on `git ls-remote`. The guard blocks
+  `--ext-diff` and `--textconv`; what the config turns on by itself, it cannot override. The
+  repositories you attach are trusted, like any code you run.
 - **What `wsg remove` doesn't see.** A tracked file marked `skip-worktree` or `assume-unchanged`
   and edited in the worktree looks clean to git: it is deleted with the worktree. If a removal
   fails after the worktree is gone, the rollback adds the worktree back on the same branch, but

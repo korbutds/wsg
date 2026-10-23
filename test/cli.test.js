@@ -799,8 +799,13 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       const r = run({}, { ...cfg, WSG_AGENT: 'codex --yolo' });
       assert.match(r.text, /OK +wsg-advisor for Codex: /);
       fs.rmSync(path.join(env.CODEX_HOME, 'agents', 'wsg-advisor.toml'));
-      assert.match(run({}, { ...cfg, WSG_AGENT: 'codex' }).text, /WARN wsg-advisor for Codex is not installed/);
+      assert.match(run({}, { ...cfg, WSG_AGENT: 'codex' }).text, /WARN wsg-advisor for Codex is not installed — run wsg install-skills/);
       S.install({ ...env });
+    });
+    it('codex is the agent but Codex is not there: WARN that it was not found, not "run install-skills"', () => {
+      const r = run({ CODEX_HOME: undefined, HOME: path.join(tmp, 'nobody'), PATH: '' }, { ...cfg, WSG_AGENT: 'codex' });
+      assert.match(r.text, /WARN Codex not found \(no CODEX_HOME, ~\/\.codex or codex on PATH\) — the Codex advisor is not installed/);
+      assert.doesNotMatch(r.text, /install-skills/);
     });
     it('another agent: no WARN, it follows the guide inline', () => {
       const r = run({}, { ...cfg, WSG_AGENT: 'gemini' });
@@ -2232,7 +2237,16 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       assert.ok(agentTpl.includes(rule), 'agent');
       assert.ok(advisorGuide.includes(rule), 'guide');
       assert.match(agentTpl, /An answer that would push, open an MR, message people[\s\S]{0,200}always goes under\s+OWNER/);
-      assert.match(advisorGuide, /An answer that would perform the step stays\s+OWNER/);
+      assert.match(advisorGuide, /An\s+answer that would perform the step stays OWNER/);
+    });
+    // Only a plain "should I push?" is answered from the rules; asking for an exception to them is
+    // the owner's call, even when the rules seem to settle it.
+    it('a request for an exception to the owner\'s rules always stays OWNER', () => {
+      const flat = (x) => x.replace(/\s+/g, ' ');
+      for (const [name, text] of [['agent', agentTpl], ['guide', advisorGuide]]) {
+        assert.ok(flat(text).includes('A request for an exception to the owner\'s rules always stays OWNER, whatever the rules say'), name);
+        assert.ok(flat(text).includes('a plain "should I push or open the MR?"') || flat(text).includes('a plain question such as "should I push or open the MR?"'), name);
+      }
       assert.doesNotMatch(agentTpl, /Push, MR, messages to people, `--reset-to-base`, scope changes and\s+exceptions to the owner's rules always go under OWNER/);
     });
     // The same agent for Codex: a TOML file, the instructions the same text as the Claude body.
@@ -2312,11 +2326,23 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       assert.strictEqual(typeof t.developer_instructions, 'string');
       assert.deepStrictEqual(t.features, { memories: false });
     });
-    it('README and the guide say the Codex advisor runs in a read-only sandbox', () => {
+    // Not verified: whether Codex applies an agent's sandbox_mode under a writable parent session.
+    it('README, the guide and the agent file say only that the Codex advisor sets the read-only sandbox', () => {
       const readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8');
-      assert.match(advisorGuide, /In Codex the advisor agent runs in a read-only sandbox\s+\(`sandbox_mode = "read-only"`/);
-      assert.match(readme.slice(readme.indexOf('## Limitations')), /In Codex the advisor agent runs in a read-only sandbox/);
-      assert.match(readme, /the Codex one runs in a read-only sandbox/);
+      const unverified = /whether Codex\s+applies it to a spawned agent under a writable parent\s+session is not verified/;
+      assert.match(advisorGuide, /In Codex the advisor's agent file sets `sandbox_mode = "read-only"`/);
+      assert.match(advisorGuide, unverified);
+      assert.match(readme.slice(readme.indexOf('## Limitations')), /In Codex the advisor's agent file sets\s+`sandbox_mode = "read-only"`/);
+      assert.match(readme.slice(readme.indexOf('## Limitations')), unverified);
+      assert.match(readme, /the Codex one sets `sandbox_mode = "read-only"`, which is\s+not verified to hold under a writable parent session/);
+      assert.match(codexTpl, /whether Codex applies it to a spawned agent\n# under a writable parent session is not verified/);
+      for (const text of [readme, advisorGuide, codexTpl]) assert.doesNotMatch(text, /runs in a read-only sandbox/);
+    });
+    it('README says a repository\'s own git config can run programs on allowed git calls', () => {
+      const readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8');
+      const lim = readme.slice(readme.indexOf('## Limitations'), readme.indexOf('## Documentation'));
+      for (const x of ['**A repository\'s own git config.**', '`core.fsmonitor`', '`diff.external`', '`core.sshCommand`', '`--ext-diff` and `--textconv`',
+        'it cannot override', 'The\n  repositories you attach are trusted']) assert.ok(lim.includes(x), x);
     });
     it('--uninstall removes the Codex agent too, and keeps agents/', () => {
       const codexHome = path.join(tmp, 'codex-home');

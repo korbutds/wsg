@@ -53,9 +53,9 @@ verb is a read one (get, list, search, fetch, find, read, query, view, describe,
 filter); a name with no verb passes only when it ends in info, stat, metric, status, overview,
 history or details. A tool it cannot tell is blocked. A list is not a sandbox: what a listed command or tool can reach, the advisor
 can read. A project-level copy of the agent in a folder Claude Code was not told to trust runs
-without the hook. In Codex the advisor agent runs in a read-only sandbox
-(`sandbox_mode = "read-only"` in its agent file), so it cannot write files; that its MCP tools only
-read is still the rule.
+without the hook. In Codex the advisor's agent file sets `sandbox_mode = "read-only"`; whether Codex
+applies it to a spawned agent under a writable parent session is not verified, so that it writes
+nothing, MCP tools included, is still the rule.
 
 ## Procedure
 
@@ -98,10 +98,11 @@ updating an MR, any message to a person, `--reset-to-base`, `--delete-ignored`, 
 that has commits of its own, changing the scope, an exception to the owner's rules, anything that
 leaves the machine.
 
-When the owner's rules already answer such a question with a no — no push, the owner opens MRs,
-no messages to people — that is a fact, not a decision: put it under ANSWERED and cite the rule,
-e.g. "no — the owner opens MRs, AGENTS.md:<line>". An answer that would perform the step stays
-OWNER, whatever the rules seem to allow.
+When the owner's rules already answer a plain question such as "should I push or open the MR?"
+with a no — no push, the owner opens MRs, no messages to people — that is a fact, not a decision:
+put it under ANSWERED and cite the rule, e.g. "no — the owner opens MRs, AGENTS.md:<line>". An
+answer that would perform the step stays OWNER, whatever the rules seem to allow. A request for an
+exception to the owner's rules always stays OWNER, whatever the rules say: only the owner makes one.
 
 A reversible local default may be ANSWERED, marked "default, reversible": deleting an empty branch
 (no commits beyond its base), the MR target when `origin/HEAD` names it, leaving a file out of
