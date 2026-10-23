@@ -83,37 +83,11 @@ function guardPlatform() {
   }
 }
 
-// Hand-written on purpose: a few flags per command don't justify a dependency. spec maps a flag
-// to 'bool' or 'value'; --flag=value works too. Anything unknown is invalid input, never ignored:
-// an agent that typoed a flag must not believe it took effect.
+// lib/flags.js parses; invalid input exits 2 before anything is touched.
 function parse(args, spec, maxPositional) {
-  const flags = {};
-  const pos = [];
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    if (a === '--') {
-      pos.push(...args.slice(i + 1));
-      break;
-    }
-    if (!a.startsWith('-') || a === '-') {
-      pos.push(a);
-      continue;
-    }
-    const eq = a.indexOf('=');
-    const name = eq > 0 ? a.slice(0, eq) : a;
-    const type = spec[name];
-    if (!type) invalid(t('cli.unknownArg', { arg: name }));
-    if (type === 'bool') {
-      if (eq > 0) invalid(t('cli.noValue', { arg: name }));
-      flags[name] = true;
-    } else {
-      const v = eq > 0 ? a.slice(eq + 1) : args[++i];
-      if (v === undefined) invalid(t('cli.needsValue', { arg: name }));
-      flags[name] = v;
-    }
-  }
-  if (pos.length > maxPositional) invalid(t('cli.extraArg', { arg: pos[maxPositional] }));
-  return { flags, pos };
+  const r = lib('flags').parse(args, spec, maxPositional);
+  if (r.error) invalid(t(r.error, { arg: r.arg }));
+  return r;
 }
 
 const lib = (name) => require(path.join(ROOT, 'lib', `${name}.js`));

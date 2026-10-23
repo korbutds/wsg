@@ -150,6 +150,12 @@ it('the reason names the command and says it is not on the list', () => {
 });
 it('a command that is not a string is blocked', () => assert.strictEqual(G.decide({ tool_name: 'Bash', tool_input: { command: 1 } }).allow, false));
 it('a Bash call without tool_input is blocked', () => assert.strictEqual(G.decide({ tool_name: 'Bash' }).allow, false));
+it('a word knows whether the shell would expand a glob in it', () => {
+  const w = G.splitWords(`find . -ex* '-ok*' \\*.md [-]x a*b "*"`);
+  assert.deepStrictEqual(w.map((x) => [x.w, x.glob, x.lead]), [
+    ['find', false, false], ['.', false, false], ['-ex*', true, false], ['-ok*', false, false], ['*.md', false, false],
+    ['[-]x', true, true], ['a*b', true, false], ['*', false, false]]);
+});
 it('words are split as the shell splits them', () => {
   assert.deepStrictEqual(G.split(`git -C "/a b" log 'x y' c\\ d`), ['git', '-C', '/a b', 'log', 'x y', 'c d']);
   assert.deepStrictEqual(G.split('a ""'), ['a', '']);
@@ -196,10 +202,88 @@ for (const n of MCP_BLOCKED) {
     assert.match(r.reason, /^wsg-advisor is read-only: /);
   });
 }
-it('the server name does not count, only the tool after the last __', () => {
+it('the server name does not count, only what follows mcp__<server>__', () => {
   assert.strictEqual(G.mcpAllowed('mcp__get_stuff__create_issue'), false);
   assert.strictEqual(G.mcpAllowed('mcp__create_stuff__get_issue'), true);
+  assert.strictEqual(G.mcpAllowed('mcp__srv__delete__get'), false);
+  assert.strictEqual(G.mcpAllowed('mcp__srv__get__items'), true);
 });
+it('a name that is not mcp__<server>__<tool> is blocked', () => {
+  for (const n of ['mcp__get_issue', 'mcp____get_issue', 'mcp__srv__']) assert.strictEqual(G.mcpAllowed(n), false, n);
+});
+
+console.log('\nthe advisor guard: the bypass table');
+// Calls a review found the guard let through, and reads that must keep working. Each row: the call,
+// whether it may run, why.
+const BYPASS = [
+  // A `#` starts a comment: the shell drops `--dry-run`, wsg runs for real.
+  [bash('wsg add x # --dry-run'), false, '# comments out --dry-run'],
+  [bash('wsg remove x # --dry-run'), false, '# comments out --dry-run'],
+  [bash('wsg add x #--dry-run'), false, '#word comments out --dry-run'],
+  [bash('cat notes.md # x'), false, '# anywhere blocks'],
+  // `--dry-run` taken as the value of the flag before it.
+  ...['--note', '--branch', '--base', '--target', '--verify', '--carry', '--ws'].map((f) => [bash(`wsg add x ${f} --dry-run`), false, `${f} swallows --dry-run`]),
+  [bash('wsg remove x --ws --dry-run'), false, '--ws swallows --dry-run'],
+  [bash('wsg add x -- --dry-run'), false, '--dry-run after -- is a path'],
+  [bash('wsg add x --dry-run=1'), false, '--dry-run takes no value'],
+  [bash('wsg add x --bogus --dry-run'), false, 'unknown flag'],
+  [bash('wsg add x y --dry-run'), false, 'a second path'],
+  [bash('wsg add --dry-run'), true, 'wsg reports the missing path itself, nothing runs'],
+  [bash('wsg add x --note "a b" --dry-run'), true, '--note takes its value, --dry-run stays'],
+  [bash('wsg add x --dry-run --reset-to-base'), true, 'a dry run of a reset changes nothing'],
+  [bash('wsg remove x --ws /tmp/ws --dry-run'), true, 'remove with --ws and --dry-run'],
+  [bash('wsg add [-][-] --dry-run'), false, 'a glob could become --'],
+  [bash('wsg check --bogus'), false, 'check takes no flags'],
+  [bash('wsg check a b'), false, 'check takes one path'],
+  [bash('wsg guide advisor extra'), false, 'guide takes one topic'],
+  [bash('wsg guide --bogus'), false, 'guide takes no flags'],
+  [bash('wsg guide'), true, 'guide without a topic'],
+  [bash('wsg --where add x'), false, 'a global flag stands alone'],
+  [bash('npx @korbutds/wsg guide advisor extra'), false, 'npx guide: one topic'],
+  // git runs programs through an external diff or a textconv filter.
+  [bash('git diff --ext-diff'), false, '--ext-diff runs diff.external'],
+  [bash('git log -p --ext-d'), false, '--ext-diff abbreviated'],
+  [bash('git show --textconv HEAD'), false, '--textconv runs a filter'],
+  [bash('git log --textc -p'), false, '--textconv abbreviated'],
+  [bash('git grep --textconv x'), false, 'grep --textconv'],
+  [bash('git diff --no-ext-diff'), true, 'turning it off is fine'],
+  [bash('git diff --text'), true, '--text is an option of its own'],
+  // A glob in an option word can expand to an option.
+  [bash('find . -ex* rm'), false, 'a glob in an option word'],
+  [bash('find . -ok?ir x'), false, 'a ? in an option word'],
+  [bash('find . -[e]xec rm'), false, 'a [ in an option word'],
+  [bash('find . [-]exec rm'), false, 'a word starting with a glob'],
+  [bash('rg x *'), false, 'a bare glob can expand to an option of rg'],
+  [bash("find . -name '*.md'"), true, 'a quoted glob is literal'],
+  [bash('find . -name \\*.md'), true, 'an escaped glob is literal'],
+  [bash('ls src/*.js'), true, 'a glob in a path'],
+  [bash('cat *.md'), true, 'cat has no option that runs anything'],
+  [bash('git log -- src/*.js'), true, 'a glob in a path after --'],
+  [bash("git branch --list 'feat*'"), true, 'branch --list with a quoted pattern'],
+  [bash('git branch --list feat*'), true, 'branch --list with a pattern'],
+  [bash('git branch -a --list feature/*'), true, 'branch -a --list with a pattern'],
+  [bash('git branch feat*'), false, 'a pattern without --list creates a branch'],
+  [bash('git branch --list -D x'), false, '-D with --list'],
+  // MCP: a write that reads on the way, or a write verb the list missed.
+  ...['mcp__design__find_replace_text', 'mcp__vcs__resolve_discussion', 'mcp__chat__mark_as_read', 'mcp__chat__messenger-mark-as-read',
+    'mcp__x__search_replace', 'mcp__x__find_and_replace', 'mcp__x__toggle_read_state', 'mcp__x__get_and_archive',
+    'mcp__x__query_and_insert', 'mcp__x__listAndPurge', 'mcp__srv__delete__get', 'mcp__x__get_and_trash',
+    'mcp__x__export_frames', 'mcp__x__download_attachment', 'mcp__x__import_template', 'mcp__x__mark_key_moved',
+    'mcp__x__resolve_thread', 'mcp__x__metric_ingest', 'mcp__x__session_reload', 'mcp__x__find_and_lock',
+    // False blocks the rule accepts: a share link is looked up, but `share` and `link` write elsewhere.
+    'mcp__a__resolve_share_link', 'mcp__a__resolve_calendar_link', 'mcp__x__page', 'mcp__x__promql'].map((n) => [mcp(n), false, 'MCP write or unclear']),
+  ...['mcp__proxy__filter_flows', 'mcp__tasks__user_info', 'mcp__tasks__user-info', 'mcp__metrics__sh_metric', 'mcp__files__cloud-stat',
+    'mcp__keys__key_history', 'mcp__chat__resolve-message-url', 'mcp__docs__resolve_library_id', 'mcp__a__resolve_thread_url',
+    'mcp__a__get_proxy_status', 'mcp__code__list_merge_requests'].map((n) => [mcp(n), true, 'MCP read']),
+];
+for (const [input, allow, why] of BYPASS) {
+  const what = input.tool_name === 'Bash' ? JSON.stringify(input.tool_input.command) : input.tool_name;
+  it(`${allow ? 'allowed' : 'blocked'}: ${what} (${why})`, () => {
+    const r = G.decide(input);
+    assert.strictEqual(r.allow, allow, JSON.stringify(r));
+    if (!allow) assert.match(r.reason, /^wsg-advisor is read-only: /);
+  });
+}
 
 console.log('\nthe advisor guard: anything else');
 it('a tool it does not check is blocked', () => assert.strictEqual(G.decide({ tool_name: 'Write', tool_input: {} }).allow, false));

@@ -2123,6 +2123,8 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       const odd = path.join(tmp, 'it\'s a "guard" $HOME `x`', 'advisor-guard.js');
       fs.mkdirSync(path.dirname(odd), { recursive: true });
       fs.copyFileSync(guardPath, odd);
+      // The guard parses wsg's flags with the CLI's own table.
+      fs.copyFileSync(path.join(ROOT, 'lib', 'flags.js'), path.join(path.dirname(odd), 'flags.js'));
       const text = S.render(advisorItem, odd);
       assert.deepStrictEqual(S.guardsOf(text), [odd, odd]);
       assert.strictEqual(shRun(hookCommand(text), blocked).status, 2);
