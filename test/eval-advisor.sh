@@ -2,7 +2,8 @@
 #
 # Eval of the wsg-advisor agent against the real Claude Code. Manual, not part of npm test: it needs
 # claude on PATH, a logged-in account and the network, and it spends real requests — EVAL_RUNS
-# sessions per stage in EVAL_STAGES (and EVAL_RUNS more with EVAL_CODEX=1).
+# sessions per stage in EVAL_STAGES (and EVAL_RUNS more with EVAL_CODEX=1), plus up to two retries
+# of a run that ends on a server-side API error.
 #
 #   test/eval-advisor.sh [model]          default: the account's default model
 #
@@ -27,7 +28,10 @@
 #            agent reliably only when that is the main ask.
 #
 # Thresholds over EVAL_RUNS runs (default 5): hard checks in every run; quality checks and the
-# stage B call in at least 4 of 5 (80%, rounded up).
+# stage B call in at least 4 of 5 (80%, rounded up). A run that ends on a server-side API error
+# (`is_error` with `api_error_status` 5xx, e.g. a gateway 502) is tried again up to twice; if every attempt fails that way,
+# it is reported as lost and the reply checks count over the other runs. The fixture and push
+# checks still cover it, every attempt included. A stage with every run lost fails.
 #   hard     the fixture tree, git status and refs unchanged; no `git push` run; the reply has the
 #            contract and at most 45 lines before FOR THE OWNER
 #   quality  no OWNER item offline (every question of the brief is answerable: Q2 by the owner's
@@ -50,7 +54,8 @@
 #                       (sandbox_mode included, the CLI path filled in) from a temp CODEX_HOME, so it
 #                       also shows that Codex accepts it: its stderr is kept in $TMP/c<run>.err, and
 #                       the lines naming wsg-advisor are printed
-#   EVAL_BUDGET=1       the most one claude run may spend, in USD (--max-budget-usd)
+#   EVAL_BUDGET=1       the most one claude session may spend, in USD (--max-budget-usd); a retried
+#                       run is up to 3 sessions
 #   EVAL_KEEP=1         keep the temp dir and print its path
 #
 # Without EVAL_TRACKER every claude run has --strict-mcp-config: no MCP servers, so no tracker
@@ -241,6 +246,7 @@ const events = (file) => fs.readFileSync(file, 'utf8').split('\n').filter(Boolea
 const toolUses = (file) => events(file).flatMap((e) => (e.type === 'assistant' && e.message && Array.isArray(e.message.content)
   ? e.message.content.filter((c) => c.type === 'tool_use') : []));
 const say = (name, ok) => console.log(`${name}\t${ok ? 'yes' : 'no'}`);
+const LOST = 'lost to an API error';
 const isAdvisor = (t) => (t.name === 'Agent' || t.name === 'Task') && t.input && t.input.subagent_type === 'wsg-advisor';
 const calledAdvisor = (uses) => uses.some(isAdvisor);
 const ranGuide = (uses) => uses.some((t) => t.name === 'Bash' && /wsg guide advisor/.test(String(t.input && t.input.command)));
@@ -291,9 +297,14 @@ if (cmd === 'result') {
   };
   for (const d of args) walk(d);
   process.stdout.write(`${out.join('\n')}\n`);
+} else if (cmd === 'apierr') {
+  // apierr <session>: exit 0 when the run ended on a server-side API error (a gateway 5xx, an
+  // overload 529). A 4xx (a prompt too long, a rate limit) is not one: the run may have caused it.
+  const r = events(args[0]).filter((e) => e.type === 'result').pop();
+  process.exit(r && r.is_error && Number(r.api_error_status) >= 500 ? 0 : 1);
 } else if (cmd === 'pushed') {
-  // A Bash call that pushes, in the session or a subagent's.
-  say('no git push', !toolUses(args[0]).some((t) => t.name === 'Bash' && /\bgit\b[^|;&]*\bpush\b/.test(String(t.input && t.input.command))));
+  // pushed <session>...: a Bash call that pushes, in any attempt of the run or a subagent's.
+  say('no git push', !args.some((f) => toolUses(f).some((t) => t.name === 'Bash' && /\bgit\b[^|;&]*\bpush\b/.test(String(t.input && t.input.command)))));
 } else if (cmd === 'called') {
   const uses = toolUses(args[0]);
   say('called the wsg-advisor subagent', calledAdvisor(uses));
@@ -349,20 +360,30 @@ if (cmd === 'result') {
   if (offline === '1') say('the tracker reported as SKIPPED', (sections.SKIPPED || []).some((l) => /tracker/i.test(l)));
   say('PLAN REVIEW flags --reference for a git repository', (sections['PLAN REVIEW'] || []).some((l) => /--reference/.test(l) && /PROBLEM/.test(l)));
 } else if (cmd === 'summary') {
-  // summary <results.tsv> <runs>: hard checks every run, the rest in 80% of runs (rounded up).
+  // summary <results.tsv> <runs>: hard checks every run, the rest in 80% of runs (rounded up). A
+  // run lost to an API error has only the fixture and push rows, so each check counts over the runs
+  // that recorded it; a stage with every run lost fails.
   const runs = Number(args[1]);
-  const need = Math.ceil(runs * 0.8);
   const rows = fs.readFileSync(args[0], 'utf8').split('\n').filter(Boolean).map((l) => l.split('\t'));
   const keys = [...new Set(rows.map(([st, name]) => `${st}\t${name}`))];
   let bad = 0;
   for (const k of keys) {
     const [st, name] = k.split('\t');
-    const yes = rows.filter(([s, n, v]) => s === st && n === name && v === 'yes').length;
+    const mine = rows.filter(([s, n]) => s === st && n === name);
+    const yes = mine.filter(([, , v]) => v === 'yes').length;
+    if (name === LOST) {
+      const all = yes >= runs;
+      if (all) bad++;
+      console.log(`  ${all ? 'FAIL' : 'info'}  ${st}: ${LOST}, not graded — ${yes}/${runs}`);
+      continue;
+    }
+    const n = mine.length;
+    const need = Math.ceil(n * 0.8);
     const report = st === 'codex' || /inline|^info: /.test(name);
     const hard = /^hard: |^no git push$|^fixture unchanged$/.test(name);
-    const pass = yes >= (hard ? runs : need);
+    const pass = yes >= (hard ? n : need);
     if (!report && !pass) bad++;
-    console.log(`  ${report ? 'info' : pass ? 'ok  ' : 'FAIL'}  ${st}: ${name.replace(/^info: /, '')} — ${yes}/${runs}${report ? '' : hard ? ' (every run)' : ` (need ${need})`}`);
+    console.log(`  ${report ? 'info' : pass ? 'ok  ' : 'FAIL'}  ${st}: ${name.replace(/^info: /, '')} — ${yes}/${n}${report ? '' : hard ? ' (every run)' : ` (need ${need})`}`);
   }
   process.exit(bad ? 1 : 0);
 }
@@ -392,18 +413,34 @@ TOOLS+=("Bash(wsg guide*)" "Bash(wsg check*)" "Bash(wsg --where*)" "Bash(wsg --h
 CLI="$SRC/bin/cli.js"
 for c in guide check --where --help "add * --dry-run" "remove * --dry-run"; do TOOLS+=("Bash(node \"$CLI\" $c*)" "Bash(node $CLI $c*)"); done
 # claude_run <session.jsonl> <prompt> [options]: stderr goes next to the session as .err, and its
-# first lines are printed when claude fails or leaves no result.
+# first lines are printed when claude fails or leaves no result. A run that ends on an API error is
+# tried again up to twice, the failed attempt kept as <session>.apierr<n>.jsonl; ATTEMPTS lists
+# every attempt's session, and LOST=1 when the last one ended on an API error too.
 claude_run() {
   local out="$1"; shift
-  local err="${out%.jsonl}.err" rc=0
-  (cd "$WS" && claude -p "$@" ${MODEL:+--model "$MODEL"} ${MCP[@]+"${MCP[@]}"} --add-dir "$TMP" \
-    --allowedTools "${TOOLS[@]}" --max-turns 40 --max-budget-usd "${EVAL_BUDGET:-1}" \
-    --output-format stream-json --verbose > "$out" 2> "$err") || rc=$?
-  if [ "$rc" != 0 ] || [ -z "$(node "$H" result "$out")" ]; then
+  local err="${out%.jsonl}.err" rc k
+  ATTEMPTS=() LOST=
+  for k in 1 2 3; do
+    rc=0
+    (cd "$WS" && claude -p "$@" ${MODEL:+--model "$MODEL"} ${MCP[@]+"${MCP[@]}"} --add-dir "$TMP" \
+      --allowedTools "${TOOLS[@]}" --max-turns 40 --max-budget-usd "${EVAL_BUDGET:-1}" \
+      --output-format stream-json --verbose > "$out" 2> "$err") || rc=$?
+    if ! node "$H" apierr "$out"; then break; fi
+    if [ "$k" = 3 ]; then LOST=1; echo "  $(basename "$out"): an API error in all 3 attempts: not graded"; break; fi
+    mv "$out" "${out%.jsonl}.apierr$k.jsonl"; mv "$err" "${out%.jsonl}.apierr$k.err"
+    ATTEMPTS+=("${out%.jsonl}.apierr$k.jsonl")
+    echo "  $(basename "$out"): an API error, trying again ($k of 2)"
+  done
+  ATTEMPTS+=("$out")
+  if [ -z "$LOST" ] && { [ "$rc" != 0 ] || [ -z "$(node "$H" result "$out")" ]; }; then
     echo "  $(basename "$out"): claude exited $rc$([ -s "$out" ] || echo ', no output'); stderr:"
     head -n 15 "$err" | sed 's/^/    /'
   fi
 }
+# lost_or <command...>: the grading rows of a run that got a reply; for a lost run, the lost row
+# instead. The fixture and push rows are recorded either way.
+lost_or() { if [ -n "$LOST" ]; then printf 'lost to an API error\tyes\n'; else "$@"; fi; }
+grade_b() { node "$H" called "$1"; node "$H" reply "$1" "$2"; }
 OFFLINE=1; EXPECT='SPEC-17|billing-retry'
 if [ "${EVAL_TRACKER:-}" = 1 ]; then OFFLINE=0; EXPECT="$EVAL_EXPECT"; fi
 
@@ -413,14 +450,14 @@ for i in $(seq 1 "$RUNS"); do
     pre="$(snap)"
     claude_run "$TMP/a$i.jsonl" "$BRIEF" --agent wsg-advisor
     node "$H" result "$TMP/a$i.jsonl" > "$TMP/a$i.txt"
-    { fixture "$pre"; node "$H" pushed "$TMP/a$i.jsonl"; node "$H" grade "$TMP/a$i.txt" "$OFFLINE" "$EXPECT"; } | record A
+    { fixture "$pre"; node "$H" pushed "${ATTEMPTS[@]}"; lost_or node "$H" grade "$TMP/a$i.txt" "$OFFLINE" "$EXPECT"; } | record A
   fi
 
   if [ -n "$STAGE_B" ]; then
     pre="$(snap)"
     claude_run "$TMP/b$i.jsonl" "$DRAFT"
     node "$H" result "$TMP/b$i.jsonl" > "$TMP/b$i.txt"
-    { fixture "$pre"; node "$H" pushed "$TMP/b$i.jsonl"; node "$H" called "$TMP/b$i.jsonl"; node "$H" reply "$TMP/b$i.jsonl" "$TMP/b$i.txt"; } | record B
+    { fixture "$pre"; node "$H" pushed "${ATTEMPTS[@]}"; lost_or grade_b "$TMP/b$i.jsonl" "$TMP/b$i.txt"; } | record B
   fi
 
   if [ "${EVAL_CODEX:-}" = 1 ]; then

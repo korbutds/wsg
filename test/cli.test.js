@@ -2579,6 +2579,18 @@ if [ -n "$sig" ]; then
   [ -n "$top" ] && kill -"$sig" "$top"
   sleep 1
 fi
+# FAKE_APIERR=N: the first N calls end on an API error, as a gateway 502 does.
+if [ -n "$FAKE_APIERR" ]; then
+  n=$(cat "$FAKE_LOG.apierr" 2>/dev/null || echo 0)
+  echo $((n + 1)) > "$FAKE_LOG.apierr"
+  if [ "$n" -lt "$FAKE_APIERR" ]; then
+    # FAKE_APIERR_PUSH / FAKE_APIERR_TOUCH: that attempt first runs git push / writes a file.
+    if [ -n "$FAKE_APIERR_PUSH" ]; then echo '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"p1","name":"Bash","input":{"command":"git push origin main"}}]}}'; fi
+    if [ -n "$FAKE_APIERR_TOUCH" ]; then echo x > "$PWD/touched-by-a-failed-attempt"; fi
+    echo '{"type":"result","is_error":true,"api_error_status":'"\${FAKE_APIERR_STATUS:-502}"',"terminal_reason":"api_error","result":"API Error"}'
+    exit 1
+  fi
+fi
 # FAKE_STREAM_A / FAKE_STREAM_B: the stream-json a call with / without --agent prints.
 s=$FAKE_STREAM_B
 for x in "$@"; do [ "$x" = --agent ] && s=$FAKE_STREAM_A; done
@@ -2590,7 +2602,7 @@ if [ -n "$s" ]; then cat "$s"; else echo '{"type":"result","result":"none"}'; fi
     const agent = path.join(cfgDir, 'agents', 'wsg-advisor.md');
     const runScript = (name, env = {}) => {
       fs.rmSync(log, { force: true });
-      for (const x of ['agent', 'args', 'codex']) fs.rmSync(`${log}.${x}`, { force: true });
+      for (const x of ['agent', 'args', 'codex', 'apierr']) fs.rmSync(`${log}.${x}`, { force: true });
       const r = spawnSync('bash', [path.join(ROOT, 'test', name)], {
         encoding: 'utf8',
         env: { PATH: `${sbin}:${process.env.PATH}`, HOME: path.join(sx, 'home'), TMPDIR: sx, CLAUDE_CONFIG_DIR: cfgDir, FAKE_LOG: log, ...env },
@@ -2854,6 +2866,48 @@ wait`;
           assert.match(line(r, 'the reply shows only the FOR THE OWNER content'), ok ? /^ok +B: .* — 1\/1 \(need 1\)$/ : /^FAIL +B: .* — 0\/1 \(need 1\)$/, r.all);
         });
       }
+      // A run that ends on an API error is tried again; one that never gets a reply is not graded.
+      const retried = runScript('eval-advisor.sh', { EVAL_RUNS: '1', EVAL_STAGES: 'A', FAKE_APIERR: '1', FAKE_STREAM_A: stream('a', advisorReply, false) });
+      it('eval: a run that ends on an API error is tried again and graded on the retry', () => {
+        assert.deepStrictEqual(calls(retried), ['call --agent', 'call --agent'], retried.all);
+        assert.match(retried.all, /a1\.jsonl: an API error, trying again \(1 of 2\)/);
+        assert.match(line(retried, 'hard: the reply has the contract'), /^ok +A: .* — 1\/1 \(every run\)$/, retried.all);
+        assert.doesNotMatch(retried.all, /lost to an API error/);
+        assert.strictEqual(retried.code, 0, retried.all);
+      });
+      const lostOne = runScript('eval-advisor.sh', { EVAL_RUNS: '2', EVAL_STAGES: 'A', FAKE_APIERR: '3', FAKE_STREAM_A: stream('a', advisorReply, false) });
+      it('eval: a run lost to an API error in all 3 attempts is reported, the others graded without it', () => {
+        assert.strictEqual(calls(lostOne).length, 4, lostOne.all);
+        assert.match(lostOne.all, /a1\.jsonl: an API error in all 3 attempts: not graded/);
+        assert.match(line(lostOne, 'lost to an API error'), /^info +A: lost to an API error, not graded — 1\/2$/, lostOne.all);
+        assert.match(line(lostOne, 'hard: the reply has the contract'), /^ok +A: .* — 1\/1 \(every run\)$/, lostOne.all);
+        assert.match(line(lostOne, 'fixture unchanged'), /^ok +A: .* — 2\/2 \(every run\)$/, lostOne.all);
+        assert.match(line(lostOne, 'no git push'), /^ok +A: .* — 2\/2 \(every run\)$/, lostOne.all);
+        assert.strictEqual(lostOne.code, 0, lostOne.all);
+      });
+      it('eval: a push or a write in a failed attempt still fails the hard checks', () => {
+        const pushed = runScript('eval-advisor.sh', { EVAL_RUNS: '1', EVAL_STAGES: 'A', FAKE_APIERR: '1', FAKE_APIERR_PUSH: '1', FAKE_STREAM_A: stream('a', advisorReply, false) });
+        assert.match(line(pushed, 'no git push'), /^FAIL +A: .* — 0\/1 \(every run\)$/, pushed.all);
+        const touched = runScript('eval-advisor.sh', { EVAL_RUNS: '1', EVAL_STAGES: 'A', FAKE_APIERR: '3', FAKE_APIERR_TOUCH: '1' });
+        assert.match(line(touched, 'fixture unchanged'), /^FAIL +A: .* — 0\/1 \(every run\)$/, touched.all);
+      });
+      it('eval: a 4xx API error is not retried', () => {
+        const r = runScript('eval-advisor.sh', { EVAL_RUNS: '1', EVAL_STAGES: 'A', FAKE_APIERR: '1', FAKE_APIERR_STATUS: '400', FAKE_STREAM_A: stream('a', advisorReply, false) });
+        assert.deepStrictEqual(calls(r), ['call --agent'], r.all);
+        assert.match(line(r, 'hard: the reply has the contract'), /^FAIL /, r.all);
+      });
+      it('eval: one lost run of two in stage B counts once, the other is graded', () => {
+        const r = runScript('eval-advisor.sh', { EVAL_RUNS: '2', EVAL_STAGES: 'B', FAKE_APIERR: '3', FAKE_STREAM_B: stream('b', `Checked with the advisor.\n\n${forOwner}`) });
+        assert.match(line(r, 'lost to an API error'), /^info +B: lost to an API error, not graded — 1\/2$/, r.all);
+        assert.match(line(r, 'the reply shows only the FOR THE OWNER content'), /^ok +B: .* — 1\/1 \(need 1\)$/, r.all);
+        assert.strictEqual(r.code, 0, r.all);
+      });
+      const lostAll = runScript('eval-advisor.sh', { EVAL_RUNS: '1', EVAL_STAGES: 'A', FAKE_APIERR: '3' });
+      it('eval: a stage with every run lost to an API error fails', () => {
+        assert.match(line(lostAll, 'lost to an API error'), /^FAIL +A: lost to an API error, not graded — 1\/1$/, lostAll.all);
+        assert.doesNotMatch(lostAll.all, /hard: the reply has the contract/);
+        assert.notStrictEqual(lostAll.code, 0, lostAll.all);
+      });
     }
     const onlyA = runScript('eval-advisor.sh', { EVAL_RUNS: '1', EVAL_STAGES: 'a' });
     it('eval: EVAL_STAGES=A runs stage A alone', () => assert.deepStrictEqual(calls(onlyA), ['call --agent'], onlyA.all));
