@@ -58,7 +58,8 @@
 # folder it was not told to trust: for the run, this checkout's agent is rendered into
 # ${CLAUDE_CONFIG_DIR:-~/.claude}/agents/wsg-advisor.md, as `wsg install-skills` would write it,
 # with its hook pointing at this checkout's lib/advisor-guard.js. A wsg-advisor.md already there is
-# moved to a temp backup and put back when the script exits, Ctrl+C included; other Claude Code
+# moved to wsg-advisor.md.wsg-test-backup next to it and put back when the script exits, Ctrl+C
+# included; after a SIGKILL the next run of either script does it (test/advisor-agent.sh). Other Claude Code
 # sessions of this user see this checkout's agent meanwhile. Nothing else is written to ~/.claude
 # or ~/.codex by the script; Claude Code writes its own project entry and session files for the
 # fixture path, and the script removes that session dir at the end.
@@ -88,35 +89,14 @@ if [ "${EVAL_TRACKER:-}" = 1 ]; then
 fi
 if [ "${EVAL_CODEX:-}" = 1 ]; then command -v codex >/dev/null || { echo "EVAL_CODEX=1, but codex is not on PATH" >&2; exit 1; }; fi
 
+# The user-level advisor for the run, and what a killed run left behind: test/advisor-agent.sh.
+SCRIPT="test/eval-advisor.sh"
+# shellcheck source=test/advisor-agent.sh
+. "$SRC/test/advisor-agent.sh"
+recover_advisor
 TMP="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/wsg-eval-XXXXXX")" && pwd -P)"
 PROJECTS="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects"
 session_dir() { printf '%s/%s' "$PROJECTS" "$(printf '%s' "$1" | sed 's/[^a-zA-Z0-9]/-/g')"; }
-# The advisor as `wsg install-skills` writes it (the same render, only this item), at the user
-# level: Claude Code runs the hooks of a user-level agent, and skips those of a project-level one
-# in a folder it was not told to trust. A wsg-advisor.md already there is moved to a backup dir
-# first and put back at exit, Ctrl+C included; nothing else under the config dir is touched.
-AGENTS_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/agents"
-AGENT="$AGENTS_DIR/wsg-advisor.md"
-AGENT_BACKUP="" AGENT_WRITTEN="" AGENTS_DIR_MADE=""
-install_advisor() {
-  if [ ! -d "$AGENTS_DIR" ]; then mkdir -p "$AGENTS_DIR"; AGENTS_DIR_MADE=1; fi
-  if [ -e "$AGENT" ] || [ -L "$AGENT" ]; then
-    AGENT_BACKUP="$(mktemp -d "${TMPDIR:-/tmp}/wsg-advisor-backup-XXXXXX")/wsg-advisor.md"
-    mv "$AGENT" "$AGENT_BACKUP"
-    echo "your $AGENT is in $AGENT_BACKUP until this run ends" >&2
-  fi
-  AGENT_WRITTEN=1
-  node -e 'const S = require(process.argv[1]);
-    process.stdout.write(S.render(S.ITEMS.find((x) => x.name === "wsg-advisor" && x.root === "claude")));' \
-    "$SRC/lib/skills.js" > "$AGENT"
-}
-restore_advisor() {
-  if [ -n "$AGENT_WRITTEN" ]; then rm -f "$AGENT"; fi
-  if [ -n "$AGENT_BACKUP" ] && { [ -e "$AGENT_BACKUP" ] || [ -L "$AGENT_BACKUP" ]; }; then
-    mv "$AGENT_BACKUP" "$AGENT" && rmdir "$(dirname "$AGENT_BACKUP")"
-  fi
-  if [ -n "$AGENTS_DIR_MADE" ]; then rmdir "$AGENTS_DIR" 2>/dev/null || true; fi
-}
 WS=""
 cleanup() {
   restore_advisor

@@ -41,6 +41,6 @@
     "agents-md"
   ],
   "scripts": {
-    "test": "node --check bin/cli.js && bash -n install.sh && bash -n test/smoke-claude.sh && bash -n test/eval-advisor.sh && zsh -n shell/wsg.zsh && node test/advisor-guard.test.js && node test/generate.test.js && node test/cli.test.js"
+    "test": "node --check bin/cli.js && bash -n install.sh && bash -n test/smoke-claude.sh && bash -n test/eval-advisor.sh && bash -n test/advisor-agent.sh && zsh -n shell/wsg.zsh && node test/advisor-guard.test.js && node test/generate.test.js && node test/cli.test.js"
   }
 }
