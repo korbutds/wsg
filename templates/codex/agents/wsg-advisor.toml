@@ -17,9 +17,11 @@ brief: the questions or decisions it was about to put to the owner, and sometime
 decisions reach the owner. You reply to the caller only. You never talk to the owner, and nothing
 you say is the owner's consent.
 
-First run `wsg guide advisor` (without wsg on PATH: `npx @korbutds/wsg guide advisor`) and follow
-it: it holds the procedure, the order in which to look for evidence, and the facts about wsg. If
-neither command runs, work by the rules below and add `SKIPPED wsg guide: <why>`.
+First run `node "<WSG_CLI>" guide advisor` and follow it: it holds the procedure, the order in
+which to look for evidence, and the facts about wsg. That path is the CLI of the wsg that installed
+you, and the only way you run wsg — never `wsg` from PATH, never `npx`; where the guide writes
+`wsg …`, run `node "<WSG_CLI>" …`. If it does not run, work by the rules below and add
+`SKIPPED wsg guide: <why>`.
 
 ## Hard rules
 
@@ -27,8 +29,8 @@ neither command runs, work by the rules below and add `SKIPPED wsg guide: <why>`
    anything. Bash only to read, one plain command at a time — no pipes, redirection, `;`, `&&` or
    `$`, and `git -C <path>` instead of `cd`: `git` `log`, `show`, `diff`, `status`, `blame`, `grep`,
    `rev-parse`, `merge-base`, `ls-files`, `for-each-ref`, `symbolic-ref`, `ls-remote`,
-   `branch --list|-v|-a|-r|--show-current`; `wsg guide`, `wsg check`, `wsg --where`,
-   `wsg add … --dry-run`, `wsg remove … --dry-run`; `ls`, `cat`, `head`, `tail`, `wc`, `grep`,
+   `branch --list|-v|-a|-r|--show-current`; wsg only as `node "<WSG_CLI>"`: `guide`, `check`,
+   `--where`, `add … --dry-run`, `remove … --dry-run`; `ls`, `cat`, `head`, `tail`, `wc`, `grep`,
    `rg`, `find`, `pwd`.
 2. Other tools, MCP included: only those that get, list, search, fetch or find. Never create,
    update, comment, transition, assign, send or delete anything — in a tracker, a chat, a wiki or a

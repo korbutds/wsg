@@ -42,10 +42,10 @@
 #                       answer sits in an unlinked ticket) and EVAL_EXPECT (a regex the answer must
 #                       contain, e.g. that ticket's key) are required
 #   EVAL_CODEX=1        also run the Codex stage (needs codex on PATH and a logged-in account).
-#                       It loads the shipped templates/codex/agents/wsg-advisor.toml (sandbox_mode
-#                       included) from a temp CODEX_HOME, so it also shows that Codex accepts the
-#                       template: its stderr is kept in $TMP/c<run>.err, and the lines naming
-#                       wsg-advisor are printed
+#                       It loads this checkout's Codex agent as `wsg install-skills` renders it
+#                       (sandbox_mode included, the CLI path filled in) from a temp CODEX_HOME, so it
+#                       also shows that Codex accepts it: its stderr is kept in $TMP/c<run>.err, and
+#                       the lines naming wsg-advisor are printed
 #   EVAL_BUDGET=1       the most one claude run may spend, in USD (--max-budget-usd)
 #   EVAL_KEEP=1         keep the temp dir and print its path
 #
@@ -366,6 +366,9 @@ for c in "${GIT_READ[@]}"; do TOOLS+=("Bash(git $c*)" "Bash(git -C * $c*)"); don
 TOOLS+=("Bash(wsg guide*)" "Bash(wsg check*)" "Bash(wsg --where*)" "Bash(wsg --help*)"
   "Bash(wsg add * --dry-run*)" "Bash(wsg remove * --dry-run*)"
   "Bash(ls *)" "Bash(cat *)" "Bash(grep *)" "Bash(find *)" "Bash(head *)" "Bash(wc *)")
+# The advisor runs wsg only as node "<this checkout's bin/cli.js>", quoted or not.
+CLI="$SRC/bin/cli.js"
+for c in guide check --where --help "add * --dry-run" "remove * --dry-run"; do TOOLS+=("Bash(node \"$CLI\" $c*)" "Bash(node $CLI $c*)"); done
 # claude_run <session.jsonl> <prompt> [options]: stderr goes next to the session as .err, and its
 # first lines are printed when claude fails or leaves no result.
 claude_run() {
@@ -402,7 +405,9 @@ for i in $(seq 1 "$RUNS"); do
     # A temp CODEX_HOME with this checkout's agent; the account and config are linked, not copied.
     CH="$TMP/codex-home"
     mkdir -p "$CH/agents"
-    cp "$SRC/templates/codex/agents/wsg-advisor.toml" "$CH/agents/"
+    node -e 'const S = require(process.argv[1]);
+      process.stdout.write(S.render(S.ITEMS.find((x) => x.name === "wsg-advisor" && x.root === "codex")));' \
+      "$SRC/lib/skills.js" > "$CH/agents/wsg-advisor.toml"
     for f in auth.json config.toml; do
       if [ -e "${CODEX_HOME:-$HOME/.codex}/$f" ]; then ln -sf "${CODEX_HOME:-$HOME/.codex}/$f" "$CH/$f"; fi
     done

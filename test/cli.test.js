@@ -1913,7 +1913,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     const flagProblems = (text) => {
       const out = [];
       for (const span of codeSpans(text)) {
-        for (const m of span.matchAll(/(?:^|[\s(])wsg\s+([a-z][a-z-]*)([^|&;]*)/g)) {
+        for (const m of span.matchAll(/(?:^|[\s(])(?:wsg|node "<WSG_CLI>")\s+([a-z][a-z-]*)([^|&;]*)/g)) {
           const cmd = m[1];
           if (!FLAGS[cmd]) { out.push(`unknown command: wsg ${cmd}`); continue; }
           for (const f of m[2].match(/--[a-z][a-z-]*/g) || []) if (!(f in FLAGS[cmd])) out.push(`wsg ${cmd} has no ${f}`);
@@ -2077,11 +2077,13 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     const agentFile = path.join(claudeDir, 'agents', 'wsg-advisor.md');
     const advisorItem = S.ITEMS.find((x) => x.name === 'wsg-advisor' && x.root === 'claude');
     const guardPath = path.join(ROOT, 'lib', 'advisor-guard.js');
-    it('install-skills writes the wsg-advisor agent, with its guard path filled in', () => {
+    const cliPath = path.join(ROOT, 'bin', 'cli.js');
+    it('install-skills writes the wsg-advisor agent, with its guard and CLI paths filled in', () => {
       const text = fs.readFileSync(agentFile, 'utf8');
-      assert.strictEqual(text, agentTpl.split('<GUARD>').join(guardPath));
+      assert.strictEqual(text, agentTpl.split('<GUARD>').join(guardPath).split('<WSG_CLI>').join(cliPath));
       assert.strictEqual(text, S.render(advisorItem));
-      assert.doesNotMatch(text, /<GUARD>/);
+      assert.doesNotMatch(text, /<GUARD>|<WSG_CLI>/);
+      assert.strictEqual(S.WSG_CLI, cliPath);
     });
     // Frontmatter Claude Code reads: first in the file; the top-level keys, one line each, apart
     // from hooks, which is a nested map.
@@ -2220,12 +2222,34 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
         assert.match(contract(agentTpl), new RegExp(`^${sct.replace(/[()/]/g, '\\$&')}$`, 'm'), sct);
       }
     });
-    it('the agent points to wsg guide advisor, with the npx fallback', () => {
-      assert.match(agentTpl, /`wsg guide advisor`/);
-      assert.match(agentTpl, /`npx @korbutds\/wsg guide advisor`/);
+    // The advisor runs the wsg that installed it, by path: `wsg` on PATH or npx could be another.
+    it('the agent runs the guide with node and this package\'s CLI, never wsg from PATH or npx', () => {
+      assert.match(agentTpl, /First run `node "<WSG_CLI>" guide advisor`/);
+      assert.match(agentTpl, /never `wsg` from PATH, never `npx`/);
+      assert.match(fs.readFileSync(agentFile, 'utf8'), new RegExp(`First run \`node "${cliPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}" guide advisor\``));
+      const codex = fs.readFileSync(path.join(ROOT, 'templates', 'codex', 'agents', 'wsg-advisor.toml'), 'utf8');
+      for (const text of [agentTpl, codex, advisorGuide]) assert.doesNotMatch(text, /npx @korbutds|without wsg on PATH/);
+      assert.match(advisorGuide, /the advisor runs wsg only as `node "<WSG_CLI>" …`, never `wsg` from PATH or\s+`npx`/);
+    });
+    it('the CLI command it is told to run passes the guard; bare wsg and npx do not', () => {
+      const G = require(path.join(ROOT, 'lib', 'advisor-guard.js'));
+      const text = fs.readFileSync(agentFile, 'utf8');
+      const cmd = text.match(/First run `(node "[^`]*" guide advisor)`/)[1];
+      assert.strictEqual(G.decide({ tool_name: 'Bash', tool_input: { command: cmd } }).allow, true, cmd);
+      for (const c of ['wsg guide advisor', 'npx @korbutds/wsg guide advisor']) assert.strictEqual(G.decide({ tool_name: 'Bash', tool_input: { command: c } }).allow, false, c);
+    });
+    it('a CLI path with spaces and quotes survives the render and the guard', () => {
+      const odd = path.join(tmp, 'it\'s a "cli" dir');
+      fs.mkdirSync(path.join(odd, 'lib'), { recursive: true });
+      for (const f of ['advisor-guard.js', 'flags.js']) fs.copyFileSync(path.join(ROOT, 'lib', f), path.join(odd, 'lib', f));
+      const real = fs.realpathSync(odd);
+      const text = S.render(advisorItem, path.join(real, 'lib', 'advisor-guard.js'), path.join(real, 'bin', 'cli.js'));
+      const cmd = text.match(/First run `(node "(?:[^"\\]|\\.)*" guide advisor)`/)[1];
+      const r = spawnSync(process.execPath, [path.join(real, 'lib', 'advisor-guard.js')], { input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: cmd } }), encoding: 'utf8' });
+      assert.strictEqual(r.status, 0, r.stderr);
     });
     it('the agent and the guide keep the same hard rules', () => {
-      for (const s of ['SKIPPED tracker: no tool available', '"default, reversible"', '`--reset-to-base`', 'get, list, search, fetch or find', '`wsg add … --dry-run`', '`wsg remove … --dry-run`']) {
+      for (const s of ['SKIPPED tracker: no tool available', '"default, reversible"', '`--reset-to-base`', 'get, list, search, fetch or find', 'wsg only as `node "<WSG_CLI>"`', '`add … --dry-run`', '`remove … --dry-run`']) {
         assert.ok(agentTpl.includes(s), `agent: ${s}`);
         assert.ok(advisorGuide.includes(s), `guide: ${s}`);
       }
@@ -2252,11 +2276,18 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     // The same agent for Codex: a TOML file, the instructions the same text as the Claude body.
     const codexTpl = fs.readFileSync(path.join(ROOT, 'templates', 'codex', 'agents', 'wsg-advisor.toml'), 'utf8');
     const codexFile = path.join(home, '.codex', 'agents', 'wsg-advisor.toml');
-    it('install-skills writes the Codex agent under ~/.codex/agents', () => assert.strictEqual(fs.readFileSync(codexFile, 'utf8'), codexTpl));
+    const codexItem = S.ITEMS.find((x) => x.name === 'wsg-advisor' && x.root === 'codex');
+    it('install-skills writes the Codex agent under ~/.codex/agents, with the CLI path filled in', () => {
+      const text = fs.readFileSync(codexFile, 'utf8');
+      assert.strictEqual(text, codexTpl.split('<WSG_CLI>').join(cliPath));
+      assert.strictEqual(text, S.render(codexItem));
+      assert.ok(text.includes(`First run \`node "${cliPath}" guide advisor\``));
+      assert.doesNotMatch(text, /<WSG_CLI>/);
+    });
     it('or under $CODEX_HOME/agents', () => {
       const codexHome = path.join(tmp, 'codex-home');
       assert.strictEqual(wsg(['install-skills'], { env: { CODEX_HOME: codexHome } }).code, 0);
-      assert.strictEqual(fs.readFileSync(path.join(codexHome, 'agents', 'wsg-advisor.toml'), 'utf8'), codexTpl);
+      assert.strictEqual(fs.readFileSync(path.join(codexHome, 'agents', 'wsg-advisor.toml'), 'utf8'), S.render(codexItem));
     });
     it('the Codex agent starts with the marker as a comment', () => assert.match(codexTpl, /^# generated by wsg\n# `wsg install-skills` rewrites this file; delete the line above/));
     const tomlStr = (key) => (codexTpl.match(new RegExp(`^${key} = "([^"\\n]*)"$`, 'm')) || [])[1];
@@ -2319,7 +2350,8 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       assert.throws(() => parseToml("a = '''\nx\n"), /unterminated/);
       assert.throws(() => parseToml('sandbox_mode = read-only\n'), /unsupported/);
     });
-    it('the Codex agent is valid TOML with a read-only sandbox at the top level', () => {
+    it('the Codex agent is valid TOML with a read-only sandbox at the top level, as written and as installed', () => {
+      assert.deepStrictEqual(Object.keys(parseToml(fs.readFileSync(codexFile, 'utf8'))), Object.keys(parseToml(codexTpl)));
       const t = parseToml(codexTpl);
       assert.strictEqual(t.name, 'wsg-advisor');
       assert.strictEqual(t.sandbox_mode, 'read-only');
@@ -2398,12 +2430,13 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       const G = require(path.join(ROOT, 'lib', 'advisor-guard.js'));
       for (const c of ['git log', 'git show', 'git diff', 'git status', 'git blame', 'git grep', 'git rev-parse', 'git merge-base',
         'git ls-files', 'git for-each-ref', 'git symbolic-ref HEAD', 'git ls-remote', 'git branch --list', 'git branch -v', 'git branch -a',
-        'git branch -r', 'git branch --show-current', 'git -C /tmp log', 'wsg guide advisor', 'wsg check', 'wsg --where',
-        'wsg add x --dry-run', 'wsg remove x --dry-run', 'ls', 'cat a', 'head a', 'tail a', 'wc a', 'grep a b', 'rg a', 'find .', 'pwd',
-        'npx @korbutds/wsg guide advisor']) assert.ok(G.decide({ tool_name: 'Bash', tool_input: { command: c } }).allow, c);
+        'git branch -r', 'git branch --show-current', 'git -C /tmp log', ...['guide advisor', 'check', '--where', 'add x --dry-run',
+          'remove x --dry-run'].map((x) => `node "${cliPath}" ${x}`), 'ls', 'cat a', 'head a', 'tail a', 'wc a', 'grep a b', 'rg a',
+        'find .', 'pwd']) assert.ok(G.decide({ tool_name: 'Bash', tool_input: { command: c } }).allow, c);
       // Up to the next item, whatever marks it: "2." in the agent, "-" in the guide.
       const rule = (text) => text.slice(text.indexOf('Bash only to read'), text.indexOf('Other tools, MCP included')).replace(/\s+/g, ' ').replace(/ (-|\d\.) $/, '');
       assert.ok(rule(agentTpl).includes('`git` `log`, `show`, `diff`, `status`, `blame`, `grep`, `rev-parse`, `merge-base`, `ls-files`, `for-each-ref`, `symbolic-ref`, `ls-remote`, `branch --list|-v|-a|-r|--show-current`'), rule(agentTpl));
+      assert.ok(rule(agentTpl).includes('wsg only as `node "<WSG_CLI>"`: `guide`, `check`, `--where`, `add … --dry-run`, `remove … --dry-run`'), rule(agentTpl));
       assert.ok(rule(agentTpl).includes('`ls`, `cat`, `head`, `tail`, `wc`, `grep`, `rg`, `find`, `pwd`'));
       assert.ok(rule(agentTpl).includes('no pipes, redirection, `;`, `&&` or `$`'));
       assert.strictEqual(rule(advisorGuide), rule(agentTpl));
@@ -2421,6 +2454,10 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
         assert.match(readme, inReadme);
         assert.match(advisorGuide, inGuide);
       }
+    });
+    it('README says the advisor runs wsg only by its CLI path, never from PATH or npx', () => {
+      assert.match(readme, /the advisor runs wsg only as `node "<path>\/bin\/cli\.js" …` — never `wsg` from\s+PATH or `npx`/);
+      assert.match(limitations, /The hook and CLI paths are absolute/);
     });
     it('README says CLAUDE.md has an advisor block too', () => assert.match(readme, /`CLAUDE\.md` has a block of the same name telling Claude Code to call the subagent/));
     it('README names refresh, install-skills --uninstall and the advisor guide', () => {
@@ -2463,6 +2500,7 @@ a="$CLAUDE_CONFIG_DIR/agents/wsg-advisor.md"
   printf 'call'
   for x in "$@"; do [ "$x" = --agent ] && printf ' --agent'; done
   printf '\\n'
+  printf '%s\\n' "$@" > "$FAKE_LOG.args"
   if [ -f "$a" ]; then cp "$a" "$FAKE_LOG.agent"; echo user-agent; fi
   if [ -e "$PWD/.claude/agents/wsg-advisor.md" ]; then echo project-copy; fi
 } >> "$FAKE_LOG"
@@ -2477,11 +2515,13 @@ if [ -n "$FAKE_INT" ]; then
 fi
 echo '{"type":"result","result":"none"}'
 `, { mode: 0o755 });
+    // A fake codex: keeps the agent the eval's Codex stage loads.
+    fs.writeFileSync(path.join(sbin, 'codex'), '#!/bin/sh\ncp "$CODEX_HOME/agents/wsg-advisor.toml" "$FAKE_LOG.codex"\necho "{}"\n', { mode: 0o755 });
     const cfgDir = path.join(sx, 'claude-config');
     const agent = path.join(cfgDir, 'agents', 'wsg-advisor.md');
     const runScript = (name, env = {}) => {
       fs.rmSync(log, { force: true });
-      fs.rmSync(`${log}.agent`, { force: true });
+      for (const x of ['agent', 'args', 'codex']) fs.rmSync(`${log}.${x}`, { force: true });
       const r = spawnSync('bash', [path.join(ROOT, 'test', name)], {
         encoding: 'utf8',
         env: { PATH: `${sbin}:${process.env.PATH}`, HOME: path.join(sx, 'home'), TMPDIR: sx, CLAUDE_CONFIG_DIR: cfgDir, FAKE_LOG: log, ...env },
@@ -2489,7 +2529,9 @@ echo '{"type":"result","result":"none"}'
       });
       const calls = fs.existsSync(log) ? fs.readFileSync(log, 'utf8') : '';
       const seen = fs.existsSync(`${log}.agent`) ? fs.readFileSync(`${log}.agent`, 'utf8') : null;
-      return { code: r.status, all: r.stdout + r.stderr, calls, seen };
+      const args = fs.existsSync(`${log}.args`) ? fs.readFileSync(`${log}.args`, 'utf8').split('\n') : [];
+      const codex = fs.existsSync(`${log}.codex`) ? fs.readFileSync(`${log}.codex`, 'utf8') : null;
+      return { code: r.status, all: r.stdout + r.stderr, calls, seen, args, codex };
     };
     const backups = () => fs.readdirSync(sx).filter((f) => f.startsWith('wsg-advisor-backup-'));
     for (const name of ['eval-advisor.sh', 'smoke-claude.sh']) {
@@ -2537,6 +2579,16 @@ echo '{"type":"result","result":"none"}'
     });
     const onlyA = runScript('eval-advisor.sh', { EVAL_RUNS: '1', EVAL_STAGES: 'a' });
     it('eval: EVAL_STAGES=A runs stage A alone', () => assert.deepStrictEqual(calls(onlyA), ['call --agent'], onlyA.all));
+    // The advisor runs wsg as node "<bin/cli.js>": the allowlist of the run lets that through.
+    it('eval: the allowlist has wsg by this checkout\'s CLI path, quoted and not', () => {
+      const cli = path.join(ROOT, 'bin', 'cli.js');
+      for (const x of [`Bash(node "${cli}" guide*)`, `Bash(node ${cli} guide*)`, `Bash(node "${cli}" add * --dry-run*)`]) assert.ok(onlyA.args.includes(x), x);
+    });
+    const withCodex = runScript('eval-advisor.sh', { EVAL_RUNS: '1', EVAL_STAGES: 'A', EVAL_CODEX: '1' });
+    it('eval: the Codex stage loads the Codex agent as install-skills renders it', () => {
+      assert.strictEqual(withCodex.codex, S.render(S.ITEMS.find((x) => x.name === 'wsg-advisor' && x.root === 'codex')), withCodex.all);
+      assert.doesNotMatch(withCodex.codex, /<WSG_CLI>/);
+    });
     for (const bad of ['C', 'A,X', '']) {
       const r = runScript('eval-advisor.sh', { EVAL_RUNS: '1', EVAL_STAGES: bad });
       it(`eval: EVAL_STAGES=${JSON.stringify(bad)} is refused before anything runs: exit 2`, () => {

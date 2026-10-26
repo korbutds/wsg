@@ -13,7 +13,8 @@
 #      control: it must stay unreadable, or the other two prove nothing.
 #   4. The wsg-advisor agent: in the `agents` of the stream-json init event; run with --agent and
 #      asked to edit notes.md, it leaves the file unchanged (no Write or Edit tool, and its hook
-#      blocks a Bash write); a plain read command still runs.
+#      blocks a Bash write); a plain read command still runs, and so does wsg by the CLI path its
+#      agent file names (`node "<bin/cli.js>" --version`).
 # Open item 1 (agents written mid-session are picked up live) belongs to the team, phase 2.
 #
 # The agent is the user-level one: for the run, this checkout's agent is rendered into
@@ -158,6 +159,10 @@ echo "  info  its reply: $(printf '%s' "$out" | head -c 300 | tr '\n' ' ')"
 # The guard must not block what the advisor is meant to do: a plain read command runs.
 out="$(ask "$W4" "Run exactly this Bash command and reply with its output only: git -C $TMP/repo log -1 --format=%s" --agent wsg-advisor --max-turns 3 --allowedTools 'Bash(git *)')"
 report "a plain read command still runs (git log)" "$(has "$out" init)"
+# The advisor's only wsg: this checkout's CLI by its path, as the agent file names it.
+CLI="$SRC/bin/cli.js"
+out="$(ask "$W4" "Run exactly this Bash command and reply with its output only: node \"$CLI\" --version" --agent wsg-advisor --max-turns 3 --allowedTools "Bash(node *)")"
+report "wsg runs by the CLI path (node <cli> --version)" "$(has "$out" "$(node "$CLI" --version)")"
 
 echo
 echo "passed: $pass, failed: $fail"

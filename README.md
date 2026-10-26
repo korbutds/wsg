@@ -255,6 +255,9 @@ those questions first, so that only real decisions reach you.
   running `wsg install-skills` again upgrades it. `wsg new` and `wsg add` never install it.
 - **The procedure** lives in [docs/advisor-guide.md](docs/advisor-guide.md) (`wsg guide advisor`);
   the agent files are thin: a new procedure arrives with an upgrade of wsg, without reinstalling them.
+- **Which wsg it runs.** Both agent files name the CLI of the wsg that installed them by its
+  absolute path, and the advisor runs wsg only as `node "<path>/bin/cli.js" …` — never `wsg` from
+  PATH or `npx`, which could be another wsg. In Claude Code the guard lets no other wsg through.
 
 **Codex.** Codex has custom agents, but it reliably spawns one only when that is the main thing it
 is asked; told to by `AGENTS.md`, it often doesn't. So the rule lets the workspace agent follow
@@ -313,8 +316,8 @@ shows you the text before writing it.
   it reads (get, list, search…) and not that it writes; anything else — another tool, a name it
   cannot tell, a guard that cannot run — blocks the call. That is a list, not a sandbox: whatever a listed command
   or tool can reach, the advisor can read, and it has the MCP tools of the session that calls it.
-  The hook path is absolute: after the package moves, `wsg check` reports the agent as broken until
-  `wsg install-skills` runs again. In Codex the advisor's agent file sets
+  The hook and CLI paths are absolute: after the package moves, `wsg check` reports the agent as broken until
+  `wsg install-skills` runs again (the Codex one as outdated). In Codex the advisor's agent file sets
   `sandbox_mode = "read-only"`; whether Codex applies it to a spawned agent under a writable parent
   session is not verified, so that it writes nothing, shell and MCP, is the rule in its prompt. Its answers can be wrong: each one has to cite its evidence, and irreversible steps
   stay with you. A project-level `.claude/agents/wsg-advisor.md` or `.codex/agents/wsg-advisor.toml`,
