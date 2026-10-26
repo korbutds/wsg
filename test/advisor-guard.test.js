@@ -415,7 +415,7 @@ const FINDINGS = [
   [bash('git grep -C2 --heading --break x HEAD'), true, 'git grep'],
   [bash('git branch -r -v --sort=-committerdate'), true, 'branch listing'],
   [bash('git branch --contains HEAD --list'), true, 'branch --contains'],
-  [bash('git branch --merged main'), false, 'a word without --list: could be a name'],
+  [bash('git branch --merged main'), true, '--merged takes main as its commit and lists'],
   [bash('git -P log -1'), true, '-P is --no-pager'],
   // find: primaries from a table, with their argument counts.
   [bash('find . -printf %p'), false, '-printf is not in the table'],
@@ -572,6 +572,79 @@ const FINDINGS = [
   [bash('git branch -v --sort=-committerdate'), true, 'branches by date'],
   // The sibling-workspace search of the guide, a form zsh does not refuse when a glob matches nothing.
   [bash("grep -ril 'SPEC-42' /tmp/ws --include=notes.md --include=AGENTS.md --include=LEARNINGS.md --include=ERRORS.md --exclude-dir=node_modules --exclude-dir=.git"), true, 'the guide\'s sibling search'],
+  // 8. The fourth review. Sorting on a signature runs gpg, as a %G format does.
+  [bash('git for-each-ref --sort=signature:grade refs/heads'), false, 'a signature sort key runs gpg'],
+  [bash('git for-each-ref --sort=-*signature refs/tags'), false, 'reversed, dereferenced'],
+  [bash('git for-each-ref --sort=v:signature:grade'), false, 'a version sort of it'],
+  [bash('git for-each-ref --sort signature'), false, 'the value as the next word'],
+  [bash('git branch --sort=signature'), false, 'branch sorts the same way'],
+  [bash('git branch -v --sort=-signature:signer'), false, 'reversed'],
+  [bash('git ls-remote --sort=signature origin'), false, 'ls-remote sorts the same way'],
+  [bash('git log --format=%GK'), false, 'a %G format still runs gpg'],
+  [bash('git show --pretty=format:%G? HEAD'), false, 'a %G format still runs gpg'],
+  [bash('git log -S%G --oneline'), true, 'a pickaxe search for %G is text, not a format'],
+  [bash('git grep -e %G -- src'), true, 'a grep pattern is text'],
+  [bash('git branch --sort=-committerdate'), true, 'other sort keys'],
+  // --no-optional-locks and --no-lazy-fetch: allowed with -C, -P and --no-pager in any order.
+  [bash('git --no-optional-locks --no-lazy-fetch status --porcelain'), true, 'the form the guide asks for'],
+  [bash(`git --no-lazy-fetch -C ${REPO} --no-optional-locks -P log -1`), true, 'any order with -C and -P'],
+  [bash('git --no-pager --no-optional-locks --no-lazy-fetch diff HEAD'), true, 'with --no-pager'],
+  [bash('git status --porcelain'), true, 'not required'],
+  [bash('git --no-optional-locks=1 status'), false, 'it takes no value'],
+  [bash('git --no-optional-lock status'), false, 'an abbreviation'],
+  [bash('git --no-lazy-fetch -c core.pager=x log'), false, '-c still blocks'],
+  [bash('git --no-optional-locks push'), false, 'the subcommand is still checked'],
+  // --diff-merges=remerge runs the merge again, as --remerge-diff does.
+  [bash('git log --diff-merges=remerge -p'), false, 'remerge'],
+  [bash('git log --diff-merges=r -p'), false, 'r is remerge'],
+  [bash('git show --diff-merges remerge HEAD'), false, 'remerge as the next word'],
+  [bash('git log --remerge-diff'), false, 'not in the table'],
+  [bash('git log --diff-merges=bogus'), false, 'a value git does not take'],
+  [bash('git log --diff-merges=first-parent -p'), true, 'first-parent'],
+  [bash('git show --diff-merges=cc HEAD'), true, 'dense-combined'],
+  // GNU tail's obsolete form: +1f, -cf follow the file forever.
+  [bash('tail +1f journal.md'), false, '+Nf follows'],
+  [bash('tail -cf journal.md'), false, '-cf follows'],
+  [bash('tail -5f journal.md'), false, '-Nf follows'],
+  [bash('tail +f journal.md'), false, '+f follows'],
+  [bash('tail +10l journal.md'), true, 'the obsolete form without f'],
+  [bash('tail -n +10 journal.md'), true, 'from line 10'],
+  [bash('tail -c 100 journal.md'), true, 'bytes'],
+  // git branch: --contains, --no-contains, --merged and --no-merged take the next word whatever it
+  // is (LASTARG_DEFAULT); with them, or --points-at, branch lists and a word is a pattern.
+  [bash('git branch --contains HEAD'), true, '--contains a commit'],
+  [bash('git branch --contains'), true, 'the last word: HEAD'],
+  [bash('git branch --no-merged main'), true, '--no-merged'],
+  [bash('git branch -r --merged origin/main'), true, 'remote branches merged'],
+  [bash("git branch --contains HEAD 'feat*'"), true, 'with a pattern'],
+  [bash('git branch --points-at HEAD x'), true, '--points-at lists, x is a pattern'],
+  [bash('git branch --contains -D x'), true, 'git takes -D as the commit too: an error, nothing deleted'],
+  [bash('git branch --contains x* y'), false, 'a glob in the value'],
+  [bash('git branch newname'), false, 'creates a branch'],
+  [bash('git branch -v newname'), false, '-v does not list: it creates'],
+  [bash('git branch newname --sort=refname'), false, '--sort does not list'],
+  [bash('git branch --merged main -m a b'), false, '-m is not in the table'],
+  [bash('git branch --merged main -d x'), false, '-d is not in the table'],
+  [bash('git for-each-ref --contains HEAD refs/heads'), true, 'for-each-ref takes it the same way'],
+  // Values only where the tool requires one: an option that takes one optionally or only attached
+  // is 'o', and the word after it is an operand.
+  [bash('git diff --unified=1 HEAD'), true, '--unified, attached'],
+  [bash('git log --min-parents=2 --max-parents=3 --encoding=UTF-8 -1'), true, '=-only in git'],
+  [bash('git blame --encoding=UTF-8 src/a.js'), true, '=-only in git'],
+  [bash('git rev-parse --since=2.weeks --until=now'), true, '=-only in rev-parse'],
+  [bash('git log --encoding *x'), false, 'no value: *x is an operand that could expand to an option'],
+  [bash('grep --context=2 x notes.md'), true, '--context attached: optional in BSD grep'],
+  [bash('ls -T x'), false, 'ls -T: a full time in BSD, a tab size in GNU'],
+  [bash('ls -lT'), false, 'in a cluster'],
+  // MCP: a queue or key store write; a query the caller writes; a query language.
+  ...['get_del', 'del_key', 'rm_file', 'queue_pop', 'pop_message', 'ack_message', 'consume_events', 'claim_task',
+    'dequeue_job', 'read_query', 'query_database', 'query_db', 'query_table', 'query_data', 'queryDatabase', 'get_query',
+    'db_read_query', 'search_splunk', 'splunk_search', 'spl_search', 'git_fetch', 'git_fetch_origin', 'git_filter_branch',
+    'git_read_tree', 'git_commit', 'git_checkout', 'git_branch', 'open_nodes'].map((n) => [mcp(`mcp__x__${n}`), false, 'MCP: not a read']),
+  // Kept blocked on purpose: a query language, even one for search.
+  ...['mcp__tracker__search_issues_jql', 'mcp__wiki__search_pages_cql', 'mcp__wiki__cql_search'].map((n) => [mcp(n), false, 'MCP: a query language, deliberate']),
+  ...['git_log', 'git_show', 'git_diff', 'git_diff_staged', 'git_diff_unstaged', 'git_status', 'git_blame', 'git_list_branches',
+    'directory_tree', 'query_docs', 'list_display_modes', 'get_split_view'].map((n) => [mcp(`mcp__x__${n}`), true, 'MCP read']),
 ];
 let findingsFailed = 0;
 for (const [input, allow, why] of FINDINGS) {
