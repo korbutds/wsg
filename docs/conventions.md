@@ -87,10 +87,10 @@ Workspaces created by wsg 0.1 have no `wsg.json`: `wsg check` reports on them as
 
 A source can't take a name the workspace uses itself — the template would be written through its
 symlink, over a file outside the workspace: `CLAUDE.md`, `AGENTS.md`, `README.md`, `notes.md`,
-`SETUP.md`, `journal.md`, `runs`, `mr-target-branch.txt`, `requirements.md`, `plan.md`, `review.md`,
-`team`, `.claude`, `.claude-memory`, `.learnings`, `.git` (compared case-insensitively). `repo` is
-allowed: the pointer is not created then. Workspace slugs and skill names are kebab-case; the
-`wsg-` prefix is reserved for the skills wsg writes itself.
+`SETUP.md`, `journal.md`, `runs`, `mr-target-branch.txt`, `requirements.md`, `design.md`, `plan.md`,
+`review.md`, `team`, `.claude`, `.claude-memory`, `.learnings`, `.git` (compared case-insensitively).
+`repo` is allowed: the pointer is not created then. Workspace slugs and skill names are kebab-case;
+the `wsg-` prefix is reserved for the skills wsg writes itself.
 
 ## What goes where
 

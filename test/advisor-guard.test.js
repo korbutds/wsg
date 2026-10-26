@@ -156,6 +156,8 @@ const BLOCKED = [
   `${W} remove api`,
   `${W} new x`,
   `${W} refresh`,
+  `${W} team fullstack`,
+  `${W} team fullstack --dry-run`,
   `${W} install-skills`,
   'wsg guide advisor',
   'wsg add x --dry-run',

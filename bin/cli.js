@@ -361,6 +361,62 @@ function cmdRefresh(args) {
   return 0;
 }
 
+// A team of roles: cards and a workflow in team/, an adapter per role for Claude Code, the AGENTS.md
+// block. Only adds; a file that exists is kept. --dry-run lists what would be written.
+async function cmdTeam(args) {
+  const { flags, pos } = parse(args, FLAGS.team, 1);
+  const found = targetWs(flags['--ws']);
+  if (!found) invalid(t('cli.notInWorkspace'));
+  if (found.legacy) invalid(t('cli.legacyWorkspace', { ws: found.ws }));
+  const { ws } = found;
+  const W = lib('workspace');
+  const team = lib('team');
+  const ui = lib('ui');
+  // Held from the plan to the last write, as in add.
+  if (!flags['--dry-run']) lock(ws);
+  let state;
+  try {
+    state = W.readState(ws);
+  } catch (e) {
+    invalid(e.message);
+  }
+  const p = team.plan(ws, state, pos[0], flags['--without']);
+  if (flags['--dry-run']) {
+    process.stdout.write(`${JSON.stringify({
+      workspace: ws,
+      roles: p.roles,
+      created: p.errors.length ? [] : team.created(p),
+      kept: p.errors.length ? [] : team.kept(p),
+      updated: p.errors.length ? [] : team.updated(p),
+      errors: p.errors,
+      warnings: p.warnings,
+    }, null, 2)}\n`);
+    return p.errors.length ? INVALID : 0;
+  }
+  if (p.errors.length) {
+    for (const e of p.errors) process.stderr.write(`wsg: ${e}\n`);
+    return INVALID;
+  }
+  for (const w of p.notes) ui.warn(w);
+  guardPlatform();
+  let written;
+  try {
+    ({ written } = await team.apply(ws, p));
+  } catch (e) {
+    if (e && e.name === 'Interrupted') {
+      process.stderr.write(`${t('cli.addCancelled')}\n`);
+      return 130;
+    }
+    throw e;
+  }
+  if (written) ui.head(t('cli.teamWritten', { n: written, preset: pos[0] }));
+  else ui.ok(t('cli.teamNone'));
+  for (const file of team.keptDiffering(p)) ui.info(t('cli.teamKept', { file }));
+  if (p.restart) ui.info(t('cli.teamRestart'));
+  ui.info(state.kind === 'process' ? t('cli.teamNextProcess', { skill: state.skillName }) : t('cli.teamNext'));
+  return 0;
+}
+
 function cmdCheck(args) {
   const { pos } = parse(args, FLAGS.check, 1);
   let ws;
@@ -428,6 +484,7 @@ const COMMANDS = {
   add: cmdAdd,
   remove: cmdRemove,
   refresh: cmdRefresh,
+  team: cmdTeam,
   check: cmdCheck,
   promote: cmdPromote,
   'install-skills': cmdInstallSkills,
