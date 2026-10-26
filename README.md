@@ -312,7 +312,8 @@ shows you the text before writing it.
 - **The advisor is not a sandbox.** In Claude Code it has no Write, Edit, NotebookEdit, Agent or
   Monitor tool, and a `PreToolUse` hook in its agent file runs `lib/advisor-guard.js` before every
   tool call: Read, Grep, Glob, WebFetch, WebSearch and ToolSearch pass, a Bash command must be one
-  plain read command from a list (no pipes, redirection, `#` or `$`), an MCP tool's name must say
+  plain read command from a list (no pipes, redirection, `#` or `$`; only a quoted `--verify` or
+  `--note` of a dry-run `add` may hold `&& | ; ( ) # < >`), an MCP tool's name must say
   it reads (get, list, search…) and not that it writes; anything else — another tool, a name it
   cannot tell, a guard that cannot run — blocks the call. That is a list, not a sandbox: whatever a listed command
   or tool can reach, the advisor can read, and it has the MCP tools of the session that calls it.
@@ -324,11 +325,15 @@ shows you the text before writing it.
   in the workspace or a directory above it, would shadow the installed one — and Claude Code skips
   the hooks of a project-level agent in a folder it was not told to trust; `wsg check` warns about
   such a copy.
-- **A repository's own git config.** The advisor's git commands only read, but a repository's
-  config can make git run a program on them: `core.fsmonitor` on `git status`, `diff.external` and
-  textconv drivers on `git diff`, `core.sshCommand` on `git ls-remote`. The guard blocks
-  `--ext-diff` and `--textconv`; what the config turns on by itself, it cannot override. The
-  repositories you attach are trusted, like any code you run.
+- **A repository's own git config.** The advisor's git commands only read, but the config of any
+  repository git runs in can make it run a program: `core.fsmonitor` on `git status`,
+  `diff.external` and textconv drivers on `git diff`, `core.sshCommand` on `git ls-remote`. The
+  guard blocks `--ext-diff` and `--textconv`, and limits git to the workspace and its sources:
+  `git -C` takes only the workspace, a source's path from `.claude/wsg.json` or a directory under
+  one (after realpath, no bare repository committed inside), and `git ls-remote` only `.` or a
+  remote the repository configures. What their config turns on by itself, it cannot override:
+  the workspace and the repositories you attach are trusted, like any code you run. `git status`
+  also refreshes `.git/index`, an internal write: accepted.
 - **What the guard does not see.** It checks the command Claude Code is about to run, before the
   shell: another `PreToolUse` hook that rewrites the input (`updatedInput`) runs after it with a
   command it never saw, the aliases and functions of Claude Code's shell snapshot still apply to

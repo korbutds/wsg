@@ -5,6 +5,8 @@
 // exit 0 or 2.
 
 const assert = require('node:assert');
+const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
@@ -21,14 +23,45 @@ const it = (name, fn) => {
   catch (e) { failed++; console.log(`  FAIL  ${name}\n        ${e.message}`); }
 };
 
-const bash = (command) => ({ tool_name: 'Bash', tool_input: { command, description: 'x' } });
+// A workspace on disk, for where git may run: WS with .claude/wsg.json naming one source, REPO
+// (its .git/config has the remote origin); WT, the source's worktree inside the workspace, its .git
+// a file pointing into REPO/.git/worktrees; a symlink to REPO in WS; EVIL, a repository outside
+// with a config of its own; REPO/vendor/bare, a committed directory git would take for a bare
+// repository. Real paths: the guard compares them after realpath.
+const FX = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wsg-guard-fx-')));
+process.on('exit', () => fs.rmSync(FX, { recursive: true, force: true }));
+const WS = path.join(FX, 'ws');
+const REPO = path.join(FX, 'svc');
+const WT = path.join(WS, 'svc');
+const EVIL = path.join(FX, 'evil');
+const write = (f, text) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, text); };
+write(path.join(WS, '.claude', 'wsg.json'), JSON.stringify({ version: 2, sources: [{ name: 'svc', path: REPO, mode: 'worktree' }, { name: 'gone', path: path.join(FX, 'gone') }] }));
+fs.mkdirSync(path.join(WS, 'a dir'), { recursive: true });
+write(path.join(REPO, '.git', 'config'), '[core]\n\tbare = false\n[remote "origin"]\n\turl = /x/origin.git\n[remote "nourl"]\n\tfetch = x\n[branch "upstream"]\n\turl = y\n');
+write(path.join(REPO, '.git', 'HEAD'), 'ref: refs/heads/main\n');
+write(path.join(REPO, '.git', 'worktrees', 'svc', 'commondir'), '../..\n');
+write(path.join(REPO, 'src', 'a.js'), '');
+write(path.join(REPO, 'vendor', 'bare', 'HEAD'), 'ref: refs/heads/main\n');
+write(path.join(REPO, 'vendor', 'bare', 'config'), '[core]\n\tfsmonitor = touch /tmp/owned\n');
+fs.mkdirSync(path.join(REPO, 'vendor', 'bare', 'objects'), { recursive: true });
+fs.mkdirSync(path.join(REPO, 'vendor', 'bare', 'refs'), { recursive: true });
+write(path.join(WT, '.git'), `gitdir: ${path.join(REPO, '.git', 'worktrees', 'svc')}\n`);
+fs.symlinkSync(REPO, path.join(WS, 'svc-link'));
+fs.symlinkSync(EVIL, path.join(WS, 'evil-link'));
+fs.symlinkSync(EVIL, path.join(REPO, 'evil-link'));
+write(path.join(EVIL, '.git', 'config'), '[core]\n\tfsmonitor = touch /tmp/owned\n[remote "origin"]\n\turl = /x\n');
+fs.mkdirSync(path.join(WS, 'origin'));
+fs.mkdirSync(path.join(FX, 'ws-other'));
+
+// The session runs in the worktree unless a row says otherwise: the hook input carries its cwd.
+const bash = (command, cwd = WT) => ({ tool_name: 'Bash', tool_input: { command, description: 'x' }, cwd });
 const mcp = (name) => ({ tool_name: name, tool_input: {} });
 
 console.log('\nthe advisor guard: Bash');
 const ALLOWED = [
   'git log --oneline -5',
-  'git -C /tmp/repo log -1',
-  'git -C "/tmp/a dir" show HEAD:package.json',
+  `git -C ${REPO} log -1`,
+  `git -C "${WS}/a dir" show HEAD:package.json`,
   'git --no-pager diff main...HEAD -- src/a.js',
   'git diff --output-indicator-new=+ HEAD',
   'git status --porcelain',
@@ -463,6 +496,82 @@ const FINDINGS = [
   [bash('git -C ~/repo log'), false, '~ in an option value'],
   [bash('find . -name x ^y'), false, '^ in find'],
   [bash('cat ~/notes.md'), true, 'cat has no option that runs anything'],
+  // 7. The third review. git -C <dir> runs <dir>'s repository config (core.fsmonitor): only the
+  // workspace, its sources and what is under them, after realpath; the workspace is found from cwd.
+  [bash(`git -C ${EVIL} status`), false, 'a repository outside the workspace'],
+  [bash(`git -C ${FX} log`), false, 'the directory above the workspace'],
+  [bash(`git -C ${FX}/ws-other log`), false, 'a sibling of the workspace'],
+  [bash(`git -C ${WS}/../evil log`), false, '.. out of the workspace'],
+  [bash(`git -C ${WS}/evil-link status`), false, 'a symlink in the workspace to a directory outside'],
+  [bash(`git -C ${REPO}/evil-link log`), false, 'a symlink in a source to a directory outside'],
+  [bash(`git -C ${REPO}/vendor/bare status`), false, 'a bare repository committed inside a source'],
+  [bash(`git -C ${REPO}/vendor/bare/refs log`), false, 'under a bare repository inside a source'],
+  [bash(`git -C ${FX}/gone log`), false, 'a source whose path is gone'],
+  [bash(`git -C ${WS}/nope log`), false, 'a directory that does not exist'],
+  [bash('git -C ../evil log', WS), false, 'relative, out of the workspace'],
+  [bash(`git -C ${WS} -C ../evil status`), false, 'the second -C leaves the workspace'],
+  [bash(`git -C ${EVIL} -C ${WS} status`), false, 'every -C must be in the workspace'],
+  [bash(`git -C ${WS} log`, EVIL), false, 'no workspace at or above cwd: no -C at all'],
+  [{ tool_name: 'Bash', tool_input: { command: `git -C ${REPO} log` } }, false, 'no cwd in the hook input: no -C at all'],
+  [bash('git -C "" log'), false, 'an empty -C'],
+  [bash(`git -C ${WS} status`), true, 'the workspace'],
+  [bash(`git -C ${WT} status`), true, 'a worktree in the workspace'],
+  [bash(`git -C ${WS}/svc-link log -1`), true, 'a symlink to a source'],
+  [bash(`git -C ${REPO}/src log`), true, 'a directory of a source'],
+  [bash('git -C svc log', WS), true, 'relative to cwd'],
+  [bash(`git -C ${WS} -C svc status`), true, '-C after -C'],
+  [bash('git status', EVIL), true, 'without -C git runs where the session is, as before'],
+  // git ls-remote <name>: only a remote the repository configures; any other name is a path to git.
+  [bash('git ls-remote origin'), true, 'origin, from the config of the worktree\'s common git dir'],
+  [bash(`git -C ${REPO} ls-remote --heads origin`), true, 'origin of the source'],
+  [bash('git ls-remote nourl'), false, 'a remote section without a url'],
+  [bash('git ls-remote upstream'), false, 'not a remote section'],
+  [bash('git ls-remote evil'), false, 'not configured'],
+  [bash('git ls-remote origin', WS), false, 'the workspace is no repository: origin is the directory of that name'],
+  [bash(`git -C ${WS} ls-remote origin`), false, 'the same with -C'],
+  [{ tool_name: 'Bash', tool_input: { command: 'git ls-remote origin' } }, false, 'no cwd: no repository to read remotes from'],
+  [bash('git ls-remote', WS), true, 'the default remote'],
+  [bash('git ls-remote .'), true, 'this repository'],
+  // MCP: a prefix is a word of the server's name or a generic one, never just a short word.
+  ...['sort_list_items', 'hide_list_item', 'flag_search_result', 'clean_list_cache', 'pay_list_invoices', 'nuke_search_x', 'ack_status']
+    .map((n) => [mcp(`mcp__x__${n}`), false, 'MCP: a short word is no prefix']),
+  ...['mcp__issues__issue_get_comments', 'mcp__x__sh_list_metrics', 'mcp__x__db_list_tables', 'mcp__x__wiki_search_pages',
+    'mcp__sort__sort_list_items', 'mcp__x__query_docs', 'mcp__x__query_issues'].map((n) => [mcp(n), true, 'MCP: a prefix of the server or a generic one']),
+  // Query languages, whatever the verb: any word ending in `ql`; `query` with only RAW words after it.
+  ...['yql', 'get_yql_result', 'kql_search', 'get_hql', 'sparql_select', 'get_promql_range', 'searchGraphQL', 'list_ql',
+    'query_raw', 'query_raw_sql', 'queryRaw', 'query_statement', 'get_cypher'].map((n) => [mcp(`mcp__x__${n}`), false, 'MCP: a query language']),
+  // node <CLI> add: && || | ; ( ) # < > only inside a quoted --verify or --note value.
+  [bash(`${W} add ${REPO} --verify "npm run lint && npm test" --dry-run`), true, '&& inside a quoted --verify'],
+  [bash(`${W} add x --note "a | b (c) #1" --dry-run`), true, '| ( ) # inside a quoted --note'],
+  [bash(`${W} add x --verify 'a && b' --dry-run`), true, 'single quotes'],
+  [bash(`${W} add x --verify="a; b" --note='x<y>z || w' --dry-run`), true, 'attached values'],
+  [bash(`${W} add x --verify "a" && rm x --dry-run`), false, '&& after the quote'],
+  [bash(`${W} add x --verify "a && b --dry-run`), false, 'an unbalanced quote'],
+  [bash(`${W} add x --verify 'a' #x --dry-run`), false, '# outside the quotes'],
+  [bash(`${W} add x --verify "a"#x --dry-run`), false, '# right after the quote'],
+  [bash(`${W} add x --note "a" > out --dry-run`), false, '> outside the quotes'],
+  [bash(`${W} add x --verify a\\&\\&b --dry-run`), false, 'escaped, not quoted'],
+  [bash(`${W} add x --verify "a\\" && b" --dry-run`), true, 'an escaped " stays inside the quotes'],
+  [bash(`${W} add x --verify 'a\\' && b' --dry-run`), false, 'no escape inside single quotes: && is outside'],
+  [bash(`${W} add "x;y" --dry-run`), false, 'a path is no free text'],
+  [bash(`${W} add x --branch "a;b" --dry-run`), false, '--branch is no free text'],
+  [bash(`${W} add --note --verify "a;b" --dry-run`), false, '--note takes --verify, "a;b" is the path'],
+  [bash(`${W} add x -- --verify "a;b"`), false, 'after -- it is a path'],
+  [bash(`${W} add x --verify "$(touch y)" --dry-run`), false, '$ blocks anywhere'],
+  [bash(`${W} add x --verify "\`touch y\`" --dry-run`), false, 'a backtick blocks anywhere'],
+  [bash(`${W} add x --verify "a {b}" --dry-run`), false, 'braces block anywhere'],
+  [bash(`${W} add x --verify "a\nb" --dry-run`), false, 'a line break blocks anywhere'],
+  [bash(`${W} add x --verify "a && b"`), false, 'still no --dry-run'],
+  [bash(`${W} remove x --ws "a;b" --dry-run`), false, 'remove has no free text'],
+  [bash(`${W} check "a;b"`), false, 'check has no free text'],
+  [bash("grep 'a;b' notes.md"), false, 'only node <CLI> add takes quoted operators'],
+  [bash(`${W} help`), true, 'help'],
+  [bash(`${W} help add`), false, 'help takes nothing'],
+  // What a block reason suggests instead of a format with ( ) must pass.
+  [bash('git for-each-ref --sort=-committerdate refs/heads'), true, 'branches by date'],
+  [bash('git branch -v --sort=-committerdate'), true, 'branches by date'],
+  // The sibling-workspace search of the guide, a form zsh does not refuse when a glob matches nothing.
+  [bash("grep -ril 'SPEC-42' /tmp/ws --include=notes.md --include=AGENTS.md --include=LEARNINGS.md --include=ERRORS.md --exclude-dir=node_modules --exclude-dir=.git"), true, 'the guide\'s sibling search'],
 ];
 let findingsFailed = 0;
 for (const [input, allow, why] of FINDINGS) {
@@ -475,6 +584,26 @@ for (const [input, allow, why] of FINDINGS) {
   });
 }
 console.log(`  findings: ${FINDINGS.length - findingsFailed}/${FINDINGS.length} as expected`);
+it('a block on -C names the allowed roots', () => {
+  assert.match(G.decide(bash(`git -C ${EVIL} status`)).reason, new RegExp(`git -C only in the workspace and its sources: ${WS}, ${REPO}\\.`));
+  assert.match(G.decide(bash(`git -C ${WS} log`, EVIL)).reason, /git -C needs a workspace: none at or above the session directory/);
+});
+it('a block on ( suggests the forms without a format', () => {
+  const r = G.decide(bash("git for-each-ref --sort=-committerdate --format='%(refname:short)' refs/heads"));
+  assert.match(r.reason, /git for-each-ref --sort=-committerdate refs\/heads or git branch -v --sort=-committerdate/);
+});
+it('the guide\'s sibling search passes the guard as written', () => {
+  const guide = fs.readFileSync(path.join(ROOT, 'docs', 'advisor-guide.md'), 'utf8');
+  const m = /`(grep -ril '<ticket or term>' <WS_ROOT> [^`]+)`/.exec(guide);
+  assert.ok(m, 'the guide has the grep -ril form');
+  assert.deepStrictEqual(G.decide(bash(m[1].replace('<ticket or term>', 'SPEC-42').replace('<WS_ROOT>', '/tmp/ws'))), { allow: true });
+  assert.doesNotMatch(guide, /<WS_ROOT>\/\*\//, 'no glob over <WS_ROOT>/*/: zsh refuses one that matches nothing');
+});
+it('the workspace is the nearest directory with .claude/wsg.json, with its sources', () => {
+  assert.deepStrictEqual(G.workspaceOf(path.join(REPO, 'src')), null);
+  assert.deepStrictEqual(G.workspaceOf(path.join(WS, 'a dir')), { ws: WS, roots: [WS, REPO] });
+  assert.strictEqual(G.workspaceOf('relative/dir'), null);
+});
 
 console.log('\nthe advisor guard: anything else');
 // The hook matches every tool: only the ones that read pass, the rest block — a subagent could

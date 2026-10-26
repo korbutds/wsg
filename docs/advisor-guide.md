@@ -31,7 +31,7 @@ with what the tracker and sibling workspaces say about the task.
 
 - Never create, edit, move or delete a file; never change git state; never install anything.
 - Bash only to read, one plain command at a time — no pipes, redirection, `;`, `&&` or `$`, and
-  `git -C <path>` instead of `cd`: `git` `log`, `show`, `diff`, `status`, `blame`, `grep`,
+  `git -C <path>` instead of `cd`, with a path in the workspace or one of its sources: `git` `log`, `show`, `diff`, `status`, `blame`, `grep`,
   `rev-parse`, `merge-base`, `ls-files`, `for-each-ref`, `symbolic-ref`, `ls-remote`,
   `branch --list|-v|-a|-r|--show-current`; wsg only as `node "<WSG_CLI>"`: `guide`, `check`,
   `--where`, `add … --dry-run`, `remove … --dry-run`; `ls`, `cat`, `head`, `tail`, `wc`, `grep`,
@@ -54,24 +54,34 @@ command outside the list above is blocked, and so is any other tool (a subagent,
 workflow) but MCP. The list goes down to the options: each command, and each git subcommand, has
 a table of the options it takes, and one not in it blocks — `git diff --ext-diff`,
 `git show --textconv`, `rg --pre`, `rg --hostname-bin`, `find -exec`, an abbreviated long option,
-a URL or a path for `git ls-remote`, a control character or a Unicode space anywhere. An MCP tool passes when its name
+a URL, a path or a name that is not a configured remote for `git ls-remote`, a control character
+or a Unicode space anywhere. Shell operators block quoted too, except `&& || | ; ( ) # < >` inside
+a quoted `--verify` or `--note` value of `node "<WSG_CLI>" add`; `$`, a backtick and a line break
+block everywhere. An MCP tool passes when its name
 says it only reads: the words after `mcp__<server>__` (split on `_`, `-`, `__` and camelCase) hold
 no write verb (create, update, set, replace, mark, toggle, archive, resolve a thread, run, export,
-download, make… and `and`, `or`), no query language (sql, graphql, cypher, a bare `query`), and the
-first word is a read verb (get, list, search, fetch, find, read, query, view, describe, show,
-lookup, count, filter) — or the second, after a prefix such as `wiki_get_page`; a name with no
-verb passes only as one word or a prefix and a noun: info, stat, metric, status, overview, history
-or details (`user_info`). A tool it cannot tell is blocked. A tool that reads can still have a side
+download, make… and `and`, `or`), no query language (sql, graphql, cypher, sparql, any word ending
+in `ql` such as yql, kql or promql — read-only in practice, blocked all the same — a bare `query`,
+`query_raw`), and the first word is a read verb (get, list, search, fetch, find, read, query, view,
+describe, show, lookup, count, filter) — or the second, after a prefix: a word of the server's
+name or a generic one (sh, wiki, chat, vcs, db, ci, cloud, user, key, repo, docs…), as in
+`wiki_get_page`; a name with no verb passes only as one word or a prefix and a noun: info, stat,
+metric, status, overview, history or details (`user_info`). A tool it cannot tell is blocked. A tool that reads can still have a side
 effect its name does not show — a `get_file` that saves the file, a `read_thread` that marks it
 read: accepted, not blocked. A list is not a sandbox: what a listed command or tool can reach,
 the advisor can read. WebFetch can send what the advisor read out in a URL; that it does not is a
 rule, not a check. The guard sees the command before the shell does, not after: another
 `PreToolUse` hook that rewrites the input (`updatedInput`) runs a command it never saw, the aliases
 and functions of Claude Code's shell snapshot still apply, and a hook that times out lets the call
-through. A repository's own config can make an allowed git command run a program —
-`core.fsmonitor` on `git status`, `diff.external` and textconv drivers on `git diff`,
-`core.sshCommand` on `git ls-remote` — and no option can turn that off: the attached repositories
-are trusted. A project-level copy of the agent in a folder Claude Code was not told to
+through. Any repository git runs in can make an allowed git command run a program through its own
+config — `core.fsmonitor` on `git status`, `diff.external` and textconv drivers on `git diff`,
+`core.sshCommand` on `git ls-remote` — and no option can turn that off. So the guard limits git to
+the workspace and its sources: `git -C` takes only the workspace (found from the session
+directory), the `path` of a source in `.claude/wsg.json` or a directory under one, after realpath,
+and not a bare repository committed inside a source; `git ls-remote <name>` only a remote that
+repository's config names. Their configs are trusted by the owner. A git command without `-C` runs
+where the session is. `git status` refreshes `.git/index`, an internal write git makes on a read:
+accepted. A project-level copy of the agent in a folder Claude Code was not told to
 trust runs without the hook. In Codex the advisor's agent file sets `sandbox_mode = "read-only"`;
 whether Codex applies it to a spawned agent under a writable parent session is not verified, so
 that it writes nothing, MCP tools included, is still the rule.
@@ -95,13 +105,18 @@ Look for evidence in this order, and stop at the first source that answers clear
 1. **The code.** The repository files, `package.json` scripts, `Makefile`, the CI config
    (`.github/workflows/`, `.gitlab-ci.yml`), the repository's own `AGENTS.md`, `CLAUDE.md` and
    `CONTRIBUTING.md`. Branch naming: `git for-each-ref --sort=-committerdate refs/heads`; the
-   default branch: `git symbolic-ref --short refs/remotes/origin/HEAD`.
+   default branch: `git symbolic-ref --short refs/remotes/origin/HEAD`. `git -C` reaches only the
+   workspace and its sources: for a repository not attached yet, read its files instead
+   (`cat <repo>/.git/refs/remotes/origin/HEAD`, `ls <repo>/.git/refs/heads`,
+   `cat <repo>/.git/packed-refs`) and run the planned `wsg add … --dry-run`.
 2. **The owner's rules.** The workspace `AGENTS.md` (Owner rules, Out of scope, Invariants),
    `notes.md`, `.claude/wsg.json`, and the personal rules file `AGENTS.md` names.
 3. **wsg facts.** The section below; `wsg --help`; the dry runs.
 4. **Sibling workspaces.** The workspace's parent directory is `WS_ROOT`: other workspaces there may
-   have met the same ticket, spec or service. Search their knowledge files, not the repositories in
-   them: `grep -il '<ticket or term>' <WS_ROOT>/*/notes.md <WS_ROOT>/*/AGENTS.md <WS_ROOT>/*/.learnings/*.md`.
+   have met the same ticket, spec or service. Search their knowledge files:
+   `grep -ril '<ticket or term>' <WS_ROOT> --include=notes.md --include=AGENTS.md --include=LEARNINGS.md --include=ERRORS.md --exclude-dir=node_modules --exclude-dir=.git`
+   — no glob, which zsh refuses when it matches nothing. A hit inside a repository of a workspace
+   is that repository's file, not the workspace's knowledge: weigh it as code.
 5. **History.** `git log --oneline -- <file>`, `git log -S '<term>'`, `git blame -L <a>,<b> <file>`
    on the files the task touches: who changed it, why, in which ticket.
 6. **The tracker**, through whatever read tool is available: the ticket, its comments, its links

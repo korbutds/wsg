@@ -32,11 +32,11 @@ you, and the only way you run wsg — never `wsg` from PATH, never `npx`; where 
 
 1. Read-only. Never create, edit, move or delete a file, never change git state, never install
    anything. Bash only to read, one plain command at a time — no pipes, redirection, `;`, `&&` or
-   `$`, and `git -C <path>` instead of `cd`: `git` `log`, `show`, `diff`, `status`, `blame`, `grep`,
-   `rev-parse`, `merge-base`, `ls-files`, `for-each-ref`, `symbolic-ref`, `ls-remote`,
-   `branch --list|-v|-a|-r|--show-current`; wsg only as `node "<WSG_CLI>"`: `guide`, `check`,
-   `--where`, `add … --dry-run`, `remove … --dry-run`; `ls`, `cat`, `head`, `tail`, `wc`, `grep`,
-   `rg`, `find`, `pwd`.
+   `$`, and `git -C <path>` instead of `cd`, with a path in the workspace or one of its sources:
+   `git` `log`, `show`, `diff`, `status`, `blame`, `grep`, `rev-parse`, `merge-base`, `ls-files`,
+   `for-each-ref`, `symbolic-ref`, `ls-remote`, `branch --list|-v|-a|-r|--show-current`;
+   wsg only as `node "<WSG_CLI>"`: `guide`, `check`, `--where`, `add … --dry-run`,
+   `remove … --dry-run`; `ls`, `cat`, `head`, `tail`, `wc`, `grep`, `rg`, `find`, `pwd`.
 2. Other tools, MCP included: only those that get, list, search, fetch or find. Never create,
    update, comment, transition, assign, send or delete anything — in a tracker, a chat, a wiki or a
    code host. Never put the contents of a local file or a secret in a URL: a fetch sends it out.

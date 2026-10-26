@@ -2305,7 +2305,11 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       for (const x of ['**What the guard does not see.**', '(`updatedInput`)', 'shell snapshot', 'a hook that times out lets the call through',
         'never to put the contents of a local file or a secret in a URL', '`get_file` that saves the file']) assert.ok(lim.includes(x), x);
       for (const x of ['(`updatedInput`)', 'shell snapshot', 'a hook that times out lets the call through', 'WebFetch can send',
-        '`core.fsmonitor` on `git status`', '`core.sshCommand` on `git ls-remote`', 'the attached repositories are trusted']) assert.ok(flat(advisorGuide).includes(x), x);
+        '`core.fsmonitor` on `git status`', '`core.sshCommand` on `git ls-remote`', 'Any repository git runs in',
+        'the guard limits git to the workspace and its sources', 'Their configs are trusted by the owner',
+        '`git status` refreshes `.git/index`']) assert.ok(flat(advisorGuide).includes(x), x);
+      for (const x of ['the config of any repository git runs in', 'limits git to the workspace and its sources',
+        'only `.` or a remote the repository configures', 'refreshes `.git/index`']) assert.ok(lim.includes(x), x);
     });
     // The same agent for Codex: a TOML file, the instructions the same text as the Claude body.
     const codexTpl = fs.readFileSync(path.join(ROOT, 'templates', 'codex', 'agents', 'wsg-advisor.toml'), 'utf8');
@@ -2408,7 +2412,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       const readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8');
       const lim = readme.slice(readme.indexOf('## Limitations'), readme.indexOf('## Documentation'));
       for (const x of ['**A repository\'s own git config.**', '`core.fsmonitor`', '`diff.external`', '`core.sshCommand`', '`--ext-diff` and `--textconv`',
-        'it cannot override', 'The\n  repositories you attach are trusted']) assert.ok(lim.includes(x), x);
+        'it cannot override', 'the workspace and the repositories you attach are trusted']) assert.ok(lim.includes(x), x);
     });
     it('--uninstall removes the Codex agent too, and keeps agents/', () => {
       const codexHome = path.join(tmp, 'codex-home');
@@ -2464,9 +2468,9 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       const G = require(path.join(ROOT, 'lib', 'advisor-guard.js'));
       for (const c of ['git log', 'git show', 'git diff', 'git status', 'git blame', 'git grep', 'git rev-parse', 'git merge-base',
         'git ls-files', 'git for-each-ref', 'git symbolic-ref HEAD', 'git ls-remote', 'git branch --list', 'git branch -v', 'git branch -a',
-        'git branch -r', 'git branch --show-current', 'git -C /tmp log', ...['guide advisor', 'check', '--where', 'add x --dry-run',
+        'git branch -r', 'git branch --show-current', 'git -C . log', ...['guide advisor', 'check', '--where', 'add x --dry-run',
           'remove x --dry-run'].map((x) => `node "${cliPath}" ${x}`), 'ls', 'cat a', 'head a', 'tail a', 'wc a', 'grep a b', 'rg a',
-        'find .', 'pwd']) assert.ok(G.decide({ tool_name: 'Bash', tool_input: { command: c } }).allow, c);
+        'find .', 'pwd']) assert.ok(G.decide({ tool_name: 'Bash', tool_input: { command: c }, cwd: demo }).allow, c);
       // Up to the next item, whatever marks it: "2." in the agent, "-" in the guide.
       const rule = (text) => text.slice(text.indexOf('Bash only to read'), text.indexOf('Other tools, MCP included')).replace(/\s+/g, ' ').replace(/ (-|\d\.) $/, '');
       assert.ok(rule(agentTpl).includes('`git` `log`, `show`, `diff`, `status`, `blame`, `grep`, `rev-parse`, `merge-base`, `ls-files`, `for-each-ref`, `symbolic-ref`, `ls-remote`, `branch --list|-v|-a|-r|--show-current`'), rule(agentTpl));
