@@ -2270,7 +2270,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       assert.strictEqual(r.status, 0, r.stderr);
     });
     it('the agent and the guide keep the same hard rules', () => {
-      for (const s of ['SKIPPED tracker: no tool available', '"default, reversible"', '`--reset-to-base`', 'get, list, search, fetch or find', 'wsg only as `node "<WSG_CLI>"`', '`add … --dry-run`', '`remove … --dry-run`']) {
+      for (const s of ['SKIPPED tracker: no tool available', '"default, reversible"', 'it is not a default: put it under OWNER, the finding in `note:`.', '`--reset-to-base`', 'get, list, search, fetch or find', 'wsg only as `node "<WSG_CLI>"`', '`add … --dry-run`', '`remove … --dry-run`']) {
         assert.ok(agentTpl.includes(s), `agent: ${s}`);
         assert.ok(advisorGuide.includes(s), `guide: ${s}`);
       }

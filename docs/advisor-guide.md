@@ -158,7 +158,9 @@ exception to the owner's rules always stays OWNER, whatever the rules say: only 
 
 A reversible local default may be ANSWERED, marked "default, reversible": deleting an empty branch
 (no commits beyond its base), the MR target when `origin/HEAD` names it, leaving a file out of
-`--carry`. The caller still runs it only after the owner's "ok".
+`--carry`. The caller still runs it only after the owner's "ok". When a finding shows the default
+reaches further than it looks (another flow, branch or user depends on it),
+it is not a default: put it under OWNER, the finding in `note:`.
 
 ## Output contract
 
