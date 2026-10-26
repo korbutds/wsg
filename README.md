@@ -329,6 +329,14 @@ shows you the text before writing it.
   textconv drivers on `git diff`, `core.sshCommand` on `git ls-remote`. The guard blocks
   `--ext-diff` and `--textconv`; what the config turns on by itself, it cannot override. The
   repositories you attach are trusted, like any code you run.
+- **What the guard does not see.** It checks the command Claude Code is about to run, before the
+  shell: another `PreToolUse` hook that rewrites the input (`updatedInput`) runs after it with a
+  command it never saw, the aliases and functions of Claude Code's shell snapshot still apply to
+  the words it allowed, and a hook that times out lets the call through. WebFetch and WebSearch
+  pass: the advisor could send what it read out in a URL. Accepted; its rule is never to put the
+  contents of a local file or a secret in a URL. An MCP tool that reads can still have a side
+  effect its name does not show — a `get_file` that saves the file, a `read_thread` that marks it
+  read — and passes.
 - **What `wsg remove` doesn't see.** A tracked file marked `skip-worktree` or `assume-unchanged`
   and edited in the worktree looks clean to git: it is deleted with the worktree. If a removal
   fails after the worktree is gone, the rollback adds the worktree back on the same branch, but

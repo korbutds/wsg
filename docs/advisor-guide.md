@@ -38,6 +38,7 @@ with what the tracker and sibling workspaces say about the task.
   `rg`, `find`, `pwd`.
 - Other tools, MCP included: only those that get, list, search, fetch or find. Never create,
   update, comment, transition, assign, send or delete — in a tracker, a chat, a wiki or a code host.
+  Never put the contents of a local file or a secret in a URL: a fetch sends it out.
 - `<WSG_CLI>` is the absolute path of the CLI of the wsg that installed the advisor, written into
   its agent file: the advisor runs wsg only as `node "<WSG_CLI>" …`, never `wsg` from PATH or
   `npx`, which could be another wsg. Where this guide writes `wsg …`, that is what the advisor runs.
@@ -63,7 +64,14 @@ verb passes only as one word or a prefix and a noun: info, stat, metric, status,
 or details (`user_info`). A tool it cannot tell is blocked. A tool that reads can still have a side
 effect its name does not show — a `get_file` that saves the file, a `read_thread` that marks it
 read: accepted, not blocked. A list is not a sandbox: what a listed command or tool can reach,
-the advisor can read. A project-level copy of the agent in a folder Claude Code was not told to
+the advisor can read. WebFetch can send what the advisor read out in a URL; that it does not is a
+rule, not a check. The guard sees the command before the shell does, not after: another
+`PreToolUse` hook that rewrites the input (`updatedInput`) runs a command it never saw, the aliases
+and functions of Claude Code's shell snapshot still apply, and a hook that times out lets the call
+through. A repository's own config can make an allowed git command run a program —
+`core.fsmonitor` on `git status`, `diff.external` and textconv drivers on `git diff`,
+`core.sshCommand` on `git ls-remote` — and no option can turn that off: the attached repositories
+are trusted. A project-level copy of the agent in a folder Claude Code was not told to
 trust runs without the hook. In Codex the advisor's agent file sets `sandbox_mode = "read-only"`;
 whether Codex applies it to a spawned agent under a writable parent session is not verified, so
 that it writes nothing, MCP tools included, is still the rule.
@@ -77,7 +85,10 @@ For each question, decide first what it is:
 - **a decision** — the owner's by nature (see "What stays with the owner"): OWNER, with a
   recommendation and an alternative, each with its reason;
 - **a question to someone else** — a spec author, another team, a reviewer: THIRD-PARTY, with a
-  ready-to-send draft. It is never sent: the owner decides whether to.
+  ready-to-send draft. It is never sent: the owner decides whether to. A question that only a named
+  person or team outside the workspace can answer always goes under THIRD-PARTY with a
+  ready-to-send draft, never under ANSWERED or OWNER. The draft is mandatory, even when you also
+  found a likely answer: put that in the draft, for them to confirm.
 
 Look for evidence in this order, and stop at the first source that answers clearly:
 

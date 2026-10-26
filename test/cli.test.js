@@ -2273,6 +2273,29 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       }
       assert.doesNotMatch(agentTpl, /Push, MR, messages to people, `--reset-to-base`, scope changes and\s+exceptions to the owner's rules always go under OWNER/);
     });
+    // A question only someone outside can answer goes to them, with a draft: an eval had it
+    // under OWNER or without a draft in 2 runs of 5.
+    it('a question only a named person or team outside can answer: THIRD-PARTY with a mandatory draft', () => {
+      const flat = (x) => x.replace(/\s+/g, ' ');
+      const rule = 'only a named person or team outside the workspace can answer';
+      for (const [name, text] of [['agent', agentTpl], ['guide', advisorGuide]]) {
+        assert.ok(flat(text).includes(rule), name);
+        assert.match(flat(text), /always goes under THIRD-PARTY with a ready-to-send draft, never under ANSWERED or OWNER\. The draft is mandatory/, name);
+      }
+    });
+    it('the agent and the guide forbid local file contents and secrets in a URL', () => {
+      const flat = (x) => x.replace(/\s+/g, ' ');
+      for (const text of [agentTpl, advisorGuide]) assert.ok(flat(text).includes('Never put the contents of a local file or a secret in a URL'));
+    });
+    it('README and the guide say what the guard does not see', () => {
+      const flat = (x) => x.replace(/\s+/g, ' ');
+      const readmeText = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8');
+      const lim = flat(readmeText.slice(readmeText.indexOf('## Limitations'), readmeText.indexOf('## Documentation')));
+      for (const x of ['**What the guard does not see.**', '(`updatedInput`)', 'shell snapshot', 'a hook that times out lets the call through',
+        'never to put the contents of a local file or a secret in a URL', '`get_file` that saves the file']) assert.ok(lim.includes(x), x);
+      for (const x of ['(`updatedInput`)', 'shell snapshot', 'a hook that times out lets the call through', 'WebFetch can send',
+        '`core.fsmonitor` on `git status`', '`core.sshCommand` on `git ls-remote`', 'the attached repositories are trusted']) assert.ok(flat(advisorGuide).includes(x), x);
+    });
     // The same agent for Codex: a TOML file, the instructions the same text as the Claude body.
     const codexTpl = fs.readFileSync(path.join(ROOT, 'templates', 'codex', 'agents', 'wsg-advisor.toml'), 'utf8');
     const codexFile = path.join(home, '.codex', 'agents', 'wsg-advisor.toml');
