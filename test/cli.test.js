@@ -2362,9 +2362,14 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     it('the contract ends with FOR THE OWNER: a count line, then OWNER and THIRD-PARTY items only', () => {
       const flat = (x) => x.replace(/\s+/g, ' ');
       for (const text of [agentTpl, codexTpl, advisorGuide]) {
-        assert.match(text, /\nFOR THE OWNER\n <N> questions settled by checks \(details on request\)\n Q<n>: <question> \| recommend: <option \+ reason>\n Q<n>: to <role\/person> \| draft: <ready-to-send text, NOT sent>\n```/);
+        assert.match(text, /\nFOR THE OWNER\n <N> questions settled by checks \(details on request\)\n Q<n>: <question> \| recommend: <option \+ reason> \| note: <what else it affects>\n Q<n>: to <role\/person> \| draft: <ready-to-send text, NOT sent>\n```/);
         assert.ok(flat(text).includes('FOR THE OWNER is always there, last: a ready block the caller forwards to the owner verbatim.'));
         assert.ok(flat(text).includes('nothing else: no evidence, no ANSWERED item, no CONTEXT, PLAN REVIEW or SKIPPED line.'));
+        assert.match(text, /\n Q<n>: <question> \| why not checkable: <reason> \| recommend: <option \+ reason> \| note: <what else it affects> \| alt: <option>\n/);
+        assert.ok(flat(text).includes('The owner must be able to accept a recommendation from this block alone.'));
+        assert.ok(flat(text).includes('each with its question, recommendation and `note:` if it has one,'));
+        assert.ok(flat(text).includes('write it in `note:` on the same line, with its path or link.'));
+        assert.ok(flat(text).includes('there it is the one exception to "no evidence" and "no CONTEXT line".'));
       }
     });
     it('the agent descriptions tell the caller to show the FOR THE OWNER block as is', () => {
@@ -2856,6 +2861,7 @@ wait`;
         ['the block as is', `Checked with the advisor.\n\n${forOwner}`, true],
         ['an ANSWERED item as a Q line', `${forOwner}\n Q1: no — CI also runs lint, typecheck and test:integration`, false],
         ['an ANSWERED item\'s text without its number', `${forOwner}\nAlso: CI also runs lint, typecheck and test:integration.`, false],
+        ['an OWNER item with a note: and a path', `${forOwner}\n Q9: Attach the repo as a worktree? | recommend: yes | note: the page is also opened by the checkout flow — src/checkout.js:12`, true],
         ['a SKIPPED section', `${forOwner}\nSKIPPED\n tracker: no tool available`, false],
         ['an evidence field', `${forOwner}\n(evidence: ci.yml:8)`, false],
         ['the whole reply', advisorReply, false],

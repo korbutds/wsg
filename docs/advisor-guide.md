@@ -169,7 +169,7 @@ FOR THE OWNER:
 ANSWERED
  Q<n>: <answer> | evidence: <path:line | command -> result | ticket#comment> | confidence: high|med
 OWNER (needs a human decision)
- Q<n>: <question> | why not checkable: <reason> | recommend: <option + reason> | alt: <option>
+ Q<n>: <question> | why not checkable: <reason> | recommend: <option + reason> | note: <what else it affects> | alt: <option>
 THIRD-PARTY
  Q<n>: to <role/person> | draft: <ready-to-send text, NOT sent>
 CONTEXT (setup/recon only)
@@ -180,16 +180,21 @@ SKIPPED
  <what could not be checked and why>
 FOR THE OWNER
  <N> questions settled by checks (details on request)
- Q<n>: <question> | recommend: <option + reason>
+ Q<n>: <question> | recommend: <option + reason> | note: <what else it affects>
  Q<n>: to <role/person> | draft: <ready-to-send text, NOT sent>
 ```
 
 - Every question of the brief appears exactly once, under ANSWERED, OWNER or THIRD-PARTY.
 - FOR THE OWNER is always there, last: a ready block the caller forwards to the owner verbatim.
-  Its first line counts the ANSWERED items; then the OWNER items, each with its question and
-  recommendation, and the THIRD-PARTY items, each with its addressee and draft — nothing else: no
-  evidence, no ANSWERED item, no CONTEXT, PLAN REVIEW or SKIPPED line. With none of either, the
-  first line alone.
+  Its first line counts the ANSWERED items; then the OWNER items, each with its question,
+  recommendation and `note:` if it has one, and the THIRD-PARTY items, each with its addressee
+  and draft — nothing else: no evidence, no ANSWERED item, no CONTEXT, PLAN REVIEW or SKIPPED
+  line. With none of either, the first line alone.
+- The owner must be able to accept a recommendation from this block alone. When a finding of yours
+  (often a CONTEXT line) changes the consequences of an option — another flow, screen or user it
+  touches, a cost — write it in `note:` on the same line, with its path or link. Put it in OWNER and
+  repeat it in FOR THE OWNER: there it is the one exception to "no evidence" and "no CONTEXT line".
+  With no such finding, leave `note:` out.
 - Answer in the language of the brief; quote file names, commands and ids as they are.
 - Never write that the owner agreed to anything.
 
