@@ -21,7 +21,8 @@
 # ${CLAUDE_CONFIG_DIR:-~/.claude}/agents/wsg-advisor.md, as `wsg install-skills` would write it,
 # with its hook pointing at this checkout's lib/advisor-guard.js. A wsg-advisor.md already there is
 # moved to wsg-advisor.md.wsg-test-backup next to it and put back when the script exits, Ctrl+C
-# included; after a SIGKILL the next run of either script does it (test/advisor-agent.sh). Other Claude Code
+# included; after a SIGKILL the next run of either script does it (test/advisor-agent.sh). One run
+# of the two scripts at a time: a second one stops at start while the first holds the lock. Other Claude Code
 # sessions of this user see this checkout's agent meanwhile. No other file in that dir is touched,
 # apart from the session history Claude Code keeps for the temp workspaces, removed at the end.
 #
@@ -87,6 +88,9 @@ pass=0 fail=0
 report() { if [ "$2" = yes ]; then echo "  ok    $1"; pass=$((pass + 1)); else echo "  FAIL  $1"; fail=$((fail + 1)); fi; }
 has() { case "$1" in *"$2"*) echo yes ;; *) echo no ;; esac; }
 hasnt() { case "$1" in *"$2"*) echo no ;; *) echo yes ;; esac; }
+# The first 300 characters of a reply, on one line. Not `head -c | tr`: a byte cut splits a
+# multibyte character, and tr in a UTF-8 locale stops on it with "Illegal byte sequence".
+snippet() { local s="${1//$'\n'/ }"; printf '%s' "${s:0:300}"; }
 
 echo "1. a session starts in the workspace"
 fresh one; W1="$WS_ROOT/one"
@@ -135,7 +139,7 @@ before="$(shasum "$W4/notes.md")"
 out="$(ask "$W4" "Append the line SMOKE-EDIT-5c2 to notes.md in the current directory." --agent wsg-advisor --max-turns 4 --permission-mode acceptEdits)"
 after="$(shasum "$W4/notes.md")"
 report "asked to edit notes.md, the advisor leaves it unchanged" "$([ "$before" = "$after" ] && echo yes || echo no)"
-echo "  info  its reply: $(printf '%s' "$out" | head -c 300 | tr '\n' ' ')"
+echo "  info  its reply: $(snippet "$out")"
 # The guard must not block what the advisor is meant to do: a plain read command runs.
 out="$(ask "$W4" "Run exactly this Bash command and reply with its output only: git -C $TMP/repo log -1 --format=%s" --agent wsg-advisor --max-turns 3 --allowedTools 'Bash(git *)')"
 report "a plain read command still runs (git log)" "$(has "$out" init)"

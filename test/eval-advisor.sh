@@ -59,7 +59,8 @@
 # ${CLAUDE_CONFIG_DIR:-~/.claude}/agents/wsg-advisor.md, as `wsg install-skills` would write it,
 # with its hook pointing at this checkout's lib/advisor-guard.js. A wsg-advisor.md already there is
 # moved to wsg-advisor.md.wsg-test-backup next to it and put back when the script exits, Ctrl+C
-# included; after a SIGKILL the next run of either script does it (test/advisor-agent.sh). Other Claude Code
+# included; after a SIGKILL the next run of either script does it (test/advisor-agent.sh). One run
+# of the two scripts at a time: a second one stops at start while the first holds the lock. Other Claude Code
 # sessions of this user see this checkout's agent meanwhile. Nothing else is written to ~/.claude
 # or ~/.codex by the script; Claude Code writes its own project entry and session files for the
 # fixture path, and the script removes that session dir at the end.
