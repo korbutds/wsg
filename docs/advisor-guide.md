@@ -52,7 +52,8 @@ with what the tracker and sibling workspaces say about the task.
 
 Enforced in part, and it is not a sandbox. In Claude Code the advisor has no Write or Edit tool,
 nor Agent, Monitor or the worktree tools, and a hook in its agent file checks every tool call
-against a list before it runs. Read, Grep, Glob, WebFetch, WebSearch and ToolSearch pass; a Bash
+against a list before it runs. Read, Grep, Glob, WebFetch, WebSearch, ToolSearch and
+SubagentHandback (a backgrounded advisor's report) pass; a Bash
 command outside the list above is blocked, and so is any other tool (a subagent, a cron, a
 workflow) but MCP. WebFetch and WebSearch stay allowed on purpose, the owner's decision: the
 advisor needs data from the internet. The list goes down to the options: each command, and each git subcommand, has

@@ -312,7 +312,8 @@ shows you the text before writing it.
 - No command to delete a workspace — for now, three commands by hand.
 - **The advisor is not a sandbox.** In Claude Code it has no Write, Edit, NotebookEdit, Agent or
   Monitor tool, and a `PreToolUse` hook in its agent file runs `lib/advisor-guard.js` before every
-  tool call: Read, Grep, Glob, WebFetch, WebSearch and ToolSearch pass, a Bash command must be one
+  tool call: Read, Grep, Glob, WebFetch, WebSearch, ToolSearch and SubagentHandback (how a
+  backgrounded advisor hands back its report) pass, a Bash command must be one
   plain read command from a list (no pipes, redirection, `#` or `$`; only a quoted `--verify` or
   `--note` of a dry-run `add` may hold `&& | ; ( ) # < >`), an MCP tool's name must say
   it reads (get, list, search…) and not that it writes; anything else — another tool, a name it

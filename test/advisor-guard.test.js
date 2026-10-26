@@ -694,8 +694,9 @@ it('the workspace is the nearest directory with .claude/wsg.json, with its sourc
 
 console.log('\nthe advisor guard: anything else');
 // The hook matches every tool: only the ones that read pass, the rest block — a subagent could
-// write for it, Monitor runs a shell.
-for (const t of ['Read', 'Grep', 'Glob', 'WebFetch', 'WebSearch', 'ToolSearch', 'ListMcpResourcesTool', 'ReadMcpResourceTool']) {
+// write for it, Monitor runs a shell. SubagentHandback carries a backgrounded advisor's report back.
+for (const t of ['Read', 'Grep', 'Glob', 'WebFetch', 'WebSearch', 'ToolSearch', 'ListMcpResourcesTool', 'ReadMcpResourceTool',
+  'SubagentHandback']) {
   it(`allowed: ${t}`, () => assert.deepStrictEqual(G.decide({ tool_name: t, tool_input: {} }), { allow: true }));
 }
 for (const t of ['Write', 'Edit', 'NotebookEdit', 'Agent', 'Task', 'Monitor', 'EnterWorktree', 'ExitWorktree', 'Artifact', 'ArtifactData',
@@ -723,6 +724,7 @@ it('a blocked call: exit 2 with the reason on stderr', () => {
   assert.match(r.err, /^wsg-advisor is read-only: printf x >> notes\.md is not on its list/);
 });
 it('a tool outside the list: exit 2', () => assert.strictEqual(run(JSON.stringify({ tool_name: 'Agent', tool_input: { prompt: 'write x' } })).code, 2));
+it('SubagentHandback: exit 0', () => assert.strictEqual(run(JSON.stringify({ tool_name: 'SubagentHandback', tool_input: { message: 'FOR THE OWNER' } })).code, 0));
 it('Read: exit 0', () => assert.strictEqual(run(JSON.stringify({ tool_name: 'Read', tool_input: { file_path: '/tmp/x' } })).code, 0));
 it('a blocked MCP call: exit 2', () => assert.strictEqual(run(JSON.stringify(mcp('mcp__tracker__create_issue'))).code, 2));
 it('malformed JSON: exit 2', () => {
