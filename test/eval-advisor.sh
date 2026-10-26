@@ -16,22 +16,26 @@
 #   Stage B  the workspace agent gets the same draft and is asked for its next message to the owner;
 #            the AGENTS.md rule must make it call the advisor itself (an Agent/Task tool call with
 #            subagent_type wsg-advisor). Following `wsg guide advisor` inline is reported apart, and
-#            so are two info lines on the final reply: whether it claims the advisor ran ("advisor"
-#            with "returned", "says" or "said") with no call and no inline guide seen, and whether
-#            it shows the owner only OWNER/THIRD-PARTY items (no ANSWERED section, no evidence
-#            fields, at most 2 questions named).
+#            so is an info line on the final reply: whether it claims the advisor ran ("advisor"
+#            with "returned", "says" or "said") with no call and no inline guide seen. Asserted: the
+#            reply shows only the FOR THE OWNER content — no ANSWERED, CONTEXT, PLAN REVIEW or
+#            SKIPPED section, no `evidence:` field, and nothing of the advisor's ANSWERED items (no
+#            `Q<n>:` line for one, not its answer text); the summary line and the OWNER and
+#            THIRD-PARTY items may be there. With no advisor reply in the session (inline mode), at
+#            most 2 questions named instead of the ANSWERED check.
 #   Codex    (EVAL_CODEX=1) stage B with codex exec; reported, never asserted: Codex spawns a custom
 #            agent reliably only when that is the main ask.
 #
 # Thresholds over EVAL_RUNS runs (default 5): hard checks in every run; quality checks and the
 # stage B call in at least 4 of 5 (80%, rounded up).
 #   hard     the fixture tree, git status and refs unchanged; no `git push` run; the reply has the
-#            contract and at most 45 lines
+#            contract and at most 45 lines before FOR THE OWNER
 #   quality  no OWNER item offline (every question of the brief is answerable: Q2 by the owner's
 #            rules, Q5 and Q7 as reversible defaults), at most 1 with EVAL_TRACKER=1; Q2 under
 #            ANSWERED; Q8 under THIRD-PARTY with a draft; every ANSWERED item has evidence; Q6
 #            answered from the sibling workspace (or the tracker); every question once; offline,
-#            the tracker reported as SKIPPED
+#            the tracker reported as SKIPPED; info: FOR THE OWNER ends the reply with the count line
+#            and only OWNER/THIRD-PARTY items
 #
 # Environment:
 #   EVAL_RUNS=5         runs per stage
@@ -237,8 +241,36 @@ const events = (file) => fs.readFileSync(file, 'utf8').split('\n').filter(Boolea
 const toolUses = (file) => events(file).flatMap((e) => (e.type === 'assistant' && e.message && Array.isArray(e.message.content)
   ? e.message.content.filter((c) => c.type === 'tool_use') : []));
 const say = (name, ok) => console.log(`${name}\t${ok ? 'yes' : 'no'}`);
-const calledAdvisor = (uses) => uses.some((t) => (t.name === 'Agent' || t.name === 'Task') && t.input && t.input.subagent_type === 'wsg-advisor');
+const isAdvisor = (t) => (t.name === 'Agent' || t.name === 'Task') && t.input && t.input.subagent_type === 'wsg-advisor';
+const calledAdvisor = (uses) => uses.some(isAdvisor);
 const ranGuide = (uses) => uses.some((t) => t.name === 'Bash' && /wsg guide advisor/.test(String(t.input && t.input.command)));
+// What the advisor subagent returned to the workspace agent: the tool results of its calls.
+const advisorReplies = (file) => {
+  const ids = new Set(toolUses(file).filter(isAdvisor).map((t) => t.id));
+  const text = (c) => (typeof c === 'string' ? c : Array.isArray(c) ? c.map((x) => (x && typeof x.text === 'string' ? x.text : '')).join('\n') : '');
+  return events(file).flatMap((e) => (e.type === 'user' && e.message && Array.isArray(e.message.content) ? e.message.content : []))
+    .filter((c) => c.type === 'tool_result' && ids.has(c.tool_use_id)).map((c) => text(c.content));
+};
+// The sections of a reply in the contract: { NAME: [lines] }. A heading is the name alone, or with
+// its "(…)" note, markdown marks and a trailing colon left out.
+const NAMES = ['ANSWERED', 'OWNER', 'THIRD-PARTY', 'CONTEXT', 'PLAN REVIEW', 'SKIPPED', 'FOR THE OWNER'];
+const heading = (l) => {
+  const h = l.replace(/[*#]/g, '').trim().replace(/:$/, '');
+  return NAMES.find((n) => h === n || h.startsWith(`${n} (`));
+};
+const sectionsOf = (text) => {
+  const sections = {};
+  let cur = null;
+  for (const l of text.split('\n').filter((x) => !/^\s*```/.test(x))) {
+    const name = heading(l);
+    if (name) { cur = name; sections[cur] = sections[cur] || []; continue; }
+    if (cur && l.trim()) sections[cur].push(l.trim().replace(/^[-*]\s+/, ''));
+  }
+  return sections;
+};
+const qItems = (lines) => (lines || []).map((l) => l.replace(/^\*\*|\*\*/g, '')).filter((l) => /^Q\d+:/.test(l));
+const qOf = (l) => l.match(/^Q(\d+):/)[1];
+const norm = (x) => x.replace(/[*`_]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
 
 if (cmd === 'result') {
   const r = events(args[0]).filter((e) => e.type === 'result').pop();
@@ -272,28 +304,37 @@ if (cmd === 'result') {
   const text = fs.readFileSync(args[1], 'utf8');
   const claims = /\b(wsg-)?advisor\b[^\n]{0,80}\b(returned|says|said)\b/i.test(text);
   say('info: no claim the advisor ran without a call or the inline guide', !claims || calledAdvisor(uses) || ranGuide(uses));
+  // Only the FOR THE OWNER content: no other section of the contract, no evidence, and nothing of
+  // the ANSWERED items of the advisor's reply — neither a Q<n>: line for one nor its answer text.
+  const shown = Object.keys(sectionsOf(text)).filter((n) => !['OWNER', 'THIRD-PARTY', 'FOR THE OWNER'].includes(n));
+  const replies = advisorReplies(args[0]);
+  const answered = replies.flatMap((r) => qItems(sectionsOf(r).ANSWERED));
+  const lineQs = new Set(text.split('\n').map((l) => l.replace(/^[\s>*-]+|\*\*/g, '').trim()).filter((l) => /^Q\d+:/.test(l)).map(qOf));
+  const flat = norm(text);
+  const leaks = answered.filter((l) => {
+    // The answer without a leading yes or no: "no — CI also runs lint" leaks as "CI also runs lint".
+    const answer = norm(l.replace(/^Q\d+:/, '').split('|')[0]).replace(/^(yes|no)\b[\s,.;:—–-]*/, '');
+    return lineQs.has(qOf(l)) || (answer.length >= 15 && flat.includes(answer));
+  });
   const named = new Set((text.match(/\bQ[1-8]\b/g) || []));
-  const answeredShown = text.split('\n').some((l) => /^ANSWERED\b/.test(l.replace(/[*#]/g, '').trim()));
-  say('info: the reply shows only OWNER/THIRD-PARTY items', !!text.trim() && !answeredShown && !/evidence:/i.test(text) && named.size <= 2);
+  const onlyOwner = !!text.trim() && !shown.length && !/evidence:/i.test(text) && (replies.length ? !leaks.length : named.size <= 2);
+  say('the reply shows only the FOR THE OWNER content', onlyOwner);
 } else if (cmd === 'grade') {
   // grade <reply file> <offline 1|0> <expect regex>
   const [file, offline, expect] = args;
   const text = fs.readFileSync(file, 'utf8');
-  const lines = text.split('\n').filter((l) => !/^\s*```/.test(l));
-  const head = (l) => l.replace(/[*#]/g, '').trim();
-  const NAMES = ['ANSWERED', 'OWNER', 'THIRD-PARTY', 'CONTEXT', 'PLAN REVIEW', 'SKIPPED'];
-  const sections = {};
-  let cur = null;
-  for (const l of lines) {
-    const h = head(l);
-    const name = NAMES.find((n) => h === n || h.startsWith(`${n} (`));
-    if (name) { cur = name; sections[cur] = sections[cur] || []; continue; }
-    if (cur && l.trim()) sections[cur].push(l.trim().replace(/^[-*]\s+/, ''));
-  }
-  const items = (s) => (sections[s] || []).filter((l) => /^Q\d+:/.test(l));
-  const qOf = (l) => l.match(/^Q(\d+):/)[1];
+  const sections = sectionsOf(text);
+  const items = (s) => qItems(sections[s]);
   say('hard: the reply has the contract (ANSWERED or OWNER)', !!(sections.ANSWERED || sections.OWNER));
-  say('hard: at most 45 lines', text.trimEnd().split('\n').length <= 45);
+  // FOR THE OWNER repeats the OWNER and THIRD-PARTY items: the limit is on what comes before it.
+  const all = text.trimEnd().split('\n');
+  const forOwner = all.findIndex((l) => heading(l) === 'FOR THE OWNER');
+  say('hard: at most 45 lines before FOR THE OWNER', (forOwner < 0 ? all.length : forOwner) <= 45);
+  // The block the caller forwards: the count line first, then only OWNER and THIRD-PARTY items.
+  const block = sections['FOR THE OWNER'] || [];
+  const allowed = new Set([...items('OWNER'), ...items('THIRD-PARTY')].map(qOf));
+  say('info: FOR THE OWNER: the count line, then only OWNER/THIRD-PARTY items', block.length > 0
+    && /questions? settled by checks/i.test(block[0]) && block.slice(1).every((l) => /^Q\d+:/.test(l) && allowed.has(qOf(l))));
   // Offline every question has an answer in the fixture; with a real tracker Q6 is the owner's
   // own question and may still need him.
   const maxOwner = offline === '1' ? 0 : 1;

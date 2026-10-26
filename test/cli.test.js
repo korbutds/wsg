@@ -667,7 +667,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     });
     it('it is imperative about when, and about what the owner is shown', () => {
       assert.match(block[1], /^Before you show the owner questions, decisions or a plan with open points, and before you run `wsg add`\/`wsg remove`, send them to the wsg-advisor subagent;/);
-      assert.match(block[1], /Show the owner only the OWNER and THIRD-PARTY items and one summary line, never the advisor's full reply/);
+      assert.match(block[1], /Show the owner the advisor's FOR THE OWNER block as is, and nothing else from its reply/);
     });
     it('the six owner-rules lines are not part of it', () => assert.doesNotMatch(block[1], /git push|Co-Authored-By/));
     // A workspace from wsg 0.2.0: no block. wsg add brings it in, with news rather than a repair warning.
@@ -720,10 +720,10 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       assert.ok(cblock, ctext);
       assert.match(ctext, /^## Claude Code only\n\n<!-- wsg:advisor -->\n[^\n]+\n<!-- \/wsg:advisor -->\n\n- Task memory/m);
     });
-    it('one line: call the subagent with a self-contained brief, show only OWNER and THIRD-PARTY plus a summary line', () => {
+    it('one line: call the subagent with a self-contained brief, show only its FOR THE OWNER block', () => {
       assert.strictEqual(cblock[1].split('\n').length, 1);
       assert.doesNotMatch(cblock[1], /@/);
-      assert.strictEqual(cblock[1], 'Before you show the owner questions or decisions, call the wsg-advisor subagent (Agent tool) with a self-contained brief; show the owner only its OWNER and THIRD-PARTY items plus one summary line.');
+      assert.strictEqual(cblock[1], 'Before you show the owner questions or decisions, call the wsg-advisor subagent (Agent tool) with a self-contained brief; show the owner its FOR THE OWNER block as is, and nothing else from its reply.');
     });
     it('a process workspace has it in CLAUDE.md too', () => assert.match(fs.readFileSync(path.join(wsP, 'CLAUDE.md'), 'utf8'), /^<!-- wsg:advisor -->\n[^\n]+\n<!-- \/wsg:advisor -->$/m));
     // An older CLAUDE.md: no block. wsg add brings it in, under the heading, as news.
@@ -1955,11 +1955,11 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     it('the guide says what --dry-run needs', () => assert.match(guide, /--dry-run[\s\S]{0,300}--branch/));
     // The advisor at each point where the setup would otherwise put questions to the owner.
     const part = (from, to) => guide.slice(guide.indexOf(from), to ? guide.indexOf(to) : undefined);
-    it('ground rules: questions go through the advisor, the owner sees only OWNER and THIRD-PARTY', () => {
+    it('ground rules: questions go through the advisor, the owner sees only its FOR THE OWNER block', () => {
       const p = part('## Ground rules', '## 1.');
       assert.match(p, /`wsg-advisor`/);
       assert.match(p, /`wsg guide advisor`/);
-      assert.match(p, /OWNER and THIRD-PARTY/);
+      assert.match(p, /Show the owner the advisor's FOR THE OWNER block as is, and nothing else from its reply/);
       assert.match(p, /Never say the advisor ran when it did not/);
     });
     it('section 1 starts with context from the advisor and checks the draft', () => assert.match(part('## 1.', 'Go through these in order'), /advisor[\s\S]*draft/));
@@ -2239,7 +2239,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       assert.strictEqual(contract(agentTpl), contract(advisorGuide));
     });
     it('the contract has every section', () => {
-      for (const sct of ['ANSWERED', 'OWNER (needs a human decision)', 'THIRD-PARTY', 'CONTEXT (setup/recon only)', 'PLAN REVIEW (only if commands were passed)', 'SKIPPED']) {
+      for (const sct of ['ANSWERED', 'OWNER (needs a human decision)', 'THIRD-PARTY', 'CONTEXT (setup/recon only)', 'PLAN REVIEW (only if commands were passed)', 'SKIPPED', 'FOR THE OWNER']) {
         assert.match(contract(agentTpl), new RegExp(`^${sct.replace(/[()/]/g, '\\$&')}$`, 'm'), sct);
       }
     });
@@ -2358,6 +2358,20 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       assert.strictEqual(m[1], body);
     });
     it('Codex memories are off for it', () => assert.match(codexTpl, /^\[features\]\nmemories = false$/m));
+    // The owner's view: a ready block at the end of the reply, forwarded as is, and the callers told so.
+    it('the contract ends with FOR THE OWNER: a count line, then OWNER and THIRD-PARTY items only', () => {
+      const flat = (x) => x.replace(/\s+/g, ' ');
+      for (const text of [agentTpl, codexTpl, advisorGuide]) {
+        assert.match(text, /\nFOR THE OWNER\n <N> questions settled by checks \(details on request\)\n Q<n>: <question> \| recommend: <option \+ reason>\n Q<n>: to <role\/person> \| draft: <ready-to-send text, NOT sent>\n```/);
+        assert.ok(flat(text).includes('FOR THE OWNER is always there, last: a ready block the caller forwards to the owner verbatim.'));
+        assert.ok(flat(text).includes('nothing else: no evidence, no ANSWERED item, no CONTEXT, PLAN REVIEW or SKIPPED line.'));
+      }
+    });
+    it('the agent descriptions tell the caller to show the FOR THE OWNER block as is', () => {
+      const rule = 'Show the owner its FOR THE OWNER block as is, and nothing else from its reply.';
+      assert.ok(front(agentTpl).description.includes(rule));
+      assert.ok(/^description = "[^"\n]*"$/m.exec(codexTpl)[0].includes(rule));
+    });
     // A minimal TOML reader for the subset the template uses: comments, [tables], key = "basic",
     // key = '''multi-line literal''', true/false. Anything else is an error, so a broken file fails.
     const parseToml = (text) => {
@@ -2442,7 +2456,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     it('the advisor guide covers the evidence order, the caller and the inline mode', () => {
       for (const s of ['## The brief', '## Read-only', '## Procedure', '## What stays with the owner', '## Output contract',
         '## Plan review', '## wsg facts', '## For the caller', '## Inline mode', 'WS_ROOT', '**not** linked', 'git log', 'carryCandidates',
-        'settings.local.json', 'not a sandbox', 'N answered by checks, K context items found']) assert.ok(advisorGuide.includes(s), s);
+        'settings.local.json', 'not a sandbox', 'Show the owner the advisor\'s FOR THE OWNER block as is, and nothing\n  else from its reply']) assert.ok(advisorGuide.includes(s), s);
     });
     it('the evidence order is code, owner rules, wsg facts, siblings, history, tracker', () => {
       const order = ['**The code.**', '**The owner\'s rules.**', '**wsg facts.**', '**Sibling workspaces.**', '**History.**', '**The tracker**'];
@@ -2565,7 +2579,10 @@ if [ -n "$sig" ]; then
   [ -n "$top" ] && kill -"$sig" "$top"
   sleep 1
 fi
-echo '{"type":"result","result":"none"}'
+# FAKE_STREAM_A / FAKE_STREAM_B: the stream-json a call with / without --agent prints.
+s=$FAKE_STREAM_B
+for x in "$@"; do [ "$x" = --agent ] && s=$FAKE_STREAM_A; done
+if [ -n "$s" ]; then cat "$s"; else echo '{"type":"result","result":"none"}'; fi
 `, { mode: 0o755 });
     // A fake codex: keeps the agent the eval's Codex stage loads.
     fs.writeFileSync(path.join(sbin, 'codex'), '#!/bin/sh\ncp "$CODEX_HOME/agents/wsg-advisor.toml" "$FAKE_LOG.codex"\necho "{}"\n', { mode: 0o755 });
@@ -2783,6 +2800,61 @@ wait`;
       assert.doesNotMatch(onlyB.all, /  (ok|FAIL)  A: /);
       assert.match(onlyB.all, / B: called the wsg-advisor subagent/);
     });
+    // The grader on made-up sessions: the advisor's reply with FOR THE OWNER at the end, and what
+    // the workspace agent then shows the owner.
+    {
+      const advisorReply = [
+        'ANSWERED',
+        ' Q1: no — CI also runs lint, typecheck and test:integration | evidence: .github/workflows/ci.yml:8 | confidence: high',
+        ' Q2: no — the owner opens MRs himself | evidence: owner-rules.md:3 | confidence: high',
+        ' Q3: no — --reference refuses a git repository, use --link | evidence: wsg guide advisor, wsg facts | confidence: high',
+        ' Q4: no — the workspace root\'s .claude/ governs | evidence: wsg guide advisor, wsg facts | confidence: high',
+        ' Q5: yes, default, reversible — it has no commits of its own | evidence: git for-each-ref -> same commit as main | confidence: high',
+        ' Q6: at most 3 attempts, 10 minutes apart | evidence: billing-retry/notes.md:5 (SPEC-17) | confidence: high',
+        ' Q7: target main, start from origin/main, default, reversible | evidence: git symbolic-ref -> origin/main | confidence: high',
+        'THIRD-PARTY',
+        ' Q8: to the spec author | draft: Does "notify the customer" mean email only, or a push too?',
+        'PLAN REVIEW',
+        ' wsg add shared-lib --reference — PROBLEM: --reference refuses a git repository -> wsg add shared-lib --link',
+        'SKIPPED',
+        ' tracker: no tool available',
+        'FOR THE OWNER',
+        ' 7 questions settled by checks (details on request)',
+        ' Q8: to the spec author | draft: Does "notify the customer" mean email only, or a push too?',
+      ].join('\n');
+      const forOwner = advisorReply.slice(advisorReply.indexOf('FOR THE OWNER'));
+      const stream = (name, final, withAdvisor = true) => {
+        const f = path.join(sx, `${name}.jsonl`);
+        const ev = withAdvisor ? [
+          { type: 'assistant', message: { content: [{ type: 'tool_use', id: 't1', name: 'Agent', input: { subagent_type: 'wsg-advisor', prompt: 'brief' } }] } },
+          { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't1', content: [{ type: 'text', text: advisorReply }] }] } },
+        ] : [];
+        fs.writeFileSync(f, `${[...ev, { type: 'result', result: final }].map((e) => JSON.stringify(e)).join('\n')}\n`);
+        return f;
+      };
+      const line = (r, name) => (r.all.split('\n').find((l) => l.includes(name)) || '').trim();
+      const a = runScript('eval-advisor.sh', { EVAL_RUNS: '1', EVAL_STAGES: 'A', FAKE_STREAM_A: stream('a', advisorReply, false) });
+      it('eval: the grader takes a reply that ends with FOR THE OWNER', () => {
+        for (const n of ['hard: the reply has the contract', 'hard: at most 45 lines before FOR THE OWNER', 'every question placed exactly once', 'Q8 under THIRD-PARTY with a draft']) {
+          assert.match(line(a, n), /^ok /, `${n}\n${a.all}`);
+        }
+        assert.match(line(a, 'FOR THE OWNER: the count line'), /^info .* — 1\/1$/, a.all);
+      });
+      const cases = [
+        ['the block as is', `Checked with the advisor.\n\n${forOwner}`, true],
+        ['an ANSWERED item as a Q line', `${forOwner}\n Q1: no — CI also runs lint, typecheck and test:integration`, false],
+        ['an ANSWERED item\'s text without its number', `${forOwner}\nAlso: CI also runs lint, typecheck and test:integration.`, false],
+        ['a SKIPPED section', `${forOwner}\nSKIPPED\n tracker: no tool available`, false],
+        ['an evidence field', `${forOwner}\n(evidence: ci.yml:8)`, false],
+        ['the whole reply', advisorReply, false],
+      ];
+      for (const [what, final, ok] of cases) {
+        const r = runScript('eval-advisor.sh', { EVAL_RUNS: '1', EVAL_STAGES: 'B', FAKE_STREAM_B: stream('b', final) });
+        it(`eval B, asserted: ${what} ${ok ? 'passes' : 'fails'} "the reply shows only the FOR THE OWNER content"`, () => {
+          assert.match(line(r, 'the reply shows only the FOR THE OWNER content'), ok ? /^ok +B: .* — 1\/1 \(need 1\)$/ : /^FAIL +B: .* — 0\/1 \(need 1\)$/, r.all);
+        });
+      }
+    }
     const onlyA = runScript('eval-advisor.sh', { EVAL_RUNS: '1', EVAL_STAGES: 'a' });
     it('eval: EVAL_STAGES=A runs stage A alone', () => assert.deepStrictEqual(calls(onlyA), ['call --agent'], onlyA.all));
     // The advisor runs wsg as node "<bin/cli.js>": the allowlist of the run lets that through.

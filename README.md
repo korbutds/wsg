@@ -230,7 +230,7 @@ those questions first, so that only real decisions reach you.
 
 - **How it is called.** A one-line rule in a generated block of `AGENTS.md` (`<!-- wsg:advisor -->`):
   questions and decisions for the owner, and planned `wsg add`/`wsg remove` commands, go through the
-  advisor first, and the owner sees only its OWNER and THIRD-PARTY items and one summary line.
+  advisor first, and the owner sees only its FOR THE OWNER block, as is.
   `CLAUDE.md` has a block of the same name telling Claude Code to call the subagent with a
   self-contained brief, and the agent's description starts with "MUST BE USED before…". The setup
   guide does the same at each step. `wsg refresh` adds the blocks to a workspace made by an earlier
@@ -239,8 +239,9 @@ those questions first, so that only real decisions reach you.
   (`AGENTS.md`, `notes.md`, `.claude/wsg.json`), facts about wsg, sibling workspaces under
   `WS_ROOT`, git history, the tracker if a read tool for it is configured — and replies in a fixed
   contract: ANSWERED (each with its evidence), OWNER, THIRD-PARTY (a draft, never sent), CONTEXT,
-  PLAN REVIEW, SKIPPED. The workspace agent shows you only the OWNER and THIRD-PARTY items and one
-  summary line.
+  PLAN REVIEW, SKIPPED, and last FOR THE OWNER: how many questions checks settled, then only the
+  OWNER items with a recommendation and the THIRD-PARTY items with a draft. The workspace agent
+  shows you that block as is, and nothing else from the reply.
 - **What it never does.** Push, MR, messages to people, `--reset-to-base`, scope changes and
   exceptions to your rules always stay yours; an advisor answer is never your consent. When your
   rules already say no to one of them ("the owner opens MRs"), it answers the agent with that rule

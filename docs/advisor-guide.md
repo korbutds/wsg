@@ -147,7 +147,8 @@ A reversible local default may be ANSWERED, marked "default, reversible": deleti
 
 ## Output contract
 
-The reply is these sections in this order, empty ones left out, about 40 lines at most:
+The reply is these sections in this order, empty ones left out, about 40 lines at most before
+FOR THE OWNER:
 
 ```
 ANSWERED
@@ -162,9 +163,18 @@ PLAN REVIEW (only if commands were passed)
  <command> — OK | PROBLEM: <why> -> <fixed command>
 SKIPPED
  <what could not be checked and why>
+FOR THE OWNER
+ <N> questions settled by checks (details on request)
+ Q<n>: <question> | recommend: <option + reason>
+ Q<n>: to <role/person> | draft: <ready-to-send text, NOT sent>
 ```
 
 - Every question of the brief appears exactly once, under ANSWERED, OWNER or THIRD-PARTY.
+- FOR THE OWNER is always there, last: a ready block the caller forwards to the owner verbatim.
+  Its first line counts the ANSWERED items; then the OWNER items, each with its question and
+  recommendation, and the THIRD-PARTY items, each with its addressee and draft — nothing else: no
+  evidence, no ANSWERED item, no CONTEXT, PLAN REVIEW or SKIPPED line. With none of either, the
+  first line alone.
 - Answer in the language of the brief; quote file names, commands and ids as they are.
 - Never write that the owner agreed to anything.
 
@@ -224,8 +234,9 @@ For each `wsg add` or `wsg remove` command in the brief:
   show the owner any list of questions or decisions; before you run a planned `wsg add` or
   `wsg remove` (PLAN REVIEW). In Claude Code, call the `wsg-advisor` subagent; in Codex, spawn the
   `wsg-advisor` agent if you can.
-- **What the owner sees.** Only the OWNER and THIRD-PARTY items, plus one line for the rest:
-  "N answered by checks, K context items found". Never the whole reply.
+- **What the owner sees.** Show the owner the advisor's FOR THE OWNER block as is, and nothing
+  else from its reply: not the ANSWERED items, not CONTEXT, PLAN REVIEW or SKIPPED. Ask for an
+  answer's details only when the owner does.
 - **What an answer is not.** ANSWERED is not consent: anything that changes files or git state
   still waits for the owner's "ok". For a high-stakes item, open its evidence yourself before you
   rely on it. A THIRD-PARTY draft is shown to the owner, never sent.
@@ -238,5 +249,4 @@ For each `wsg add` or `wsg remove` command in the brief:
 For an agent without subagents, or when the advisor is missing or does not start: do the same
 yourself, as a separate step before you write to the owner. Write the brief for yourself, go
 through the procedure under the same read-only rules, produce the reply in the output contract, and
-show the owner only the OWNER and THIRD-PARTY items with the summary line, marked
-"checked inline, no advisor".
+show the owner only its FOR THE OWNER block, marked "checked inline, no advisor".

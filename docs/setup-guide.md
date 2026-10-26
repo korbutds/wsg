@@ -17,8 +17,8 @@ worktrees, branch backups, copying files outside git, settings — and checks th
 - Run `wsg` from the workspace root. If `wsg` is not on PATH, use `npx @korbutds/wsg`.
 - Before you show the owner any list of questions or decisions, run it through the `wsg-advisor`
   subagent — or, if your tool has none or it does not start, through `wsg guide advisor` followed
-  inline. Show the owner only its OWNER and THIRD-PARTY items, plus one line for the rest ("N
-  answered by checks, K context items found"). Never say the advisor ran when it did not.
+  inline. Show the owner the advisor's FOR THE OWNER block as is, and nothing else from its reply.
+  Never say the advisor ran when it did not.
 
 ## 1. The task
 
