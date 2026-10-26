@@ -672,6 +672,20 @@ it('the guide\'s sibling search passes the guard as written', () => {
   assert.deepStrictEqual(G.decide(bash(m[1].replace('<ticket or term>', 'SPEC-42').replace('<WS_ROOT>', '/tmp/ws'))), { allow: true });
   assert.doesNotMatch(guide, /<WS_ROOT>\/\*\//, 'no glob over <WS_ROOT>/*/: zsh refuses one that matches nothing');
 });
+it('the guide\'s git commands run with --no-optional-locks --no-lazy-fetch and pass the guard', () => {
+  const guide = fs.readFileSync(path.join(ROOT, 'docs', 'advisor-guide.md'), 'utf8');
+  const cmds = [...guide.matchAll(/`(git [^`]+)`/g)].map((m) => m[1]).filter((c) => /^git (--no-optional-locks --no-lazy-fetch |log |blame |for-each-ref |symbolic-ref )/.test(c));
+  assert.ok(cmds.length >= 5, cmds.join('\n'));
+  for (const c of cmds) {
+    assert.match(c, /^git --no-optional-locks --no-lazy-fetch /, c);
+    const run = c.replace('<file>', 'src/a.js').replace('<a>,<b>', '1,5').replace('<term>', 'retry');
+    if (run.includes('…')) continue;
+    assert.deepStrictEqual(G.decide(bash(run)), { allow: true }, run);
+  }
+  for (const f of [path.join('claude', 'agents', 'wsg-advisor.md'), path.join('codex', 'agents', 'wsg-advisor.toml')]) {
+    assert.ok(fs.readFileSync(path.join(ROOT, 'templates', f), 'utf8').includes('Every git command as `git --no-optional-locks --no-lazy-fetch …`'), f);
+  }
+});
 it('the workspace is the nearest directory with .claude/wsg.json, with its sources', () => {
   assert.deepStrictEqual(G.workspaceOf(path.join(REPO, 'src')), null);
   assert.deepStrictEqual(G.workspaceOf(path.join(WS, 'a dir')), { ws: WS, roots: [WS, REPO] });

@@ -35,7 +35,10 @@ with what the tracker and sibling workspaces say about the task.
   `rev-parse`, `merge-base`, `ls-files`, `for-each-ref`, `symbolic-ref`, `ls-remote`,
   `branch --list|-v|-a|-r|--show-current`; wsg only as `node "<WSG_CLI>"`: `guide`, `check`,
   `--where`, `add … --dry-run`, `remove … --dry-run`; `ls`, `cat`, `head`, `tail`, `wc`, `grep`,
-  `rg`, `find`, `pwd`.
+  `rg`, `find`, `pwd`. Every git command as `git --no-optional-locks --no-lazy-fetch …`
+  (`-C <path>` after them): without the first, `status` and `diff` refresh `.git/index` and can
+  collide with the caller's `index.lock`; without the second, a read in a partial clone fetches
+  from the network.
 - Other tools, MCP included: only those that get, list, search, fetch or find. Never create,
   update, comment, transition, assign, send or delete — in a tracker, a chat, a wiki or a code host.
   Never put the contents of a local file or a secret in a URL: a fetch sends it out.
@@ -51,7 +54,8 @@ Enforced in part, and it is not a sandbox. In Claude Code the advisor has no Wri
 nor Agent, Monitor or the worktree tools, and a hook in its agent file checks every tool call
 against a list before it runs. Read, Grep, Glob, WebFetch, WebSearch and ToolSearch pass; a Bash
 command outside the list above is blocked, and so is any other tool (a subagent, a cron, a
-workflow) but MCP. The list goes down to the options: each command, and each git subcommand, has
+workflow) but MCP. WebFetch and WebSearch stay allowed on purpose, the owner's decision: the
+advisor needs data from the internet. The list goes down to the options: each command, and each git subcommand, has
 a table of the options it takes, and one not in it blocks — `git diff --ext-diff`,
 `git show --textconv`, `rg --pre`, `rg --hostname-bin`, `find -exec`, an abbreviated long option,
 a URL, a path or a name that is not a configured remote for `git ls-remote`, a control character
@@ -60,13 +64,17 @@ a quoted `--verify` or `--note` value of `node "<WSG_CLI>" add`; `$`, a backtick
 block everywhere. An MCP tool passes when its name
 says it only reads: the words after `mcp__<server>__` (split on `_`, `-`, `__` and camelCase) hold
 no write verb (create, update, set, replace, mark, toggle, archive, resolve a thread, run, export,
-download, make… and `and`, `or`), no query language (sql, graphql, cypher, sparql, any word ending
-in `ql` such as yql, kql or promql — read-only in practice, blocked all the same — a bare `query`,
-`query_raw`), and the first word is a read verb (get, list, search, fetch, find, read, query, view,
-describe, show, lookup, count, filter) — or the second, after a prefix: a word of the server's
-name or a generic one (sh, wiki, chat, vcs, db, ci, cloud, user, key, repo, docs…), as in
-`wiki_get_page`; a name with no verb passes only as one word or a prefix and a noun: info, stat,
-metric, status, overview, history or details (`user_info`). A tool it cannot tell is blocked. A tool that reads can still have a side
+download, make, del, pop, ack, claim… and `and`, `or`), no query language (sql, graphql, cypher,
+sparql, spl, splunk, any word ending in `ql` such as yql, kql, jql, cql or promql — read-only in
+practice, blocked all the same, a search tool that takes JQL or CQL included, on purpose), and
+`query` only as the read verb followed by what is queried (`query_docs`): a bare `query`,
+`query_raw`, `query_database`, `query_table` and `read_query` run a query the caller wrote; and
+the first word is a read verb (get, list, search, fetch, find, read, query, view, describe, show,
+lookup, count, filter) — or the second, after a prefix: a word of the server's name or a generic
+one (sh, wiki, chat, vcs, db, ci, cloud, user, key, repo, docs…), as in `wiki_get_page`; or `git`
+and a git command that only reads (`git_log`, `git_diff_staged`), never `git_fetch`; a name with no
+verb passes only as one word or a prefix and a noun: info, stat, metric, status, overview, history,
+details or tree (`user_info`, `directory_tree`). A tool it cannot tell is blocked. A tool that reads can still have a side
 effect its name does not show — a `get_file` that saves the file, a `read_thread` that marks it
 read: accepted, not blocked. A list is not a sandbox: what a listed command or tool can reach,
 the advisor can read. WebFetch can send what the advisor read out in a URL; that it does not is a
@@ -81,7 +89,8 @@ directory), the `path` of a source in `.claude/wsg.json` or a directory under on
 and not a bare repository committed inside a source; `git ls-remote <name>` only a remote that
 repository's config names. Their configs are trusted by the owner. A git command without `-C` runs
 where the session is. `git status` refreshes `.git/index`, an internal write git makes on a read:
-accepted. A project-level copy of the agent in a folder Claude Code was not told to
+accepted, and the `git --no-optional-locks` the advisor is told to run turns it off.
+A project-level copy of the agent in a folder Claude Code was not told to
 trust runs without the hook. In Codex the advisor's agent file sets `sandbox_mode = "read-only"`;
 whether Codex applies it to a spawned agent under a writable parent session is not verified, so
 that it writes nothing, MCP tools included, is still the rule.
@@ -104,8 +113,11 @@ Look for evidence in this order, and stop at the first source that answers clear
 
 1. **The code.** The repository files, `package.json` scripts, `Makefile`, the CI config
    (`.github/workflows/`, `.gitlab-ci.yml`), the repository's own `AGENTS.md`, `CLAUDE.md` and
-   `CONTRIBUTING.md`. Branch naming: `git for-each-ref --sort=-committerdate refs/heads`; the
-   default branch: `git symbolic-ref --short refs/remotes/origin/HEAD`. `git -C` reaches only the
+   `CONTRIBUTING.md`. Branch naming:
+   `git --no-optional-locks --no-lazy-fetch for-each-ref --sort=-committerdate refs/heads`; the
+   default branch:
+   `git --no-optional-locks --no-lazy-fetch symbolic-ref --short refs/remotes/origin/HEAD`.
+   `git -C` reaches only the
    workspace and its sources: for a repository not attached yet, read its files instead
    (`cat <repo>/.git/refs/remotes/origin/HEAD`, `ls <repo>/.git/refs/heads`,
    `cat <repo>/.git/packed-refs`) and run the planned `wsg add … --dry-run`.
@@ -117,8 +129,10 @@ Look for evidence in this order, and stop at the first source that answers clear
    `grep -ril '<ticket or term>' <WS_ROOT> --include=notes.md --include=AGENTS.md --include=LEARNINGS.md --include=ERRORS.md --exclude-dir=node_modules --exclude-dir=.git`
    — no glob, which zsh refuses when it matches nothing. A hit inside a repository of a workspace
    is that repository's file, not the workspace's knowledge: weigh it as code.
-5. **History.** `git log --oneline -- <file>`, `git log -S '<term>'`, `git blame -L <a>,<b> <file>`
-   on the files the task touches: who changed it, why, in which ticket.
+5. **History.** `git --no-optional-locks --no-lazy-fetch log --oneline -- <file>`,
+   `git --no-optional-locks --no-lazy-fetch log -S '<term>'`,
+   `git --no-optional-locks --no-lazy-fetch blame -L <a>,<b> <file>` on the files the task
+   touches: who changed it, why, in which ticket.
 6. **The tracker**, through whatever read tool is available: the ticket, its comments, its links
    and its epic. Then search by the spec URL or id, the ticket key, and two or three key terms —
    and read the hits that are **not** linked to the ticket: the answer often sits in a comment on a

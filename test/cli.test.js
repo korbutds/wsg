@@ -2455,7 +2455,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     it('every wsg command and flag in the agent file exists', () => assert.deepStrictEqual(flagProblems(agentTpl), []));
     it('the advisor guide covers the evidence order, the caller and the inline mode', () => {
       for (const s of ['## The brief', '## Read-only', '## Procedure', '## What stays with the owner', '## Output contract',
-        '## Plan review', '## wsg facts', '## For the caller', '## Inline mode', 'WS_ROOT', '**not** linked', 'git log', 'carryCandidates',
+        '## Plan review', '## wsg facts', '## For the caller', '## Inline mode', 'WS_ROOT', '**not** linked', 'log --oneline -- <file>', 'carryCandidates',
         'settings.local.json', 'not a sandbox', 'Show the owner the advisor\'s FOR THE OWNER block as is, and nothing\n  else from its reply']) assert.ok(advisorGuide.includes(s), s);
     });
     it('the evidence order is code, owner rules, wsg facts, siblings, history, tracker', () => {

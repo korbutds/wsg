@@ -37,6 +37,9 @@ you, and the only way you run wsg — never `wsg` from PATH, never `npx`; where 
    `for-each-ref`, `symbolic-ref`, `ls-remote`, `branch --list|-v|-a|-r|--show-current`;
    wsg only as `node "<WSG_CLI>"`: `guide`, `check`, `--where`, `add … --dry-run`,
    `remove … --dry-run`; `ls`, `cat`, `head`, `tail`, `wc`, `grep`, `rg`, `find`, `pwd`.
+   Every git command as `git --no-optional-locks --no-lazy-fetch …` (`-C <path>` after them):
+   without the first, `status` and `diff` refresh `.git/index` and can collide with the caller's
+   `index.lock`; without the second, a read in a partial clone fetches from the network.
 2. Other tools, MCP included: only those that get, list, search, fetch or find. Never create,
    update, comment, transition, assign, send or delete anything — in a tracker, a chat, a wiki or a
    code host. Never put the contents of a local file or a secret in a URL: a fetch sends it out.
