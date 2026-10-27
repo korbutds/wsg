@@ -126,12 +126,16 @@ the owner asks.
 
 ## 3. Team (optional)
 
-Offer it only once at least one git source is attached, and only as an option: most tasks need no
-team. `wsg team fullstack` adds six roles — `pm`, `designer`, `frontend`, `backend`, `devops`,
-`reviewer` — as cards in `team/`, a workflow in `team/workflow.md`, a Claude Code subagent per role
-and, in a task workspace, `/wsg-feature` to run the workflow. The cost is context in every session: with
-all six roles, 1274 B (about 300 tokens) as `wsg check` counts it — the adapters' descriptions and
-the team block of `AGENTS.md` — plus the one-line description of `/wsg-feature`.
+Once at least one git source is attached, always put the team to the owner as a question — never
+skip this step silently. It is an option, and most tasks need no team. Your recommendation is the
+proposal of step 1: for a team, go through steps 1–3 below and ask once; for "no team, because
+<reason>" (a small change, one file, a fix the lead does alone), put that to the owner through the
+advisor, like any other question, then go on to section 4. `wsg team fullstack` adds six roles —
+`pm`, `designer`, `frontend`, `backend`, `devops`, `reviewer` — as cards in `team/`, a workflow in
+`team/workflow.md`, a Claude Code subagent per role and, in a task workspace, `/wsg-feature` to run
+the workflow. The cost is context in every session: with all six roles, 1274 B (about 300 tokens) as
+`wsg check` counts it — the adapters' descriptions and the team block of `AGENTS.md` — plus the
+one-line description of `/wsg-feature`.
 
 1. **Propose** the roles that make sense for this task, leaving the rest out with `--without`:
    `--without devops,designer` for a backend-only change; `designer` only when the task has an
@@ -165,17 +169,21 @@ Roles left out are not remembered: a later `wsg team fullstack` without `--witho
 1. Run `wsg check`. Fix every FAIL; a WARN you can't fix, explain to the owner.
    "setup not finished" disappears once a git repository is attached and `## Why` is filled in.
 2. Update `notes.md` → "Current context": remove "Setup not finished", write one line on where the
-   work stands and what the first session should do (usually: reconnaissance, no edits).
+   work stands and what the first step of the work is (usually: reconnaissance, no edits).
 3. Show the owner a short summary: the task in one line, the sources with their branches, the
-   verification command, the team if one was added (its roles, and that `/wsg-feature` runs it),
-   anything left open — including the OWNER items the advisor left unresolved.
+   verification command, the team — added (its roles, and that `/wsg-feature` runs it), declined,
+   or not recommended and why — and anything left open, including the OWNER items the advisor left
+   unresolved.
 4. Tell them whether to restart the session. It is needed when `wsg add` printed
    "settings.json changed: restart…" — linked directories become readable only in a new session —
    and always after `wsg team` added roles: they are usable only in a new session.
    Worktrees are inside the workspace and need no restart. To restart: `ws <slug>` (if the `ws`
    function is set up) or `cd <workspace> && claude`.
-5. Say how to start the work: in this workspace, from its root, beginning with the reconnaissance
-   step from `notes.md`.
+5. When no restart is needed, end with one direct question: start the work now? Name the first
+   step — the reconnaissance from `notes.md`, then a plan for the implementation (with a team:
+   `/wsg-feature`). The work goes on in this session: don't call it "the next session". When a
+   restart is needed, don't offer to start here: say what to run first in the new session. Either
+   way, then wait for the owner's answer.
 
 ## Running setup again
 

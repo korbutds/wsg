@@ -1,8 +1,10 @@
 # wsg — Workspace Generation
 
 Task workspaces for coding agents: Claude Code, Codex, and anything else that reads `AGENTS.md`.
-One directory per task — with its own session history, its own agent memory, rules that load
-on demand, and the repositories inside as `git worktree`s.
+One directory per task — the repositories inside as `git worktree`s, the task's rules and
+definition of done, a command that verifies the work, its own session history and agent memory.
+On top of that, if you want it, a team of roles for Claude Code: pm, designer, frontend, backend,
+devops and reviewer, with the main session as the tech lead.
 
 ## Why
 
@@ -22,6 +24,13 @@ of scope" — have nowhere to go. The agent doesn't know about them and dutifull
 breaking the work.
 
 `wsg` makes the **task**, not the repository, the session's working directory.
+
+**Set up, not trained.** wsg trains no model. An "agent trained for this repository" is usually
+an ordinary model with the right context around it: instructions, tools, memory and a way
+to check the result. wsg builds that context for each task, with the deterministic parts
+(worktrees, rules, settings, validation) in the CLI and the conversation in the agent. What is
+worth keeping carries over: a role's practices, added with `/wsg-teach`, go into that role's
+user-level memory and apply wherever the role runs (Claude Code, with auto memory on).
 
 ## Installation
 

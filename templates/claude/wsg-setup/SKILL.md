@@ -13,3 +13,6 @@ already set up, fill only the gaps. Without `wsg` on PATH, use `npx @korbutds/ws
 
 Questions and decisions for the owner go through the `wsg-advisor` subagent first (without it,
 `wsg guide advisor` followed inline), as the guide says.
+
+Don't skip a step of the guide silently, the team step included, and end by asking the owner
+whether to start the work now.

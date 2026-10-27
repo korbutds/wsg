@@ -1971,11 +1971,11 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     it('section 5 carries unresolved OWNER items into the summary', () => assert.match(part('## 5.', '## Running setup again'), /OWNER items the advisor left/));
     it('the team step: after a git source, optional, a dry run and the advisor before the "ok"', () => {
       const p = part('## 3. Team', '## 4.');
-      assert.match(p, /only once at least one git source is attached/);
+      assert.match(p, /Once at least one git source is attached/);
       assert.ok(p.indexOf('--dry-run') < p.indexOf('**Wait for "ok"**') && p.indexOf('advisor') < p.indexOf('**Wait for "ok"**'));
       for (const r of require(path.join(ROOT, 'lib', 'team.js')).ROLES) assert.ok(p.includes(`\`${r}\``), r);
       assert.match(p.replace(/\s+/g, ' '), /usable only after a restart/);
-      assert.match(part('## 5.', '## Running setup again'), /the team if one was added/);
+      assert.match(part('## 5.', '## Running setup again').replace(/\s+/g, ' '), /the team — added \(its roles/);
       assert.match(part('## 5.', '## Running setup again').replace(/\s+/g, ' '), /always after `wsg team` added roles: they are usable only in a new session/);
     });
     it('the team step gives the real always-on cost: the adapters\' descriptions and the AGENTS.md block', () => {
@@ -1989,6 +1989,26 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       const p = part('## 3. Team', '## 4.').replace(/\s+/g, ' ');
       assert.match(p, /run `wsg team fullstack --without <roles> --dry-run` yourself/);
       assert.match(p, /Before you show the proposal, send it to the advisor for a plan review together with that JSON — the advisor reviews it, it cannot run `wsg team` itself/);
+    });
+    // A live run skipped the team step without a word and stopped after setup without asking to start.
+    it('the team step is always put to the owner, with a recommendation either way', () => {
+      const p = part('## 3. Team (optional)', '## 4. Editing').replace(/\s+/g, ' ');
+      assert.ok(p.includes('always put the team to the owner as a question — never skip this step silently'), p);
+      assert.ok(p.includes('"no team, because <reason>"'), p);
+      assert.ok(p.includes('for a team, go through steps 1–3 below and ask once'), p);
+      assert.ok(p.includes('through the advisor, like any other question'), p);
+    });
+    it('finishing ends with one question: start the work now, in this session when no restart is needed', () => {
+      const p = part('## 5. Finishing', '## Running setup again').replace(/\s+/g, ' ');
+      assert.ok(p.includes('When no restart is needed, end with one direct question: start the work now?'), p);
+      assert.ok(p.includes("When a restart is needed, don't offer to start here: say what to run first in the new session."), p);
+      assert.ok(p.includes("Either way, then wait for the owner's answer."), p);
+      assert.ok(p.includes('The work goes on in this session: don\'t call it "the next session"'), p);
+      assert.ok(p.includes('declined, or not recommended and why'), p);
+    });
+    it('the wsg-setup skill: no step skipped silently, and it ends by asking to start', () => {
+      const text = fs.readFileSync(path.join(ROOT, 'templates', 'claude', 'wsg-setup', 'SKILL.md'), 'utf8').replace(/\s+/g, ' ');
+      assert.ok(text.includes("Don't skip a step of the guide silently, the team step included, and end by asking the owner whether to start the work now."));
     });
     it('the wsg-setup skill points to the advisor', () => {
       const text = fs.readFileSync(path.join(ROOT, 'templates', 'claude', 'wsg-setup', 'SKILL.md'), 'utf8');
