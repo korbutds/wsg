@@ -108,10 +108,11 @@ The commands the agent (or you) call:
 | `wsg add <path> [--worktree\|--link\|--reference] [--branch B] [--base REF] [--reset-to-base] [--target T] [--verify CMD] [--carry all\|none\|a,b] [--[no-]clone-node-modules] [--note TEXT] [--dry-run] [--ws SLUG\|PATH]` | Attaches one source to the workspace you are in. An existing branch is attached as it is, one only on origin is continued; `--reset-to-base` starts it over (with a `backup/…`). Every check happens before anything is touched; a failure rolls back only this source. `--dry-run` prints the plan as JSON. |
 | `wsg remove <name> [--delete-ignored] [--dry-run] [--ws SLUG\|PATH]` | Detaches a source: a clean worktree (its branch is kept) or the symlink, its rule, and its generated parts. Ignored files that exist nowhere else (made in the worktree, or carried in and changed since) are deleted with the worktree only after `--delete-ignored`; a `node_modules` wsg cloned is not checked, so changes inside it are not protected. The way to fix a source attached with the wrong flags: remove, then add again. |
 | `wsg refresh [--dry-run] [--ws SLUG\|PATH]` | Brings the generated parts up to date with this wsg — e.g. adds the advisor block to a workspace made by 0.2 — and touches nothing else. `--dry-run` prints the files it would change as JSON. |
+| `wsg team <preset> [--without ROLE,...] [--dry-run] [--ws SLUG\|PATH]` | Adds a team of roles (preset `fullstack`): cards and a workflow in `team/`, a Claude Code subagent per role, `/wsg-feature`. Only adds; an existing file is kept. `--dry-run` prints what it would create, keep and update as JSON. See [Team](#team). |
 | `wsg check [path\|slug]` | Checks a workspace against the conventions. |
 | `wsg promote [slug\|path] --skill NAME` | Turns a task into a process. |
-| `wsg guide [setup\|advisor]` | Prints a guide an agent follows: the setup dialogue, or the advisor's procedure. |
-| `wsg install-skills [--uninstall]` | Installs the `wsg-new` skill into `~/.claude/skills` and the `wsg-advisor` agent into `~/.claude/agents` (or under `$CLAUDE_CONFIG_DIR`) and, when Codex is there, `~/.codex/agents` (or `$CODEX_HOME/agents`). Overwrites only files it wrote — they carry a marker — and refuses others with exit 1. `--uninstall` removes only its own files. |
+| `wsg guide [setup\|advisor\|teach]` | Prints a guide an agent follows: the setup dialogue, the advisor's procedure, or teaching a team role a practice. |
+| `wsg install-skills [--uninstall]` | Installs the `wsg-new` and `wsg-teach` skills into `~/.claude/skills` and the `wsg-advisor` agent into `~/.claude/agents` (or under `$CLAUDE_CONFIG_DIR`) and, when Codex is there, `~/.codex/agents` (or `$CODEX_HOME/agents`). Overwrites only files it wrote — they carry a marker — and refuses others with exit 1. `--uninstall` removes only its own files. |
 
 Exit codes: `0` ok, `1` the check found errors or a step failed and was rolled back, `2` invalid
 input — nothing was changed, `130` cancelled with Ctrl+C (or a closed terminal, `kill`) and rolled
@@ -266,6 +267,48 @@ is asked; told to by `AGENTS.md`, it often doesn't. So the rule lets the workspa
 calls from a Codex subagent under `codex exec` can be blocked by the approval policy; the advisor
 then reports the tracker as skipped. Any other agent that reads `AGENTS.md` follows the guide inline.
 
+## Team
+
+`wsg team fullstack` gives the workspace agent a team of roles for a feature. The setup dialogue
+offers it once a repository is attached; it is optional.
+
+```
+team/<role>.md                    role cards: the portable source of truth, read by any agent
+team/workflow.md                  stages 0–6 and who writes which file
+AGENTS.md  <!-- wsg:team -->      three lines pointing to both
+.claude/agents/wsg-<role>.md      Claude Code adapter: "read team/<role>.md and follow it"
+.claude/skills/wsg-feature/       /wsg-feature runs the workflow (task workspaces; a process
+                                  skill gets one pointer line instead)
+```
+
+| Role | What it does | Tools |
+|---|---|---|
+| `pm` | Requirements: scope, checkable acceptance criteria, open questions | read-only, hands back `requirements.md` |
+| `designer` | Only with an agreed design: `design.md` (screens, states, copy, tokens, gaps), then a Design section of the review | read-only, hands back |
+| `frontend` | UI: markup, styles, responsive layout, accessibility, loading, empty and error states | all but Agent |
+| `backend` | Server side; agrees the API contract in `plan.md` before code | all but Agent |
+| `devops` | Only infrastructure work `plan.md` lists; deploy, secrets, DNS, destructive operations only with your permission | all but Agent |
+| `reviewer` | Findings for `review.md`; never fixes | read-only, hands back |
+
+- **The lead.** The main session is the tech lead and the only one who talks to you. It hands out
+  the stages, saves what the read-only roles return, and shows you each stage where the workflow
+  asks for your "ok".
+- **Handback.** `pm`, `designer` and `reviewer` have no Write, Edit or NotebookEdit: each returns
+  its document as its final message, and the lead saves it verbatim to `requirements.md`,
+  `design.md` or `review.md`.
+- **Role memory and `/wsg-teach`.** Every adapter has `memory: user`: a role's memory is
+  `~/.claude/agent-memory/wsg-<role>/` (under `$CLAUDE_CONFIG_DIR` when set), shared by all your
+  workspaces. `/wsg-teach <role> <url|text>` (installed by `wsg install-skills`, follows
+  `wsg guide teach`) writes a general practice there after your "ok"; repository rules and task
+  facts go elsewhere. `wsg check` reports memory over the limit and index lines without a file.
+- **Re-running.** `wsg team` only adds: a missing role's files are written, an existing file is
+  kept as it is, never overwritten or removed; only the generated blocks (the roles list in
+  `team/workflow.md`, the team block in `AGENTS.md`, and in a process workspace the pointer block
+  of its skill) are rendered again. `--without` is not remembered: the next run without it adds
+  the roles left out. Removing a role is by hand.
+- **Codex** and other agents read the cards through `AGENTS.md` and play a role from its card;
+  there are no Codex role agents yet.
+
 ## Settings
 
 `~/.config/wsg/config`:
@@ -357,6 +400,23 @@ shows you the text before writing it.
   for a restart whenever it changes `settings.json`. `test/smoke-claude.sh` (manual, needs claude)
   checks this and the setup launch against a real Claude Code.
 - `paths` in rules are untested for a repository attached via a symlink pointing outside.
+- **A team shares one working copy.** Roles work in the same worktree, with no per-role worktree:
+  two roles editing one file overwrite each other. The file ownership table in `plan.md` is the
+  only protection, so parallel work needs rows that do not overlap.
+- **A team is prompts, not isolation.** The read-only roles have no file tools, but they keep
+  Bash, so they can still write through it, and the MCP tools of the session (a design tool's
+  write tools, say) — not writing is their card's rule. Symlinked sources and
+  `additionalDirectories` are not read-only either.
+- **Parallel stages can stall.** A background subagent's permission prompt waits for you, so a
+  parallel stage stops until it is answered. Per the Claude Code docs, a subagent's
+  `permissionMode` is ignored when the session runs in bypassPermissions, acceptEdits or auto mode.
+- **Inherited agents and skills.** Claude Code also loads agents and skills from `.claude/` in
+  directories above the workspace. The closest file of a name wins, so a role deleted here is
+  taken from above when a directory there has one.
+- **Role memory** is per user, shared by every workspace, and needs Claude Code's auto memory
+  turned on.
+- **A new `.claude/agents/` or `.claude/skills/`** may need a session restart before the roles
+  are seen; `wsg team` says when.
 - **Code fences wsg reads.** Blockquotes are not parsed: a code fence inside `>` is treated as
   text. A fence left unclosed inside a list item stays open to the end of the file (CommonMark
   closes it with the item), so close fences explicitly.
@@ -367,6 +427,7 @@ shows you the text before writing it.
 - [docs/workflow.md](docs/workflow.md) — workflow, troubleshooting common failures
 - [docs/setup-guide.md](docs/setup-guide.md) — the setup dialogue the agent follows
 - [docs/advisor-guide.md](docs/advisor-guide.md) — what the advisor checks, in what order, and how it answers
+- [docs/teach-guide.md](docs/teach-guide.md) — how `/wsg-teach` writes a practice into a role's memory
 
 Sources for the limits: [Claude Code memory](https://code.claude.com/docs/en/memory),
 [worktrees](https://code.claude.com/docs/en/worktrees),

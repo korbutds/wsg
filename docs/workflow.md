@@ -97,6 +97,15 @@ the task's settings, rules and memory won't load, and history goes to the reposi
 The plan is written twice: before implementation and before review. Between unrelated tasks, `/clear`.
 Research that reads many files goes through subagents so it doesn't clog the main context.
 
+## Team
+
+For a feature, `wsg team fullstack` adds roles (`pm`, `designer`, `frontend`, `backend`, `devops`,
+`reviewer`) and their workflow. The stages, the handback of the read-only roles and who writes which
+file are in the workspace's own `team/workflow.md`; in Claude Code, `/wsg-feature <what to build>`
+runs it with the main session as the tech lead. A process workspace gets no `/wsg-feature`: its own
+skill gets a pointer line to `team/workflow.md`, and a run of the procedure uses the roles. The cycle above still holds: the team only splits
+its steps between roles. See the README's Team section for what a team does not isolate.
+
 ## Git
 
 Branches and commits follow the repository's conventions; agree on new names in advance.

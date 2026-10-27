@@ -124,7 +124,30 @@ designs): `wsg add <dir> --reference --note "<one line: what is in it>"`; the no
 repositories, never instead of them. Edits there have no history, so change files there only when
 the owner asks.
 
-## 3. Editing AGENTS.md and the other files
+## 3. Team (optional)
+
+Offer it only once at least one git source is attached, and only as an option: most tasks need no
+team. `wsg team fullstack` adds six roles — `pm`, `designer`, `frontend`, `backend`, `devops`,
+`reviewer` — as cards in `team/`, a workflow in `team/workflow.md`, a Claude Code subagent per role
+and, in a task workspace, `/wsg-feature` to run the workflow. The cost is context in every session: with
+all six roles, 1274 B (about 300 tokens) as `wsg check` counts it — the adapters' descriptions and
+the team block of `AGENTS.md` — plus the one-line description of `/wsg-feature`.
+
+1. **Propose** the roles that make sense for this task, leaving the rest out with `--without`:
+   `--without devops,designer` for a backend-only change; `designer` only when the task has an
+   agreed design; `devops` only when the work touches infrastructure.
+2. **Dry run:** run `wsg team fullstack --without <roles> --dry-run` yourself: it prints what it
+   would create, keep and update as JSON, touching nothing. Before you show the proposal, send it
+   to the advisor for a plan review together with that JSON — the advisor reviews it, it cannot
+   run `wsg team` itself. Fix what it flags; what it leaves to the owner goes into the proposal.
+3. **Wait for "ok"**, then run it without `--dry-run`. It only adds: an existing file is kept as it
+   is. If it prints a restart hint, `.claude/agents/` or `.claude/skills/` is new and the roles are
+   seen only in a new session.
+
+Roles left out are not remembered: a later `wsg team fullstack` without `--without` adds them.
+`/wsg-setup` can run this step again at any time.
+
+## 4. Editing AGENTS.md and the other files
 
 - Replace every `FILL IN` in the sections you covered. Don't leave empty headings: remove a
   section the owner said doesn't apply (except Why, Definition of done and Verification).
@@ -137,17 +160,18 @@ the owner asks.
 - `.claude/settings.json` may get your own keys; `wsg add` keeps them and only manages
   `permissions.additionalDirectories`.
 
-## 4. Finishing
+## 5. Finishing
 
 1. Run `wsg check`. Fix every FAIL; a WARN you can't fix, explain to the owner.
    "setup not finished" disappears once a git repository is attached and `## Why` is filled in.
 2. Update `notes.md` → "Current context": remove "Setup not finished", write one line on where the
    work stands and what the first session should do (usually: reconnaissance, no edits).
 3. Show the owner a short summary: the task in one line, the sources with their branches, the
-   verification command, anything left open — including the OWNER items the advisor left
-   unresolved.
+   verification command, the team if one was added (its roles, and that `/wsg-feature` runs it),
+   anything left open — including the OWNER items the advisor left unresolved.
 4. Tell them whether to restart the session. It is needed when `wsg add` printed
-   "settings.json changed: restart…" — linked directories become readable only in a new session.
+   "settings.json changed: restart…" — linked directories become readable only in a new session —
+   or `wsg team` printed its restart hint.
    Worktrees are inside the workspace and need no restart. To restart: `ws <slug>` (if the `ws`
    function is set up) or `cd <workspace> && claude`.
 5. Say how to start the work: in this workspace, from its root, beginning with the reconnaissance
@@ -156,7 +180,7 @@ the owner asks.
 ## Running setup again
 
 `/wsg-setup` (or this guide) can be run again at any time. Then don't start over: read the files,
-fill only what is still `FILL IN`, attach the sources the owner adds, and finish with section 4.
+fill only what is still `FILL IN`, attach the sources the owner adds, and finish with section 5.
 
 A workspace made by an earlier wsg may lack a generated part this version writes (`wsg check`
 says so): `wsg refresh --dry-run` lists the files it would change, `wsg refresh` updates only the

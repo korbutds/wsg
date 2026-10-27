@@ -1946,9 +1946,9 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     const spans = codeSpans(guide);
     const problems = flagProblems(guide);
     it('every wsg command and flag in the guide exists', () => assert.deepStrictEqual(problems, []));
-    it('the guide names every flag of add and remove', () => {
+    it('the guide names every flag of add and remove, and --without of team', () => {
       const named = new Set(spans.flatMap((x) => x.match(/--[a-z][a-z-]*/g) || []));
-      const missing = [...Object.keys(FLAGS.add), ...Object.keys(FLAGS.remove)].filter((f) => !named.has(f));
+      const missing = [...Object.keys(FLAGS.add), ...Object.keys(FLAGS.remove), '--without'].filter((f) => !named.has(f));
       assert.deepStrictEqual(missing, []);
     });
     it('the guide says how to record a ticket after wsg new', () => assert.match(guide, /`Ticket:` line[\s\S]{0,200}WSG_TRACKER_URL/));
@@ -1968,7 +1968,27 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       assert.ok(p.indexOf('plan review') > 0 && p.indexOf('plan review') < p.indexOf('**Wait for "ok"**'));
       assert.match(p, /plan review[\s\S]{0,200}wsg remove <name> --dry-run/);
     });
-    it('section 4 carries unresolved OWNER items into the summary', () => assert.match(part('## 4.', '## Running setup again'), /OWNER items the advisor left/));
+    it('section 5 carries unresolved OWNER items into the summary', () => assert.match(part('## 5.', '## Running setup again'), /OWNER items the advisor left/));
+    it('the team step: after a git source, optional, a dry run and the advisor before the "ok"', () => {
+      const p = part('## 3. Team', '## 4.');
+      assert.match(p, /only once at least one git source is attached/);
+      assert.ok(p.indexOf('--dry-run') < p.indexOf('**Wait for "ok"**') && p.indexOf('advisor') < p.indexOf('**Wait for "ok"**'));
+      for (const r of require(path.join(ROOT, 'lib', 'team.js')).ROLES) assert.ok(p.includes(`\`${r}\``), r);
+      assert.match(p, /restart hint/);
+      assert.match(part('## 5.', '## Running setup again'), /the team if one was added/);
+    });
+    it('the team step gives the real always-on cost: the adapters\' descriptions and the AGENTS.md block', () => {
+      const T = require(path.join(ROOT, 'lib', 'team.js'));
+      const Tpl = require(path.join(ROOT, 'lib', 'templates.js'));
+      const n = T.ROLES.reduce((a, r) => a + Buffer.byteLength(T.ROLE_META[r].description), 0)
+        + Buffer.byteLength(`${Tpl.marked('team', Tpl.teamLines({ kind: 'task', team: { roles: T.ROLES } }))}\n`);
+      assert.ok(part('## 3. Team', '## 4.').replace(/\s+/g, ' ').includes(`all six roles, ${n} B (about ${Math.round(n / 4 / 50) * 50} tokens)`), String(n));
+    });
+    it('the team step runs the dry run itself and sends the advisor the JSON before showing the owner', () => {
+      const p = part('## 3. Team', '## 4.').replace(/\s+/g, ' ');
+      assert.match(p, /run `wsg team fullstack --without <roles> --dry-run` yourself/);
+      assert.match(p, /Before you show the proposal, send it to the advisor for a plan review together with that JSON — the advisor reviews it, it cannot run `wsg team` itself/);
+    });
     it('the wsg-setup skill points to the advisor', () => {
       const text = fs.readFileSync(path.join(ROOT, 'templates', 'claude', 'wsg-setup', 'SKILL.md'), 'utf8');
       assert.match(text, /`wsg-advisor` subagent first \(without it,\n`wsg guide advisor` followed inline\)/);
@@ -2558,7 +2578,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     });
     it('README says CLAUDE.md has an advisor block too', () => assert.match(readme, /`CLAUDE\.md` has a block of the same name telling Claude Code to call the subagent/));
     it('README names refresh, install-skills --uninstall and the advisor guide', () => {
-      for (const x of ['`wsg refresh [--dry-run] [--ws SLUG\\|PATH]`', '`wsg install-skills [--uninstall]`', '`wsg guide [setup\\|advisor]`', '## Advisor', '**Codex.**', 'docs/advisor-guide.md']) assert.ok(readme.includes(x), x);
+      for (const x of ['`wsg refresh [--dry-run] [--ws SLUG\\|PATH]`', '`wsg install-skills [--uninstall]`', '`wsg guide [setup\\|advisor\\|teach]`', '## Advisor', '**Codex.**', 'docs/advisor-guide.md']) assert.ok(readme.includes(x), x);
     });
     it('the version is 0.3.0, in package.json and its lock', () => {
       assert.strictEqual(wsg(['--version']).out, '0.3.0\n');

@@ -68,9 +68,10 @@ each one is attached (`path`, `name`, `mode`, `branch`, `base`, `target`, `verif
 
 | Where | What |
 |---|---|
-| `AGENTS.md` | `<!-- wsg:advisor -->` — the one-line rule that questions for the owner go through the advisor first; `<!-- wsg:layout -->` — the source lines of Layout; `<!-- wsg:verification -->` — the Verification bullets |
+| `AGENTS.md` | `<!-- wsg:advisor -->` — the one-line rule that questions for the owner go through the advisor first; `<!-- wsg:team -->` — three lines pointing to the team, only after `wsg team`; `<!-- wsg:layout -->` — the source lines of Layout; `<!-- wsg:verification -->` — the Verification bullets |
 | `CLAUDE.md` | `<!-- wsg:imports -->` — the `@<repo>/AGENTS.md` imports (`@AGENTS.md` itself stays outside) |
 | `README.md` | `<!-- wsg:sources -->` — the sources table and the launch commands |
+| `.claude/skills/<skill>/SKILL.md` | in a process workspace with a team: `<!-- wsg:team -->` — one pointer line to `team/workflow.md`, written by `wsg team` after the first `# ` heading |
 | `.claude/settings.json` | `permissions.additionalDirectories` only; every other key stays |
 | whole files | `.claude/rules/<name>.md` (written when its source is attached), `mr-target-branch.txt`, the `repo` pointer |
 
@@ -91,6 +92,23 @@ symlink, over a file outside the workspace: `CLAUDE.md`, `AGENTS.md`, `README.md
 `review.md`, `team`, `.claude`, `.claude-memory`, `.learnings`, `.git` (compared case-insensitively).
 `repo` is allowed: the pointer is not created then. Workspace slugs and skill names are kebab-case;
 the `wsg-` prefix is reserved for the skills wsg writes itself.
+
+## Team
+
+`wsg team` writes, and afterwards only adds to:
+
+| Path | What | Owner |
+|---|---|---|
+| `team/<role>.md` | the role's card: when it works, inputs, what it does, output, limits | yours once written |
+| `team/workflow.md` | the stages and who writes which file; `<!-- wsg:roles -->` lists the installed roles | yours, except the block |
+| `.claude/agents/wsg-<role>.md` | the Claude Code adapter that reads the card | yours once written |
+| `.claude/skills/wsg-feature/SKILL.md` | `/wsg-feature`, task workspaces only; a process skill gets a `<!-- wsg:team -->` pointer line | yours once written |
+| `requirements.md`, `design.md`, `plan.md`, `review.md` | written by the lead during the workflow | the task's |
+
+The `wsg-` prefix of the adapters is frozen: `wsg-<role>` is the key of the role's memory, so a
+role is never renamed — a new one is added instead. Agents and skills without the prefix are yours,
+and `wsg check` does not judge them. `.claude/wsg.json` records the team as `team: { preset, roles }`, with `pointer: true` once a
+process skill has its pointer line.
 
 ## What goes where
 

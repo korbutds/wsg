@@ -574,6 +574,14 @@ try {
       assert.doesNotMatch(section(g), /wsg-pm memory/);
     });
     const budgetOf = (r) => Number(/≈(\d+) B into every session/.exec(r.out)[1]);
+    it('the setup guide\'s team cost is what check adds for a fresh six-role team', () => {
+      const before = fresh(`c-cost-${n++}`);
+      const b0 = budgetOf(check(before));
+      wsg(['team', 'fullstack'], { cwd: before });
+      const added = budgetOf(check(before)) - b0;
+      const guide = fs.readFileSync(path.join(ROOT, 'docs', 'setup-guide.md'), 'utf8').replace(/\s+/g, ' ');
+      assert.ok(guide.includes(`all six roles, ${added} B (about ${Math.round(added / 4 / 50) * 50} tokens) as \`wsg check\` counts it`), `check adds ${added} B`);
+    });
     edit(good, adapter('devops'), (x) => x.replace('description: "', `description: "${'x'.repeat(100)}`));
     it('the adapters\' descriptions count toward the always-on budget', () => assert.strictEqual(budgetOf(check(good)) - budgetOf(g), 100));
 
@@ -849,6 +857,42 @@ try {
     it('another agent, or no team: no wsg-teach finding', () => {
       assert.doesNotMatch(wsg(['check', w]).out, /wsg-teach/);
       assert.doesNotMatch(wsg(['check', fresh('teach2')], { env: claude }).out, /wsg-teach/);
+    });
+  }
+
+  console.log('\nthe docs');
+  {
+    const readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8');
+    const part = (text, from, to) => text.slice(text.indexOf(from), text.indexOf(to, text.indexOf(from) + 1));
+    const teamPart = part(readme, '\n## Team\n', '\n## Settings\n');
+    const limits = part(readme, '\n## Limitations\n', '\n## Documentation\n').replace(/\s+/g, ' ');
+    it('README: a Team section with every role in its table', () => {
+      assert.ok(teamPart.length > 100, 'no Team section');
+      for (const r of ALL) assert.match(teamPart, new RegExp(`^\\| \`${r}\` \\|`, 'm'), r);
+    });
+    it('README: the layering, handback, memory, re-run and Codex', () => {
+      for (const s of ['team/<role>.md', 'team/workflow.md', '.claude/agents/wsg-<role>.md', '/wsg-feature', '**Handback.**', '`memory: user`',
+        '/wsg-teach', 'never overwritten or removed', '`--without` is not remembered', 'the pointer block of its skill', 'no Codex role agents yet']) assert.ok(teamPart.replace(/\s+/g, ' ').includes(s), s);
+    });
+    it('README: the commands table has wsg team, guide teach and wsg-teach', () => {
+      assert.ok(readme.includes('| `wsg team <preset> [--without ROLE,...] [--dry-run] [--ws SLUG\\|PATH]` |'));
+      assert.ok(readme.includes('`wsg guide [setup\\|advisor\\|teach]`'));
+      assert.match(readme, /Installs the `wsg-new` and `wsg-teach` skills/);
+    });
+    it('README limitations: the read-only roles keep Bash and can write through it, and the rest', () => {
+      assert.match(limits, /keep Bash, so they can still write through it/);
+      for (const s of ['shares one working copy', 'prompts, not isolation', 'additionalDirectories', 'permission prompt', '`permissionMode` is ignored',
+        'directories above the workspace', 'needs Claude Code\'s auto memory', 'restart', 'bypassPermissions, acceptEdits or auto mode']) assert.ok(limits.includes(s), s);
+    });
+    it('docs/workflow.md and docs/conventions.md describe the team', () => {
+      const wf = fs.readFileSync(path.join(ROOT, 'docs', 'workflow.md'), 'utf8');
+      const conv = fs.readFileSync(path.join(ROOT, 'docs', 'conventions.md'), 'utf8');
+      assert.match(wf, /\n## Team\n[\s\S]*`team\/workflow\.md`/);
+      for (const r of ALL) assert.ok(wf.includes(`\`${r}\``), r);
+      assert.match(conv, /\n## Team\n[\s\S]*The `wsg-` prefix of the adapters is frozen/);
+      assert.match(conv, /`<!-- wsg:team -->`/);
+      assert.match(conv, /\| `\.claude\/skills\/<skill>\/SKILL\.md` \| in a process workspace with a team: `<!-- wsg:team -->`/);
+      assert.match(wf.replace(/\s+/g, ' '), /A process workspace gets no `\/wsg-feature`: its own skill gets a pointer line/);
     });
   }
 
