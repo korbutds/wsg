@@ -31,6 +31,9 @@ const ENV = {
   CLAUDE_CONFIG_DIR: path.join(tmp, 'claude-config'),
   CODEX_HOME: path.join(tmp, 'codex-config'),
   WSG_NO_LAUNCH: '1',
+  // Not claude: check would judge the machine's claude on PATH otherwise. The /wsg-teach check
+  // sets it to claude itself.
+  WSG_AGENT: 'my-agent',
 };
 const wsg = (args, { cwd = tmp, env = {} } = {}) => {
   const r = spawnSync(process.execPath, [CLI, ...args], { cwd, encoding: 'utf8', env: { ...ENV, ...env } });
@@ -774,8 +777,88 @@ try {
     it('without CLAUDE_CONFIG_DIR the memory is read from HOME/.claude', () => assert.match(h.out, /OK .*role memory within limits: devops\n/));
   }
 
+  console.log('\nwsg guide teach, /wsg-teach and the memory index');
+  {
+    const guide = wsg(['guide', 'teach']);
+    it('wsg guide teach prints the guide', () => {
+      assert.strictEqual(guide.code, 0, guide.all);
+      assert.strictEqual(guide.out, fs.readFileSync(path.join(ROOT, 'docs', 'teach-guide.md'), 'utf8'));
+    });
+    it('the guide names the six roles, the scope rule and the owner\'s ok', () => {
+      for (const s of ['`pm`, `designer`, `frontend`, `backend`, `devops`,\n`reviewer`', '`.claude/rules/<repo>.md`', '`notes.md`', 'Wait for "ok"', 'At 180 index lines', 'auto memory turned on', 'first 200 lines or 25 KB']) assert.ok(guide.out.includes(s), s);
+    });
+    it('an unknown topic lists teach among the guides', () => assert.match(wsg(['guide', 'nope']).err, /available — advisor, setup, teach/));
+    const seed = fs.readFileSync(path.join(ROOT, 'templates', 'team', 'memory-index.md'), 'utf8');
+    it('the guide shows the seed index exactly as templates/team/memory-index.md holds it', () => {
+      const m = /```markdown\n(# wsg-<role> practices\n[\s\S]*?)```/.exec(guide.out);
+      assert.ok(m, 'no seed block in the guide');
+      assert.strictEqual(m[1], seed);
+      assert.doesNotMatch(guide.out, /wsg --where/);
+    });
+    it('the seed index: the heading, one line on the format, under 10 lines', () => {
+      assert.match(seed, /^# wsg-<role> practices\n/);
+      assert.ok(seed.split('\n').length - 1 < 10);
+    });
+
+    // The index line the guide shows, under the seed, is what check reads: no finding.
+    const w = fresh('teach1');
+    wsg(['team', 'fullstack'], { cwd: w });
+    const cc = path.join(tmp, 'teach-config');
+    const dir = path.join(cc, 'agent-memory', 'wsg-pm');
+    const example = guide.out.split('\n').map((l) => l.trim()).find((l) => /^- .+ → practices\/[a-z0-9-]+\.md$/.test(l));
+    fs.mkdirSync(path.join(dir, 'practices'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'MEMORY.md'), `${seed.replace('<role>', 'pm')}${example}\n`);
+    fs.writeFileSync(path.join(dir, 'practices', `${/practices\/([a-z0-9-]+)\.md/.exec(example)[1]}.md`), '# x\n');
+    const r = wsg(['check', w], { env: { CLAUDE_CONFIG_DIR: cc } });
+    it('the guide\'s example index line, under the seed, passes the check', () => {
+      assert.ok(example, 'no example index line in the guide');
+      assert.strictEqual(r.code, 0, r.all);
+      assert.match(r.out, /OK .*role memory within limits: pm\n/);
+      assert.doesNotMatch(r.out, /wsg-pm memory/);
+    });
+    const unlinked = path.join(cc, 'agent-memory', 'wsg-reviewer');
+    fs.mkdirSync(unlinked, { recursive: true });
+    fs.writeFileSync(path.join(unlinked, 'MEMORY.md'), seed.replace('<role>', 'reviewer'));
+    it('the seed alone links nothing that is missing', () => assert.match(wsg(['check', w], { env: { CLAUDE_CONFIG_DIR: cc } }).out, /role memory within limits: pm, reviewer\n/));
+
+    // With claude as the agent and a team, check wants /wsg-teach installed.
+    const S = require(path.join(ROOT, 'lib', 'skills.js'));
+    const claude = { WSG_AGENT: 'claude', CLAUDE_CONFIG_DIR: path.join(tmp, 'teach-claude') };
+    const teach = path.join(claude.CLAUDE_CONFIG_DIR, 'skills', 'wsg-teach', 'SKILL.md');
+    const missing = wsg(['check', w], { env: claude });
+    it('claude, a team, no wsg-teach: WARN naming install-skills', () => {
+      assert.strictEqual(missing.code, 0, missing.all);
+      assert.match(missing.out, /WARN .*wsg-teach for Claude Code is not installed.*run wsg install-skills/);
+    });
+    S.install({ ...ENV, ...claude });
+    it('installed: OK', () => assert.match(wsg(['check', w], { env: claude }).out, /OK .*wsg-teach for Claude Code: .*wsg-teach\/SKILL\.md/));
+    fs.appendFileSync(teach, 'old\n');
+    it('outdated: WARN', () => assert.match(wsg(['check', w], { env: claude }).out, /WARN .*wsg-teach\/SKILL\.md is outdated — run wsg install-skills/));
+    fs.writeFileSync(teach, '---\nname: wsg-teach\n---\nmine\n');
+    it('not written by wsg: WARN', () => assert.match(wsg(['check', w], { env: claude }).out, /WARN .*wsg-teach\/SKILL\.md was not written by wsg/));
+    it('a hand-made team without state.team: no wsg-teach finding', () => {
+      const h = fresh('teach3');
+      wsg(['team', 'fullstack'], { cwd: h });
+      const st = path.join(h, '.claude', 'wsg.json');
+      const { team: _, ...rest } = JSON.parse(fs.readFileSync(st, 'utf8'));
+      fs.writeFileSync(st, JSON.stringify(rest, null, 2));
+      const out = wsg(['check', h], { env: claude }).out;
+      assert.match(out, /\nTeam\n/);
+      assert.doesNotMatch(out, /wsg-teach/);
+    });
+    it('another agent, or no team: no wsg-teach finding', () => {
+      assert.doesNotMatch(wsg(['check', w]).out, /wsg-teach/);
+      assert.doesNotMatch(wsg(['check', fresh('teach2')], { env: claude }).out, /wsg-teach/);
+    });
+  }
+
   console.log('\nthe usage');
   it('names wsg team and its flags', () => assert.match(wsg(['--help']).out, /wsg team <preset> \[--without ROLE,\.\.\.\] \[--dry-run\] \[--ws SLUG\|PATH\]/));
+  it('names the teach guide and the wsg-teach skill', () => {
+    const u = wsg(['--help']).out;
+    assert.match(u, /wsg guide \[setup\|advisor\|teach\]/);
+    assert.match(u, /wsg-new and wsg-teach skills/);
+  });
 } finally {
   fs.rmSync(tmp, { recursive: true, force: true });
 }
