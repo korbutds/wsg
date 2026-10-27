@@ -32,8 +32,8 @@ const ENV = {
   CODEX_HOME: path.join(tmp, 'codex-config'),
   WSG_NO_LAUNCH: '1',
 };
-const wsg = (args, { cwd = tmp } = {}) => {
-  const r = spawnSync(process.execPath, [CLI, ...args], { cwd, encoding: 'utf8', env: ENV });
+const wsg = (args, { cwd = tmp, env = {} } = {}) => {
+  const r = spawnSync(process.execPath, [CLI, ...args], { cwd, encoding: 'utf8', env: { ...ENV, ...env } });
   return { code: r.status, out: r.stdout, err: r.stderr, all: r.stdout + r.stderr };
 };
 const fresh = (slug, extra = []) => {
@@ -532,6 +532,246 @@ try {
       assert.ok(fs.existsSync(lock));
     });
     fs.rmSync(lock);
+  }
+
+  console.log('\nwsg check: the team');
+  {
+    // A workspace with a team, made fresh for each case so that one finding never hides another.
+    let n = 0;
+    const withTeam = (extra = []) => {
+      const w = fresh(`c${n++}`, extra);
+      assert.strictEqual(wsg(['team', 'fullstack'], { cwd: w }).code, 0);
+      return w;
+    };
+    const check = (w, env) => wsg(['check', w], { env });
+    const edit = (w, rel, fn) => fs.writeFileSync(path.join(w, rel), fn(read(w, rel)));
+    const section = (r) => r.out.slice(r.out.indexOf('\nTeam\n'), r.out.indexOf('\nAlways-on budget\n'));
+
+    for (const [why, extra] of [['a task', []], ['a process', ['--kind', 'process', '--skill', 'rel']]]) {
+      const w = fresh(`c-none-${n++}`, extra);
+      const r = check(w);
+      it(`${why} without a team: no team section, no new finding`, () => {
+        assert.strictEqual(r.code, 0, r.all);
+        assert.doesNotMatch(r.out, /\nTeam\n|wsg-pm|team\/workflow/);
+      });
+    }
+
+    const good = withTeam();
+    const g = check(good);
+    it('a fresh team passes: every adapter reads its card, no FAIL', () => {
+      assert.strictEqual(g.code, 0, g.all);
+      assert.doesNotMatch(g.out, /FAIL/);
+      for (const role of ALL) assert.match(section(g), new RegExp(`OK .*wsg-${role}\\.md — reads team/${role}\\.md`));
+      assert.match(section(g), /OK .*team\/workflow\.md is in place/);
+      assert.match(section(g), /OK .*AGENTS\.md points to the team/);
+      assert.doesNotMatch(section(g), /WARN/);
+    });
+    it('no role memory yet: one note for all roles, not a warning', () => {
+      assert.match(section(g), /no role memory yet: pm, designer, frontend, backend, devops, reviewer \(or auto memory is disabled\)/);
+      assert.doesNotMatch(section(g), /wsg-pm memory/);
+    });
+    const budgetOf = (r) => Number(/≈(\d+) B into every session/.exec(r.out)[1]);
+    edit(good, adapter('devops'), (x) => x.replace('description: "', `description: "${'x'.repeat(100)}`));
+    it('the adapters\' descriptions count toward the always-on budget', () => assert.strictEqual(budgetOf(check(good)) - budgetOf(g), 100));
+
+    const fails = [
+      ['no frontmatter', (w) => edit(w, adapter('pm'), (x) => x.replace(/^---\n[\s\S]*?\n---\n/, '')), /FAIL .*wsg-pm\.md — no frontmatter/],
+      ['a broken frontmatter line', (w) => edit(w, adapter('pm'), (x) => x.replace('model: inherit', 'model inherit')), /FAIL .*wsg-pm\.md — no frontmatter, or a line/],
+      ['a name that is not the file name', (w) => edit(w, adapter('pm'), (x) => x.replace('name: wsg-pm', 'name: wsg-pmx')), /FAIL .*wsg-pm\.md — name wsg-pmx is not the file name wsg-pm/],
+      ['no name', (w) => edit(w, adapter('pm'), (x) => x.replace('name: wsg-pm\n', '')), /FAIL .*wsg-pm\.md — no name/],
+      ['no description', (w) => edit(w, adapter('pm'), (x) => x.replace(/^description: .*\n/m, '')), /FAIL .*wsg-pm\.md — no description/],
+      ['the card gone', (w) => fs.rmSync(path.join(w, card('pm'))), /FAIL .*wsg-pm\.md — its card team\/pm\.md is missing/],
+      ['a body that names no card', (w) => edit(w, adapter('pm'), (x) => x.replace('`team/pm.md`', 'the card')), /FAIL .*wsg-pm\.md — its body does not name its card team\/pm\.md/],
+      ['a skill named unlike its directory', (w) => edit(w, FEATURE, (x) => x.replace('name: wsg-feature', 'name: feature')), /FAIL .*wsg-feature\/SKILL\.md — name feature is not the directory name wsg-feature/],
+      ['no workflow.md', (w) => fs.rmSync(path.join(w, WORKFLOW)), /FAIL .*no team\/workflow\.md/],
+    ];
+    for (const [why, make, msg] of fails) {
+      const w = withTeam();
+      make(w);
+      const r = check(w);
+      it(`${why}: FAIL, exit 1`, () => {
+        assert.strictEqual(r.code, 1, r.all);
+        assert.match(r.out, msg);
+      });
+    }
+    const warns = [
+      ['a model that is not inherit', (w) => edit(w, adapter('pm'), (x) => x.replace('model: inherit', 'model: opus')), /WARN .*wsg-pm\.md — model is opus, not inherit/],
+      ['a known tool in the wrong case', (w) => edit(w, adapter('frontend'), (x) => x.replace('disallowedTools: Agent', 'disallowedTools: Agent, write')), /WARN .*wsg-frontend\.md — tool write: names are case-sensitive, did you mean Write\?/],
+      ['a word that is no tool name', (w) => edit(w, adapter('frontend'), (x) => x.replace('disallowedTools: Agent', 'disallowedTools: Agent, no such')), /WARN .*wsg-frontend\.md — "no such" is not a tool name/],
+      ['a handback role that may write', (w) => edit(w, adapter('reviewer'), (x) => x.replace('disallowedTools: Write, Edit, NotebookEdit, Agent', 'disallowedTools: Edit, Agent')), /WARN .*wsg-reviewer\.md — a read-only role, but it may use Write/],
+      ['a handback role whose allowlist has Write', (w) => edit(w, adapter('pm'), (x) => x.replace('disallowedTools: Write, Edit, NotebookEdit, Agent', 'tools: [Read, Write]')), /WARN .*wsg-pm\.md — a read-only role, but it may use Write/],
+      ['an unknown memory scope', (w) => edit(w, adapter('pm'), (x) => x.replace('memory: user', 'memory: team')), /WARN .*wsg-pm\.md — memory: team is none of user, project, local/],
+      ['no team block in AGENTS.md', (w) => edit(w, 'AGENTS.md', (x) => withoutBlock(x, 'team')), /WARN .*no <!-- wsg:team --> block.*run wsg refresh/],
+      ['an adapter gone', (w) => fs.rmSync(path.join(w, adapter('devops'))), /WARN .*role devops is in \.claude\/wsg\.json, but \.claude\/agents\/wsg-devops\.md is gone/],
+    ];
+    for (const [why, make, msg] of warns) {
+      const w = withTeam();
+      make(w);
+      const r = check(w);
+      it(`${why}: WARN, no FAIL`, () => {
+        assert.strictEqual(r.code, 0, r.all);
+        assert.match(r.out, msg);
+        assert.doesNotMatch(section(r), /FAIL/);
+      });
+    }
+    {
+      const w = withTeam();
+      edit(w, adapter('backend'), (x) => x.replace('disallowedTools: Agent', 'disallowedTools: Agent\ntools: Read, Bash(git *), mcp__docs__search'));
+      fs.writeFileSync(path.join(w, '.claude', 'agents', 'mine.md'), 'not even frontmatter\n');
+      const r = check(w);
+      it('MCP tools and Bash(…) are known; a user\'s own agent is not checked', () => {
+        assert.strictEqual(r.code, 0, r.all);
+        assert.doesNotMatch(section(r), /WARN|FAIL|mine\.md/);
+      });
+    }
+    {
+      // A promoted task keeps wsg-feature: it is no procedure, so a process without one still fails.
+      const w = withTeam();
+      wsg(['promote', path.basename(w), '--skill', 'ship']);
+      fs.rmSync(path.join(w, '.claude', 'skills', 'ship'), { recursive: true });
+      const r = check(w);
+      it('a leftover wsg-feature does not count as the procedure skill', () => {
+        assert.strictEqual(r.code, 1, r.all);
+        assert.match(r.out, /FAIL .*process without a skill/);
+      });
+    }
+    {
+      const w = fresh(`c${n++}`);
+      fs.mkdirSync(path.join(w, 'team'));
+      const r = check(w);
+      it('a hand-made team/ directory alone opens no team section', () => {
+        assert.strictEqual(r.code, 0, r.all);
+        assert.doesNotMatch(r.out, /\nTeam\n/);
+      });
+    }
+    {
+      // A team copied in by hand: no state.team, so what is wrong is a warning, never a failure.
+      const w = withTeam();
+      const st = path.join(w, '.claude', 'wsg.json');
+      const { team: _, ...rest } = JSON.parse(fs.readFileSync(st, 'utf8'));
+      fs.writeFileSync(st, JSON.stringify(rest, null, 2));
+      fs.rmSync(path.join(w, card('pm')));
+      fs.rmSync(path.join(w, WORKFLOW));
+      const r = check(w);
+      it('a team without state.team: the section opens on an adapter, its problems are warnings', () => {
+        assert.strictEqual(r.code, 0, r.all);
+        assert.match(section(r), /WARN .*wsg-pm\.md — its card team\/pm\.md is missing/);
+        assert.match(section(r), /WARN .*no team\/workflow\.md/);
+        assert.doesNotMatch(section(r), /FAIL/);
+      });
+    }
+    {
+      const w = withTeam();
+      edit(w, adapter('frontend'), (x) => x.replace('disallowedTools: Agent', 'disallowedTools: Agent, Wrte'));
+      const r = check(w);
+      it('a tool name wsg does not know is a note, not a warning', () => {
+        assert.strictEqual(r.code, 0, r.all);
+        assert.match(section(r), /wsg-frontend\.md: tool Wrte is not one wsg knows/);
+        assert.doesNotMatch(section(r), /WARN/);
+      });
+    }
+    {
+      // Valid Claude Code files written the unusual ways people write them: zero findings.
+      const w = withTeam();
+      const crlf = (x) => `\uFEFF${x.replace(/\n/g, '\r\n')}`;
+      edit(w, adapter('pm'), crlf);
+      edit(w, adapter('frontend'), (x) => x.replace('name: wsg-frontend', 'name: "wsg-frontend" # quoted').replace('model: inherit', 'model: inherit # as the lead'));
+      edit(w, adapter('backend'), (x) => x.replace('name: wsg-backend', 'name: wsg-backend # plain').replace(/^description: .*$/m, 'description: >\n  Implements server-side work.\n  Agrees the API contract first.'));
+      edit(w, adapter('designer'), (x) => x.replace('disallowedTools: Write, Edit, NotebookEdit, Agent', 'disallowedTools:\n  - Write\n  - Edit # no edits\n  - NotebookEdit\n  - Agent'));
+      edit(w, adapter('reviewer'), (x) => x.replace('disallowedTools: Write, Edit, NotebookEdit, Agent', "disallowedTools: [Write, 'Edit', \"NotebookEdit\", Agent] # all four"));
+      edit(w, adapter('devops'), (x) => x.replace('disallowedTools: Agent', 'disallowedTools: Agent\ntools: Read, Bash(git *), mcp__docs__search\nhooks:\n  PreToolUse:\n    - matcher: Bash\n      hooks:\n        - type: command'));
+      edit(w, FEATURE, crlf);
+      fs.mkdirSync(path.join(w, '.claude', 'skills', 'my-skill'));
+      fs.writeFileSync(path.join(w, '.claude', 'skills', 'my-skill', 'SKILL.md'), '---\nname: My Skill # a display name\ndescription: mine\n---\n');
+      fs.writeFileSync(path.join(w, '.claude', 'agents', 'mine.md'), 'not even frontmatter\n');
+      const r = check(w);
+      it('unusual but valid files: CRLF, BOM, comments, lists, block scalars, a display name — no finding', () => {
+        assert.strictEqual(r.code, 0, r.all);
+        assert.doesNotMatch(section(r), /WARN|FAIL|mine\.md|my-skill/);
+        for (const role of ALL) assert.match(section(r), new RegExp(`OK .*wsg-${role}\\.md — reads`));
+      });
+    }
+    {
+      // Files that are not what their names say: findings, never a crash, the total always printed.
+      const w = withTeam();
+      const agents = path.join(w, '.claude', 'agents');
+      fs.mkdirSync(path.join(agents, 'wsg-dir.md'));
+      fs.symlinkSync(path.join(tmp, 'nowhere.md'), path.join(agents, 'wsg-dangling.md'));
+      const cc = path.join(tmp, `odd-config-${n++}`);
+      fs.mkdirSync(path.join(cc, 'agent-memory', 'wsg-pm', 'MEMORY.md'), { recursive: true });
+      fs.mkdirSync(path.join(cc, 'agent-memory', 'wsg-reviewer'), { recursive: true });
+      fs.writeFileSync(path.join(cc, 'agent-memory', 'wsg-reviewer', 'MEMORY.md'), '- practices/a.md\n');
+      fs.writeFileSync(path.join(cc, 'agent-memory', 'wsg-reviewer', 'practices'), 'a file\n');
+      const r = check(w, { CLAUDE_CONFIG_DIR: cc });
+      it('odd files: exit 1 for the unreadable adapters, no crash, the total printed', () => {
+        assert.strictEqual(r.code, 1, r.all);
+        assert.match(r.out, /FAIL .*wsg-dir\.md — cannot be read \(EISDIR\)/);
+        assert.match(r.out, /FAIL .*wsg-dangling\.md — cannot be read \(ENOENT\)/);
+        assert.match(r.out, /WARN .*wsg-pm memory: .*MEMORY\.md is not a file/);
+        assert.match(r.out, /WARN .*wsg-reviewer memory: .*practices is not a directory/);
+        assert.match(r.out, /Total: \d+ errors/);
+        assert.doesNotMatch(r.err, /at |Error/);
+      });
+    }
+    {
+      // The memory: scope of each adapter says where its memory is.
+      const w = withTeam();
+      edit(w, adapter('pm'), (x) => x.replace('memory: user', 'memory: project'));
+      edit(w, adapter('designer'), (x) => x.replace('memory: user', 'memory: local'));
+      edit(w, adapter('frontend'), (x) => x.replace('memory: user\n', ''));
+      edit(w, adapter('backend'), (x) => x.replace('memory: user', 'memory: none'));
+      for (const [d, role] of [['agent-memory', 'pm'], ['agent-memory-local', 'designer']]) {
+        fs.mkdirSync(path.join(w, '.claude', d, `wsg-${role}`), { recursive: true });
+        fs.writeFileSync(path.join(w, '.claude', d, `wsg-${role}`, 'MEMORY.md'), 'line\n'.repeat(201));
+      }
+      const r = check(w);
+      it('memory: project and local are read from the workspace', () => {
+        assert.strictEqual(r.code, 0, r.all);
+        assert.match(r.out, new RegExp(`WARN .*wsg-pm memory ${path.join(w, '.claude', 'agent-memory')}.* 201 lines`));
+        assert.match(r.out, new RegExp(`WARN .*wsg-designer memory ${path.join(w, '.claude', 'agent-memory-local')}.* 201 lines`));
+      });
+      it('no memory: or none is memory off, nothing else is checked for it', () => {
+        assert.match(r.out, /memory off \(no memory: in the adapter\): frontend, backend/);
+        assert.match(r.out, /no role memory yet: devops, reviewer/);
+      });
+    }
+  }
+
+  console.log('\nwsg check: role memory');
+  {
+    const w = fresh('m1');
+    wsg(['team', 'fullstack'], { cwd: w });
+    const cc = path.join(tmp, 'mem-config');
+    const mem = (role) => path.join(cc, 'agent-memory', `wsg-${role}`);
+    for (const role of ['pm', 'reviewer', 'backend']) fs.mkdirSync(path.join(mem(role), 'practices'), { recursive: true });
+    fs.writeFileSync(path.join(mem('pm'), 'MEMORY.md'), '- [Ask once](practices/ask-once.md) — when it applies: a vague task\n- [Gone](practices/gone.md)\n');
+    fs.writeFileSync(path.join(mem('pm'), 'practices', 'ask-once.md'), 'x\n');
+    fs.writeFileSync(path.join(mem('pm'), 'practices', 'stray.md'), 'x\n');
+    fs.writeFileSync(path.join(mem('reviewer'), 'MEMORY.md'), 'line\n'.repeat(201));
+    fs.writeFileSync(path.join(mem('backend'), 'MEMORY.md'), `${'x'.repeat(26000)}\n`);
+    fs.mkdirSync(path.join(mem('frontend'), 'practices'), { recursive: true });
+    fs.writeFileSync(path.join(mem('frontend'), 'MEMORY.md'), '- [Tokens](practices/tokens.md)\n');
+    fs.writeFileSync(path.join(mem('frontend'), 'practices', 'tokens.md'), 'x\n');
+    const r = wsg(['check', w], { env: { CLAUDE_CONFIG_DIR: cc } });
+    it('memory findings never fail the check', () => assert.strictEqual(r.code, 0, r.all));
+    it('memory without findings: one OK line for those roles', () => assert.match(r.out, /OK .*role memory within limits: frontend\n/));
+    it('an index line pointing at a missing practice: WARN', () => assert.match(r.out, /WARN .*wsg-pm memory: MEMORY\.md links practices\/gone\.md, which is missing/));
+    it('a practice the index does not link: a note', () => {
+      assert.match(r.out, /wsg-pm memory: practices\/stray\.md is not in MEMORY\.md/);
+      assert.doesNotMatch(r.out, /WARN .*stray/);
+    });
+    it('an index over 200 lines: WARN', () => assert.match(r.out, /WARN .*wsg-reviewer memory .* 201 lines/));
+    it('an index over 25 KB: WARN', () => assert.match(r.out, /WARN .*wsg-backend memory .* 26001 B/));
+    it('roles without memory: one note naming them', () => assert.match(r.out, /no role memory yet: designer, devops \(or auto memory is disabled\)/));
+    it('memory is not counted in the always-on budget', () => {
+      const without = wsg(['check', w], { env: { CLAUDE_CONFIG_DIR: path.join(tmp, 'empty-config') } });
+      assert.strictEqual(/≈(\d+) B/.exec(r.out)[1], /≈(\d+) B/.exec(without.out)[1]);
+    });
+    // An empty CLAUDE_CONFIG_DIR is unset: the memory is under HOME/.claude.
+    fs.mkdirSync(path.join(home, '.claude', 'agent-memory', 'wsg-devops'), { recursive: true });
+    fs.writeFileSync(path.join(home, '.claude', 'agent-memory', 'wsg-devops', 'MEMORY.md'), 'one\n');
+    const h = wsg(['check', w], { env: { CLAUDE_CONFIG_DIR: '' } });
+    it('without CLAUDE_CONFIG_DIR the memory is read from HOME/.claude', () => assert.match(h.out, /OK .*role memory within limits: devops\n/));
   }
 
   console.log('\nthe usage');
