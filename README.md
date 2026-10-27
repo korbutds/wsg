@@ -415,8 +415,9 @@ shows you the text before writing it.
   taken from above when a directory there has one.
 - **Role memory** is per user, shared by every workspace, and needs Claude Code's auto memory
   turned on.
-- **A new `.claude/agents/` or `.claude/skills/`** may need a session restart before the roles
-  are seen; `wsg team` says when.
+- **New role agents and `/wsg-feature` need a new session.** A session that ran `wsg team` did
+  not find the roles it had just written (observed with Claude Code in `-p` mode; the
+  interactive live reload was not checked); `wsg team` says so after it adds them.
 - **Code fences wsg reads.** Blockquotes are not parsed: a code fence inside `>` is treated as
   text. A fence left unclosed inside a list item stays open to the end of the file (CommonMark
   closes it with the item), so close fences explicitly.

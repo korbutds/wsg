@@ -1974,8 +1974,9 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       assert.match(p, /only once at least one git source is attached/);
       assert.ok(p.indexOf('--dry-run') < p.indexOf('**Wait for "ok"**') && p.indexOf('advisor') < p.indexOf('**Wait for "ok"**'));
       for (const r of require(path.join(ROOT, 'lib', 'team.js')).ROLES) assert.ok(p.includes(`\`${r}\``), r);
-      assert.match(p, /restart hint/);
+      assert.match(p.replace(/\s+/g, ' '), /usable only after a restart/);
       assert.match(part('## 5.', '## Running setup again'), /the team if one was added/);
+      assert.match(part('## 5.', '## Running setup again').replace(/\s+/g, ' '), /always after `wsg team` added roles: they are usable only in a new session/);
     });
     it('the team step gives the real always-on cost: the adapters\' descriptions and the AGENTS.md block', () => {
       const T = require(path.join(ROOT, 'lib', 'team.js'));
@@ -2580,11 +2581,11 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     it('README names refresh, install-skills --uninstall and the advisor guide', () => {
       for (const x of ['`wsg refresh [--dry-run] [--ws SLUG\\|PATH]`', '`wsg install-skills [--uninstall]`', '`wsg guide [setup\\|advisor\\|teach]`', '## Advisor', '**Codex.**', 'docs/advisor-guide.md']) assert.ok(readme.includes(x), x);
     });
-    it('the version is 0.3.0, in package.json and its lock', () => {
-      assert.strictEqual(wsg(['--version']).out, '0.3.0\n');
+    it('the version is 0.4.0, in package.json and its lock', () => {
+      assert.strictEqual(wsg(['--version']).out, '0.4.0\n');
       const lock = JSON.parse(fs.readFileSync(path.join(ROOT, 'package-lock.json'), 'utf8'));
-      assert.strictEqual(lock.version, '0.3.0');
-      assert.strictEqual(lock.packages[''].version, '0.3.0');
+      assert.strictEqual(lock.version, '0.4.0');
+      assert.strictEqual(lock.packages[''].version, '0.4.0');
     });
 
     const bare = wsg([]);
@@ -2855,6 +2856,24 @@ wait`;
       const r = spawnSync('bash', ['-c', `${def}\nsnippet "$REPLY_TEXT"`], { encoding: 'utf8', env: { ...process.env, LC_ALL: 'en_US.UTF-8', REPLY_TEXT: reply } });
       assert.strictEqual(r.stderr, '');
       assert.strictEqual(r.stdout, [...reply.replace(/\n/g, ' ')].slice(0, 300).join(''));
+    });
+    // The team step reads the init event's agents and tools, and the tool results, of a stream.
+    it('smoke: init_list and tool_results read a stream-json reply', () => {
+      const src = fs.readFileSync(path.join(ROOT, 'test', 'smoke-claude.sh'), 'utf8');
+      const fn = (name) => {
+        const m = new RegExp(`^${name}\\(\\) \\{[\\s\\S]*?\\n\\}$`, 'm').exec(src);
+        assert.ok(m, `smoke-claude.sh has ${name}()`);
+        return m[0];
+      };
+      const stream = [
+        { type: 'system', subtype: 'init', agents: ['wsg-pm', { name: 'wsg-reviewer' }], tools: ['Read', 'Bash'] },
+        { type: 'user', message: { content: [{ type: 'tool_result', content: 'PONG\nok' }, { type: 'tool_result', content: [{ type: 'text', text: 'x' }] }] } },
+      ].map((e) => JSON.stringify(e)).join('\n');
+      const sh = (body) => spawnSync('bash', ['-c', `${fn('init_list')}\n${fn('tool_results')}\n${body}`], { encoding: 'utf8', env: { ...process.env, STREAM: stream } });
+      assert.strictEqual(sh('init_list "$STREAM" agents').stdout, 'wsg-pm\nwsg-reviewer');
+      assert.strictEqual(sh('init_list "$STREAM" tools').stdout, 'Read\nBash');
+      assert.strictEqual(sh('init_list "not json" agents').stdout, '');
+      assert.strictEqual(sh('tool_results "$STREAM"').stdout, 'PONG ok [{"type":"text","text":"x"}]');
     });
     const calls = (r) => r.calls.split('\n').filter((l) => l.startsWith('call'));
     const both = runScript('eval-advisor.sh', { EVAL_RUNS: '1' });

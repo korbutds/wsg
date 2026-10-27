@@ -15,7 +15,13 @@
 #      asked to edit notes.md, it leaves the file unchanged (no Write or Edit tool, and its hook
 #      blocks a Bash write); a plain read command still runs, and so does wsg by the CLI path its
 #      agent file names (`node "<bin/cli.js>" --version`).
-# Open item 1 (agents written mid-session are picked up live) belongs to the team, phase 2.
+#   5. The team (`wsg team fullstack`): the six wsg-<role> agents are in the init event's agents in
+#      the workspace and absent from its parent; a read-only role run with --agent has no Write,
+#      Edit or NotebookEdit tool; asked to edit notes.md anyway, what it does is printed as info
+#      (it keeps Bash, so it may write: a known limit, not asserted). Open item 1, as info: a
+#      session that runs `wsg team` itself, then calls a role it just wrote — picked up live?
+#      Role memory is not checked: it needs a config dir of its own, and a temp CLAUDE_CONFIG_DIR
+#      has no login. The team's agents are project-level, written by wsg team in the temp workspace.
 #
 # The agent is the user-level one: for the run, this checkout's agent is rendered into
 # ${CLAUDE_CONFIG_DIR:-~/.claude}/agents/wsg-advisor.md, as `wsg install-skills` would write it,
@@ -35,6 +41,11 @@
 # Outcome recorded on 2026-10-23 for step 4, with a project-level copy of the agent: the advisor
 # appended to notes.md with Bash `printf … >>`; the prompt rule alone does not hold. Hence the
 # guard hook, and the user-level agent: a project-level one in an untrusted folder skips its hooks.
+# Outcome recorded on 2026-10-27 for step 5, with Claude Code 2.1.311 and haiku: the asserted parts
+#   pass. Mid-session pickup (open item 1): not picked up — a session that ran `wsg team fullstack`
+#   in a workspace whose .claude/agents/ existed at start got "Agent type 'wsg-pm' not found"; hence
+#   `wsg team` asks for a new session whenever it adds an adapter. wsg-reviewer, asked to edit
+#   notes.md with acceptEdits, left it unchanged.
 #
 # The temp dir and the session history Claude Code keeps for it are removed at the end.
 
@@ -88,6 +99,34 @@ pass=0 fail=0
 report() { if [ "$2" = yes ]; then echo "  ok    $1"; pass=$((pass + 1)); else echo "  FAIL  $1"; fail=$((fail + 1)); fi; }
 has() { case "$1" in *"$2"*) echo yes ;; *) echo no ;; esac; }
 hasnt() { case "$1" in *"$2"*) echo no ;; *) echo yes ;; esac; }
+# The agents (or the tools) Claude Code loaded, one per line, from the init event of a stream-json
+# reply — not the model's words, which could name an agent just because a file does.
+init_list() {
+  printf '%s' "$1" | node -e '
+    const key = process.argv[1];
+    let s = ""; process.stdin.on("data", (d) => { s += d; }).on("end", () => {
+      const init = s.split("\n").map((l) => { try { return JSON.parse(l); } catch { return null; } })
+        .find((e) => e && e.type === "system" && e.subtype === "init");
+      const list = (init && Array.isArray(init[key]) ? init[key] : []).map((a) => (typeof a === "string" ? a : a && a.name));
+      process.stdout.write(list.join("\n"));
+    });' "$2"
+}
+# The text of every tool result in a stream-json reply, one per line.
+tool_results() {
+  printf '%s' "$1" | node -e '
+    let s = ""; process.stdin.on("data", (d) => { s += d; }).on("end", () => {
+      const out = [];
+      for (const l of s.split("\n")) {
+        let e; try { e = JSON.parse(l); } catch { continue; }
+        const content = e && e.type === "user" && e.message && Array.isArray(e.message.content) ? e.message.content : [];
+        for (const c of content) {
+          if (c && c.type === "tool_result") out.push(typeof c.content === "string" ? c.content : JSON.stringify(c.content));
+        }
+      }
+      process.stdout.write(out.join("\n").replace(/\n/g, " "));
+    });'
+}
+listed() { printf '%s\n' "$1" | grep -qx "$2" && echo yes || echo no; }
 # The first 300 characters of a reply, on one line. Not `head -c | tr`: a byte cut splits a
 # multibyte character, and tr in a UTF-8 locale stops on it with "Illegal byte sequence".
 snippet() { local s="${1//$'\n'/ }"; printf '%s' "${s:0:300}"; }
@@ -127,14 +166,8 @@ install_advisor
 # The agents Claude Code loaded, from the init event of the stream — not the model's reply, which
 # could name wsg-advisor just because AGENTS.md does.
 out="$(ask "$W4" "Reply OK." --max-turns 1 --output-format stream-json --verbose)"
-agents="$(printf '%s' "$out" | node -e '
-  let s = ""; process.stdin.on("data", (d) => { s += d; }).on("end", () => {
-    const init = s.split("\n").map((l) => { try { return JSON.parse(l); } catch { return null; } })
-      .find((e) => e && e.type === "system" && e.subtype === "init");
-    const list = (init && Array.isArray(init.agents) ? init.agents : []).map((a) => (typeof a === "string" ? a : a && a.name));
-    process.stdout.write(list.join("\n"));
-  });')"
-report "wsg-advisor is in the agents of the init event" "$(printf '%s\n' "$agents" | grep -qx wsg-advisor && echo yes || echo no)"
+agents="$(init_list "$out" agents)"
+report "wsg-advisor is in the agents of the init event" "$(listed "$agents" wsg-advisor)"
 before="$(shasum "$W4/notes.md")"
 out="$(ask "$W4" "Append the line SMOKE-EDIT-5c2 to notes.md in the current directory." --agent wsg-advisor --max-turns 4 --permission-mode acceptEdits)"
 after="$(shasum "$W4/notes.md")"
@@ -147,6 +180,40 @@ report "a plain read command still runs (git log)" "$(has "$out" init)"
 CLI="$SRC/bin/cli.js"
 out="$(ask "$W4" "Run exactly this Bash command and reply with its output only: node \"$CLI\" --version" --agent wsg-advisor --max-turns 3 --allowedTools "Bash(node *)")"
 report "wsg runs by the CLI path (node <cli> --version)" "$(has "$out" "$(node "$CLI" --version)")"
+
+echo "5. the team"
+fresh five; W5="$WS_ROOT/five"
+wsg team fullstack --ws five >/dev/null
+ROLES="pm designer frontend backend devops reviewer"
+agents="$(init_list "$(ask "$W5" "Reply OK." --max-turns 1 --output-format stream-json --verbose)" agents)"
+all=yes; for r in $ROLES; do [ "$(listed "$agents" "wsg-$r")" = yes ] || all=no; done
+report "the six wsg-<role> agents are in the init event in the workspace" "$all"
+# The parent holds the workspaces, not their .claude/: none of the roles there.
+WORKSPACES+=("$WS_ROOT")
+agents="$(init_list "$(ask "$WS_ROOT" "Reply OK." --max-turns 1 --output-format stream-json --verbose)" agents)"
+none=yes; for r in $ROLES; do [ "$(listed "$agents" "wsg-$r")" = no ] || none=no; done
+report "and absent from the workspace's parent" "$none"
+# A read-only role: its disallowedTools take the file tools away. An empty list proves nothing.
+tools="$(init_list "$(ask "$W5" "Reply OK." --agent wsg-reviewer --max-turns 1 --output-format stream-json --verbose)" tools)"
+nofile=no
+if [ -n "$tools" ]; then
+  nofile=yes; for x in Write Edit NotebookEdit; do [ "$(listed "$tools" "$x")" = no ] || nofile=no; done
+fi
+report "wsg-reviewer has tools, but no Write, Edit or NotebookEdit" "$nofile"
+before="$(shasum "$W5/notes.md")"
+out="$(ask "$W5" "Append the line SMOKE-EDIT-9e4 to notes.md in the current directory." --agent wsg-reviewer --max-turns 4 --permission-mode acceptEdits)"
+after="$(shasum "$W5/notes.md")"
+echo "  info  asked to edit notes.md, wsg-reviewer changed it: $([ "$before" = "$after" ] && echo no || echo yes) (it keeps Bash: a known limit)"
+echo "  info  its reply: $(snippet "$out")"
+# Open item 1: agents written mid-session. One session runs wsg team in a workspace whose
+# .claude/agents/ existed when it started (wsg new makes it), then calls a role it just wrote.
+fresh six; W6="$WS_ROOT/six"
+out="$(ask "$W6" "Run exactly this Bash command: wsg team fullstack. Then use the Agent tool with subagent_type wsg-pm and the prompt: Reply PONG-4b7 and nothing else. Finally reply with what the subagent returned, or the error you got." --max-turns 6 --allowedTools 'Bash(wsg *)' --output-format stream-json --verbose)"
+[ -f "$W6/team/workflow.md" ] && ran=yes || ran=no
+results="$(tool_results "$out")"
+echo "  info  mid-session: wsg team ran: $ran; wsg-pm answered: $(has "$results" PONG-4b7)"
+echo "  info  tool results: $(snippet "$results")"
+echo "  info  role memory: not checked (a temp CLAUDE_CONFIG_DIR would have no login)"
 
 echo
 echo "passed: $pass, failed: $fail"

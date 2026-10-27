@@ -412,7 +412,7 @@ async function cmdTeam(args) {
   if (written) ui.head(t('cli.teamWritten', { n: written, preset: pos[0] }));
   else ui.ok(t('cli.teamNone'));
   for (const file of team.keptDiffering(p)) ui.info(t('cli.teamKept', { file }));
-  if (p.restart) ui.info(t('cli.teamRestart'));
+  if (p.restart) ui.info(t('cli.teamRestart', { slug: state.slug || path.basename(ws) }));
   ui.info(state.kind === 'process' ? t('cli.teamNextProcess', { skill: state.skillName }) : t('cli.teamNext'));
   return 0;
 }

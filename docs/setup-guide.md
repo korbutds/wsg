@@ -141,8 +141,8 @@ the team block of `AGENTS.md` — plus the one-line description of `/wsg-feature
    to the advisor for a plan review together with that JSON — the advisor reviews it, it cannot
    run `wsg team` itself. Fix what it flags; what it leaves to the owner goes into the proposal.
 3. **Wait for "ok"**, then run it without `--dry-run`. It only adds: an existing file is kept as it
-   is. If it prints a restart hint, `.claude/agents/` or `.claude/skills/` is new and the roles are
-   seen only in a new session.
+   is. The roles and `/wsg-feature` are usable only after a restart: a running session, this one
+   included, does not see agents written after it started.
 
 Roles left out are not remembered: a later `wsg team fullstack` without `--without` adds them.
 `/wsg-setup` can run this step again at any time.
@@ -171,7 +171,7 @@ Roles left out are not remembered: a later `wsg team fullstack` without `--witho
    anything left open — including the OWNER items the advisor left unresolved.
 4. Tell them whether to restart the session. It is needed when `wsg add` printed
    "settings.json changed: restart…" — linked directories become readable only in a new session —
-   or `wsg team` printed its restart hint.
+   and always after `wsg team` added roles: they are usable only in a new session.
    Worktrees are inside the workspace and need no restart. To restart: `ws <slug>` (if the `ws`
    function is set up) or `cd <workspace> && claude`.
 5. Say how to start the work: in this workspace, from its root, beginning with the reconnaissance

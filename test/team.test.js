@@ -116,7 +116,7 @@ try {
       assert.match(r.out, /\/wsg-feature/);
     });
     it('the first insertion of the block is no warning', () => assert.doesNotMatch(r.all, /WARN/));
-    it('no restart hint: .claude/agents and .claude/skills were there', () => assert.doesNotMatch(r.out, /restart/));
+    it('new adapters: a hint to start a new session, even though .claude/agents existed', () => assert.match(r.out, /Start a new session before using the roles or \/wsg-feature \(ws t1, or claude in the workspace\)/));
     it('a card and an adapter per role, the workflow and /wsg-feature', () => {
       for (const role of ALL) {
         assert.ok(fs.existsSync(path.join(ws, card(role))), card(role));
@@ -207,9 +207,10 @@ try {
     fs.appendFileSync(path.join(ws, card('backend')), '\nOur own rule.\n');
     const before = tree(ws);
     const again = wsg(['team', 'fullstack'], { cwd: ws });
-    it('a re-run: exit 0, nothing to write', () => {
+    it('a re-run: exit 0, nothing to write, no new-session hint', () => {
       assert.strictEqual(again.code, 0, again.all);
       assert.match(again.out, /nothing to write/);
+      assert.doesNotMatch(again.out, /new session/);
     });
     it('a re-run changes no byte', () => assert.deepStrictEqual(tree(ws), before));
     it('a re-run names only the kept file that differs from what wsg would write', () => {
@@ -443,7 +444,7 @@ try {
       const again = wsg(['team', 'fullstack'], { cwd: w });
       assert.strictEqual(again.code, 0, again.all);
       assert.ok(fs.existsSync(path.join(w, card('pm'))));
-      assert.doesNotMatch(again.out, /restart/);
+      assert.doesNotMatch(again.out, /new session/);
     });
   }
 
@@ -516,9 +517,9 @@ try {
       it('no new file or directory is left, the rest is byte-identical', () => assert.deepStrictEqual(tree(ws), before));
     }
     const ok = wsg(['team', 'fullstack'], { cwd: ws });
-    it('the next run works and says to restart for the new .claude/agents', () => {
+    it('the next run works and says to start a new session', () => {
       assert.strictEqual(ok.code, 0, ok.all);
-      assert.match(ok.out, /restart the agent session/);
+      assert.match(ok.out, /Start a new session before using the roles/);
     });
   }
 
@@ -882,7 +883,7 @@ try {
     it('README limitations: the read-only roles keep Bash and can write through it, and the rest', () => {
       assert.match(limits, /keep Bash, so they can still write through it/);
       for (const s of ['shares one working copy', 'prompts, not isolation', 'additionalDirectories', 'permission prompt', '`permissionMode` is ignored',
-        'directories above the workspace', 'needs Claude Code\'s auto memory', 'restart', 'bypassPermissions, acceptEdits or auto mode']) assert.ok(limits.includes(s), s);
+        'directories above the workspace', 'needs Claude Code\'s auto memory', 'New role agents and `/wsg-feature` need a new session', 'interactive live reload was not checked', 'bypassPermissions, acceptEdits or auto mode']) assert.ok(limits.includes(s), s);
     });
     it('docs/workflow.md and docs/conventions.md describe the team', () => {
       const wf = fs.readFileSync(path.join(ROOT, 'docs', 'workflow.md'), 'utf8');
