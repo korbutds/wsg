@@ -366,6 +366,224 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       assert.match(fs.readFileSync(path.join(wsRoot, 'with-rules', 'AGENTS.md'), 'utf8'), /## Owner rules[\s\S]*rules\.md/));
   }
 
+  console.log('\nwsg new --kind epic');
+  {
+    // A WS_ROOT of its own: an epic in the shared one would show up in every listing below.
+    const epicRoot = path.join(tmp, 'epic-root');
+    const env = { WS_ROOT: epicRoot };
+    const ep = path.join(epicRoot, 'checkout-v2');
+    const read = (rel) => fs.readFileSync(path.join(ep, rel), 'utf8');
+    const memory = path.join(tmp, 'epic-rules.md');
+    fs.writeFileSync(memory, '# my rules\n');
+    const r = wsg(['new', 'checkout-v2', '--kind', 'epic', '--title', 'Checkout v2', '--ticket', 'EPIC-1', '--no-launch'],
+      { env: { ...env, WSG_GLOBAL_MEMORY: memory } });
+    it('exits 0', () => assert.strictEqual(r.code, 0, r.all));
+    for (const f of ['CLAUDE.md', 'AGENTS.md', 'README.md', 'notes.md', 'SETUP.md', 'knowledge.md', 'tasks.md', 'decisions.md',
+      '.claude/settings.json', '.claude/ws-kind', '.claude/wsg.json', '.claude/rules/epic-knowledge.md', '.claude/skills/wsg-setup/SKILL.md',
+      '.claude/skills/wsg-epic-task/SKILL.md', '.claude/skills/wsg-epic-close/SKILL.md', '.claude/skills/wsg-epic-sync/SKILL.md',
+      '.learnings/LEARNINGS.md', '.learnings/ERRORS.md']) {
+      it(`created ${f}`, () => assert.ok(fs.statSync(path.join(ep, f)).isFile()));
+    }
+    it('no repo pointer and no mr-target-branch.txt', () => {
+      const names = fs.readdirSync(ep);
+      for (const f of ['repo', 'mr-target-branch.txt']) assert.ok(!names.includes(f), f);
+    });
+    const state = JSON.parse(read('.claude/wsg.json'));
+    it('wsg.json: version 3, kind epic, no sources', () => {
+      assert.strictEqual(state.version, 3);
+      assert.strictEqual(state.kind, 'epic');
+      assert.deepStrictEqual(state.sources, []);
+      assert.ok(!('ticket' in state));
+    });
+    it('ws-kind says epic', () => assert.strictEqual(read('.claude/ws-kind'), 'epic\n'));
+    const claude = read('CLAUDE.md');
+    it('CLAUDE.md is small: it loads in every task of the epic too', () => assert.ok(Buffer.byteLength(claude) <= 600, Buffer.byteLength(claude)));
+    it('CLAUDE.md: the title, @AGENTS.md, the advisor block, the task rule; no imports block', () => {
+      assert.match(claude, /^# Checkout v2\n\n@AGENTS\.md\n/);
+      assert.match(claude, /<!-- wsg:advisor -->\nBefore you show the owner/);
+      assert.match(claude, /In a task directory below, that task's own AGENTS\.md governs/);
+      assert.doesNotMatch(claude, /wsg:imports/);
+    });
+    const agents = read('AGENTS.md');
+    it('AGENTS.md: the ticket, the advisor block, the trigger to start a task', () => {
+      assert.match(agents, /^Ticket: EPIC-1$/m);
+      assert.match(agents, /^This is an epic workspace/m);
+      assert.match(agents, /<!-- wsg:advisor -->/);
+      assert.match(agents, /^When the owner asks — in this directory, not in a task below — to start work on a ticket, run `wsg guide epic` → Starting a task\.$/m);
+    });
+    it('AGENTS.md: Why, Layout, Verification and Owner rules, nothing of a task', () => {
+      assert.match(agents, /## Why\n\nFILL IN/);
+      for (const h of ['## Layout', '## Verification', '## Owner rules']) assert.ok(agents.includes(h), h);
+      for (const h of ['## Definition of done', '## Out of scope', '## Invariants', '## Code map']) assert.ok(!agents.includes(h), h);
+      assert.match(agents, /epic-rules\.md/);
+    });
+    it('the layout lists the epic files and the tasks below', () => {
+      for (const f of ['`knowledge.md`', '`tasks.md`', '`decisions.md`', '`<task>/`', '`notes.md`']) assert.ok(agents.includes(f), f);
+      assert.match(agents, /<!-- wsg:layout -->\n<!-- \/wsg:layout -->/);
+    });
+    it('an epic without --ticket asks for one', () => {
+      const n = wsg(['new', 'no-ticket', '--kind', 'epic', '--no-launch'], { env });
+      assert.strictEqual(n.code, 0, n.all);
+      assert.match(fs.readFileSync(path.join(epicRoot, 'no-ticket', 'AGENTS.md'), 'utf8'), /^Ticket: FILL IN/m);
+    });
+    it('and its check warns about it, without failing', () => {
+      const nc = wsg(['check', path.join(epicRoot, 'no-ticket')], { env });
+      assert.strictEqual(nc.code, 0, nc.out);
+      assert.match(nc.out, /WARN the epic has no ticket yet \(Ticket: FILL IN\)/);
+    });
+    it('an epic with a ticket gets no such warning', () =>
+      assert.doesNotMatch(wsg(['check', ep], { env }).out, /no ticket yet/));
+    it('a title in another language: the translation task names the epic files', () => {
+      const n = wsg(['new', 'ru-epic', '--kind', 'epic', '--title', 'Оплата', '--no-launch'], { env });
+      assert.strictEqual(n.code, 0, n.all);
+      const notes = fs.readFileSync(path.join(epicRoot, 'ru-epic', 'notes.md'), 'utf8');
+      assert.match(notes, /CLAUDE\.md, AGENTS\.md, README\.md, notes\.md, knowledge\.md, tasks\.md, decisions\.md, \.claude\/rules\//);
+      assert.doesNotMatch(notes, /journal\.md/);
+    });
+    it('a task keeps its own list', () => {
+      wsg(['new', 'ru-task', '--title', 'Оплата', '--no-launch'], { env });
+      assert.match(fs.readFileSync(path.join(epicRoot, 'ru-task', 'notes.md'), 'utf8'), /README\.md, notes\.md, journal\.md, \.claude\/rules\//);
+    });
+    it('the advisor block deleted by hand comes back after the whole sentence, with no version claimed', () => {
+      const dir = path.join(epicRoot, 'no-ticket');
+      const file = path.join(dir, 'AGENTS.md');
+      const was = fs.readFileSync(file, 'utf8');
+      fs.writeFileSync(file, was.replace(/<!-- wsg:advisor -->\n[\s\S]*?<!-- \/wsg:advisor -->\n/, ''));
+      const rr = wsg(['refresh', '--ws', dir], { env });
+      assert.strictEqual(rr.code, 0, rr.all);
+      assert.strictEqual(fs.readFileSync(file, 'utf8'), was);
+      assert.match(rr.all, /markers were missing/);
+      assert.doesNotMatch(rr.all, /new in wsg/);
+    });
+    it('knowledge.md: the three sections, the size target, rewrite not append', () => {
+      const k = read('knowledge.md');
+      assert.match(k, /## Decisions[\s\S]*## Repositories[\s\S]*## Pitfalls/);
+      assert.match(k, /single source of truth/);
+      assert.match(k, /≤ 4 KiB/);
+      assert.match(k, /rewrite it rather than append/);
+    });
+    const rule = read('.claude/rules/epic-knowledge.md');
+    it('the pointer rule: no paths, so it always loads; points to knowledge.md from the epic and from a task', () => {
+      assert.ok(!rule.startsWith('---') && !/paths:/.test(rule));
+      assert.match(rule, /`knowledge\.md` in the epic directory/);
+      assert.match(rule, /`\.\.\/knowledge\.md` from a task directory/);
+      assert.ok(Buffer.byteLength(rule) <= 300, Buffer.byteLength(rule));
+    });
+    it('tasks.md: an empty block that says so, then the agent\'s sections', () => {
+      const tasks = read('tasks.md');
+      assert.match(tasks, /<!-- wsg:tasks -->\nNo tasks in this directory yet: `wsg new <slug> --epic checkout-v2` creates one\.\n<!-- \/wsg:tasks -->/);
+      assert.match(tasks, /<!-- \/wsg:tasks -->[\s\S]*## Status[\s\S]*## Other tasks/);
+    });
+    it('README.md names the kind', () => assert.match(read('README.md'), /Workspace kind: \*\*epic\*\*/));
+    it('notes.md has no code map: knowledge.md holds that', () => assert.doesNotMatch(read('notes.md'), /## Code map/));
+    for (const [name, section] of [['wsg-epic-task', 'Starting a task'], ['wsg-epic-close', 'Closing'], ['wsg-epic-sync', 'Syncing']]) {
+      const skill = read(`.claude/skills/${name}/SKILL.md`);
+      it(`${name}: manual only, a wrapper over wsg guide epic → ${section}`, () => {
+        assert.match(skill, new RegExp(`^---\\nname: ${name}\\ndescription: .+\\n`));
+        assert.match(skill, /^disable-model-invocation: true$/m);
+        assert.ok(skill.includes(`Run \`wsg guide epic\`, section "${section}", for: $ARGUMENTS`));
+      });
+      it(`${name} is the template`, () => assert.strictEqual(skill, fs.readFileSync(path.join(ROOT, 'templates', 'claude', name, 'SKILL.md'), 'utf8')));
+    }
+    it('the epic guide has every section a skill names', () => {
+      const g = fs.readFileSync(path.join(ROOT, 'docs', 'epic-guide.md'), 'utf8');
+      for (const h of ['Starting a task', 'Working', 'Closing', 'Syncing', 'Adding a repository']) assert.match(g, new RegExp(`^## ${h}$`, 'm'), h);
+    });
+
+    const c = wsg(['check', ep], { env });
+    it('a fresh epic passes its check', () => assert.strictEqual(c.code, 0, c.out));
+    it('with warnings only, none about the pointer rule, the repo pointer or invariants', () => {
+      assert.doesNotMatch(c.out, /FAIL/);
+      assert.doesNotMatch(c.out, /no paths|invariants|mr-target-branch|repo pointer/);
+    });
+    it('the check reports the epic parts', () => {
+      assert.match(c.out, /kind: epic/);
+      for (const re of [/OK +epic-knowledge\.md — the pointer to knowledge\.md, loaded every session/, /OK +knowledge\.md — \d+ B/,
+        /OK +tasks\.md lists the tasks/, /OK +skill wsg-epic-task — invoked manually only/, /OK +skill wsg-epic-close/, /OK +skill wsg-epic-sync/]) {
+        assert.match(c.out, re);
+      }
+    });
+    it('rendering a fresh epic changes nothing', () =>
+      assert.deepStrictEqual(generate.changedFiles(generate.computeRender(ep, W.readState(ep), null)), []));
+
+    // A task of the epic made by hand, until wsg new --epic does it.
+    const child = (slug, extra) => {
+      fs.mkdirSync(path.join(ep, slug, '.claude'), { recursive: true });
+      fs.writeFileSync(path.join(ep, slug, W.STATE_FILE), JSON.stringify({
+        version: 2, kind: 'task', slug, title: slug, created: '2026-10-28', personalRules: false, sources: [], epic: { slug: 'checkout-v2' }, ...extra,
+      }));
+    };
+    child('first', { title: 'First task', ticket: 'PROJ-42' });
+    child('second', {});
+    child('moved', { epic: { slug: 'other' } });
+    const rf = wsg(['refresh', '--ws', ep], { env });
+    it('refresh renders the tasks block from the tasks in the directory', () => {
+      assert.strictEqual(rf.code, 0, rf.all);
+      assert.match(rf.out, /Updated: tasks\.md/);
+      assert.match(read('tasks.md'), /<!-- wsg:tasks -->\n- `first\/` PROJ-42 — First task\n- `moved\/` \(its state names epic `other`: see `wsg check`\)\n- `second\/`\n<!-- \/wsg:tasks -->/);
+    });
+    it('and still writes no repo pointer and no mr-target-branch.txt', () => {
+      const names = fs.readdirSync(ep);
+      assert.ok(!names.includes('repo') && !names.includes('mr-target-branch.txt'), names.join(' '));
+    });
+    it('a second refresh changes nothing', () => assert.match(wsg(['refresh', '--ws', ep], { env }).out, /up to date/));
+    it('text below the block is kept', () => {
+      fs.appendFileSync(path.join(ep, 'tasks.md'), '- PROJ-50 — someone else\'s task\n');
+      child('third', {});
+      wsg(['refresh', '--ws', ep], { env });
+      assert.match(read('tasks.md'), /- `third\/`\n<!-- \/wsg:tasks -->[\s\S]*PROJ-50 — someone else's task\n$/);
+    });
+
+    const k = path.join(ep, 'knowledge.md');
+    const original = read('knowledge.md');
+    fs.writeFileSync(k, original + 'x'.repeat(4200));
+    it('knowledge.md over 4 KiB warns', () => {
+      const w = wsg(['check', ep], { env });
+      assert.strictEqual(w.code, 0, w.out);
+      assert.match(w.out, /WARN knowledge\.md — \d+ B, target ≤ 4096/);
+    });
+    fs.writeFileSync(k, original + 'x'.repeat(8200));
+    it('over 8 KiB fails', () => {
+      const f = wsg(['check', ep], { env });
+      assert.strictEqual(f.code, 1, f.out);
+      assert.match(f.out, /FAIL knowledge\.md — \d+ B, ceiling 8192/);
+    });
+    fs.unlinkSync(k);
+    it('a missing one fails', () => assert.match(wsg(['check', ep], { env }).out, /FAIL no knowledge\.md/));
+    fs.writeFileSync(k, original);
+    fs.writeFileSync(path.join(ep, '.claude', 'skills', 'wsg-epic-sync', 'SKILL.md'), '---\nname: wsg-epic-sync\ndescription: x\n---\n');
+    it('a skill that may fire on its own warns', () => assert.match(wsg(['check', ep], { env }).out, /WARN skill wsg-epic-sync may fire on its own/));
+    fs.unlinkSync(path.join(ep, '.claude', 'rules', 'epic-knowledge.md'));
+    it('a missing pointer rule warns', () => assert.match(wsg(['check', ep], { env }).out, /WARN no \.claude\/rules\/epic-knowledge\.md/));
+    it('the pointer rule in a task is not exempt from paths:', () => {
+      const t = path.join(epicRoot, 'plain');
+      wsg(['new', 'plain', '--no-launch'], { env });
+      fs.writeFileSync(path.join(t, '.claude', 'rules', 'epic-knowledge.md'), '# x\n');
+      assert.match(wsg(['check', t], { env }).out, /WARN epic-knowledge\.md — no paths/);
+    });
+
+    const before = tree(epicRoot);
+    const sk = wsg(['new', 'with-skill', '--kind', 'epic', '--skill', 'x', '--no-launch'], { env });
+    it('--skill on an epic: exit 2', () => {
+      assert.strictEqual(sk.code, 2, sk.all);
+      assert.match(sk.err, /--skill is only for --kind process/);
+    });
+    const bk = wsg(['new', 'p6', '--kind', 'story', '--no-launch'], { env });
+    it('an unknown kind names the three', () => {
+      assert.strictEqual(bk.code, 2, bk.all);
+      assert.match(bk.err, /--kind is task, process or epic, not story/);
+    });
+    it('and they created nothing', () => assert.deepStrictEqual(tree(epicRoot), before));
+    for (const lang of ['en', 'ru']) {
+      it(`wsg help new (${lang}) describes the epic kind`, () => {
+        const h = wsg(['help', 'new'], { env: { WSG_LANG: lang } }).out;
+        assert.match(h, /--kind task\|process\|epic/);
+        assert.match(h, /epic: /);
+      });
+      it(`wsg help guide (${lang}) names the epic guide`, () => assert.match(wsg(['help', 'guide'], { env: { WSG_LANG: lang } }).out, /^ {2}epic {2,}/m));
+    }
+  }
+
   console.log('\nlaunching the agent');
   {
     it('claude gets /wsg-setup as its first message', () => {
@@ -2706,7 +2924,18 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       assert.strictEqual(ga.code, 0);
       assert.strictEqual(ga.out, advisorGuide);
     });
-    it('an unknown guide names the topics there are', () => assert.match(wsg(['guide', 'nope']).err, /advisor, setup/));
+    it('an unknown guide names the topics there are', () => assert.match(wsg(['guide', 'nope']).err, /advisor, epic, setup/));
+    const ge = wsg(['guide', 'epic']);
+    it('wsg guide epic prints the epic guide', () => {
+      assert.strictEqual(ge.code, 0);
+      assert.strictEqual(ge.out, fs.readFileSync(path.join(ROOT, 'docs', 'epic-guide.md'), 'utf8'));
+    });
+    // The guide describes the epic as it will work: these flags come with the commits that add them.
+    const LATER = ['wsg new has no --epic', 'wsg new has no --sources', 'wsg new has no --dry-run', 'wsg add has no --branch-template',
+      'no such flag: --sources', 'no such flag: --branch-template'];
+    it('every other wsg command and flag in the epic guide exists', () =>
+      assert.deepStrictEqual(flagProblems(ge.out).filter((p) => !LATER.includes(p)), []));
+    it('the epic guide stays agent-neutral', () => assert.doesNotMatch(ge.out, /Agent tool|subagent_type|\bTask tool\b/));
     it('every wsg command and flag in the advisor guide exists', () => assert.deepStrictEqual(flagProblems(advisorGuide), []));
     it('every wsg command and flag in the agent file exists', () => assert.deepStrictEqual(flagProblems(agentTpl), []));
     it('the advisor guide covers the evidence order, the caller and the inline mode', () => {
@@ -3214,7 +3443,8 @@ wait`;
     try { files = JSON.parse(r.stdout)[0].files.map((f) => f.path); } catch { /* reported below */ }
     it('ships the templates and the guide', () => {
       for (const f of ['templates/claude/wsg-setup/SKILL.md', 'templates/claude/wsg-new/SKILL.md', 'templates/claude/agents/wsg-advisor.md',
-        'templates/codex/agents/wsg-advisor.toml', 'docs/setup-guide.md', 'docs/advisor-guide.md']) assert.ok(files.includes(f), f);
+        'templates/codex/agents/wsg-advisor.toml', 'docs/setup-guide.md', 'docs/advisor-guide.md', 'docs/epic-guide.md',
+        'templates/claude/wsg-epic-task/SKILL.md', 'templates/claude/wsg-epic-close/SKILL.md', 'templates/claude/wsg-epic-sync/SKILL.md']) assert.ok(files.includes(f), f);
     });
     it('ships no interview', () => assert.ok(!files.some((f) => /interview|pathPrompt/.test(f))));
     const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));

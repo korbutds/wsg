@@ -796,7 +796,7 @@ try {
     it('the guide names the six roles, the scope rule and the owner\'s ok', () => {
       for (const s of ['`pm`, `designer`, `frontend`, `backend`, `devops`,\n`reviewer`', '`.claude/rules/<repo>.md`', '`notes.md`', 'Wait for "ok"', 'At 180 index lines', 'auto memory turned on', 'first 200 lines or 25 KB']) assert.ok(guide.out.includes(s), s);
     });
-    it('an unknown topic lists teach among the guides', () => assert.match(wsg(['guide', 'nope']).err, /available — advisor, setup, teach/));
+    it('an unknown topic lists teach among the guides', () => assert.match(wsg(['guide', 'nope']).err, /available — advisor, epic, setup, teach/));
     const seed = fs.readFileSync(path.join(ROOT, 'templates', 'team', 'memory-index.md'), 'utf8');
     it('the guide shows the seed index exactly as templates/team/memory-index.md holds it', () => {
       const m = /```markdown\n(# wsg-<role> practices\n[\s\S]*?)```/.exec(guide.out);
@@ -901,7 +901,7 @@ try {
   it('names wsg team and its flags', () => assert.match(wsg(['--help']).out, /wsg team <preset> \[--without ROLE,\.\.\.\] \[--dry-run\] \[--ws SLUG\|PATH\]/));
   it('names the teach guide and the wsg-teach skill', () => {
     const u = wsg(['--help']).out;
-    assert.match(u, /wsg guide \[setup\|advisor\|teach\]/);
+    assert.match(u, /wsg guide \[setup\|advisor\|teach\|epic\]/);
     assert.match(u, /wsg-new and wsg-teach skills/);
   });
 } finally {

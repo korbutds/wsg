@@ -17,19 +17,19 @@ agent start making mistakes?** If not, cut it or move it to a file that loads on
 The second rule: **don't duplicate what's already in the repository.** If the repo has its own
 `AGENTS.md` or `CLAUDE.md`, the workspace links to it or imports it, but doesn't rewrite it.
 
-## Two kinds of workspace
+## Kinds of workspace
 
-The kind is recorded in `.claude/ws-kind` (`task` or `process`) and determines what `wsg check` checks.
+The kind is recorded in `.claude/ws-kind` (`task`, `process` or `epic`) and determines what `wsg check` checks.
 
-| | **task** | **process** |
-|---|---|---|
-| lives | until the MR is merged | permanently |
-| bound to | ticket and branch | nothing: the ticket is a run argument |
-| main artifact | plan, spec, review materials | `.claude/skills/<name>/SKILL.md` |
-| log | `notes.md` → "Current context" | `journal.md` + `runs/<date>-<short-name>.md` |
-| branch | pinned at creation | new for each run, created by the skill |
-| memory | context of one task | accumulates across runs |
-| "done" | the task's acceptance criterion | the criterion of a single run |
+| | **task** | **process** | **epic** |
+|---|---|---|---|
+| lives | until the MR is merged | permanently | until the tracker epic is closed |
+| bound to | ticket and branch | nothing: the ticket is a run argument | the epic's ticket; no branch of its own |
+| main artifact | plan, spec, review materials | `.claude/skills/<name>/SKILL.md` | `knowledge.md` |
+| log | `notes.md` → "Current context" | `journal.md` + `runs/<date>-<short-name>.md` | `tasks.md`, `decisions.md` |
+| branch | pinned at creation | new for each run, created by the skill | one per task, in the task |
+| memory | context of one task | accumulates across runs | accumulates across its tasks |
+| "done" | the task's acceptance criterion | the criterion of a single run | each task's own |
 
 In a process, git sources are attached via **symlink**, not worktree: a process has no permanent
 branch, and a worktree would have to be kept in detached HEAD. The branch and, if needed, a
@@ -40,6 +40,21 @@ is launched only on the owner's command, not whenever the agent decides the mome
 
 A process is a repeatable engineering procedure — a release, a dependency upgrade, a routine
 migration.
+
+An epic is one tracker epic (`wsg new <slug> --kind epic`). Its tasks are ordinary task
+workspaces in directories of the epic. Beyond what a task has, the epic holds:
+
+| Path | What | Loaded |
+|---|---|---|
+| `CLAUDE.md` | the title, `@AGENTS.md`, the advisor block — a few hundred bytes: it loads in every session of the epic and of its tasks | always |
+| `knowledge.md` | `## Decisions`, `## Repositories`, `## Pitfalls`: the single source of truth for the epic's tasks, ≤ 4 KiB (8 KiB fails `wsg check`), rewritten rather than appended to | on demand |
+| `.claude/rules/epic-knowledge.md` | a pointer to `knowledge.md`, no `paths:` on purpose | always |
+| `tasks.md` | `<!-- wsg:tasks -->` — the tasks in this directory; below it the agent's Status and "Other tasks" from the tracker | on demand |
+| `decisions.md` | the rationale behind the decisions in `knowledge.md` | on demand |
+| `.claude/skills/wsg-epic-{task,close,sync}/` | manual wrappers over `wsg guide epic` | on demand |
+
+An epic has no `repo` pointer and no `mr-target-branch.txt`: those belong to its tasks. The
+procedures are in `wsg guide epic`, so any agent can follow them; the skills only point there.
 
 A task that turns out to be repeatable is turned into a process: `wsg promote <slug> --skill <name>`. Sources,
 rules and memory stay; a skill stub and a log with the first run are added. There is no reverse
@@ -73,7 +88,8 @@ each one is attached (`path`, `name`, `mode`, `branch`, `base`, `target`, `verif
 | `README.md` | `<!-- wsg:sources -->` — the sources table and the launch commands |
 | `.claude/skills/<skill>/SKILL.md` | in a process workspace with a team: `<!-- wsg:team -->` — one pointer line to `team/workflow.md`, written by `wsg team` after the first `# ` heading |
 | `.claude/settings.json` | `permissions.additionalDirectories` only; every other key stays |
-| whole files | `.claude/rules/<name>.md` (written when its source is attached), `mr-target-branch.txt`, the `repo` pointer |
+| `tasks.md` | in an epic: `<!-- wsg:tasks -->` — the epic's tasks in its directory |
+| whole files | `.claude/rules/<name>.md` (written when its source is attached), `mr-target-branch.txt`, the `repo` pointer (not in an epic) |
 
 Text that people and agents write — why, definition of done, out of scope, invariants, links, the
 ticket — lives only in `AGENTS.md`, outside the markers, and never in `wsg.json`: a copy there would

@@ -141,8 +141,8 @@ async function cmdNew(args) {
   const { flags, pos } = parse(args, FLAGS.new, 1);
   if (!pos[0]) invalid(t('cli.newSlug'));
   const kind = flags['--kind'] || 'task';
-  if (kind !== 'task' && kind !== 'process') invalid(t('cli.badKind', { kind }));
-  if (kind === 'task' && flags['--skill']) invalid(t('cli.skillForProcess'));
+  if (!lib('workspace').KINDS.includes(kind)) invalid(t('cli.badKind', { kind }));
+  if (kind !== 'process' && flags['--skill']) invalid(t('cli.skillForProcess'));
   const W = lib('workspace');
   const S = lib('source');
   // The skill named after the slug: a slug the skill rules reject asks for --skill, not another slug.
