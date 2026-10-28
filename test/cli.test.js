@@ -148,6 +148,123 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     it('and creates no workspace', () => assert.ok(!fs.existsSync(path.join(wsRoot, 'proc-escape'))));
   }
 
+  console.log('\nthe epic state and its tasks');
+  {
+    // Outside WS_ROOT: the epic's own commands come later, and a stray epic there would show up in
+    // every listing below.
+    const epics = path.join(tmp, 'epics');
+    const writeState = (dir, state) => {
+      fs.mkdirSync(path.join(dir, '.claude'), { recursive: true });
+      fs.writeFileSync(path.join(dir, W.STATE_FILE), JSON.stringify(state));
+      return dir;
+    };
+    const epicState = {
+      version: 3, kind: 'epic', slug: 'checkout-v2', title: 'Checkout', created: '2026-10-28', personalRules: true,
+      sources: [{ path: '/abs/api', name: 'api', mode: 'link', reference: false, target: 'main', verify: 'npm test', note: '',
+        carry: [], cloneNm: false, task: { branch: 'alice/task/{slug}/{ticket}', base: '', carry: ['.env'], cloneNm: true } }],
+    };
+    const childState = {
+      version: 2, kind: 'task', slug: 'first', title: 'First', created: '2026-10-28', personalRules: true, sources: [],
+      epic: { slug: 'checkout-v2' }, ticket: 'PROJ-42',
+    };
+    let n = 0;
+    const read = (state) => {
+      try { W.readState(writeState(path.join(tmp, 'states', String(n++)), state)); return ''; } catch (e) { return e.message; }
+    };
+    const withSource = (task) => ({ ...epicState, sources: [{ ...epicState.sources[0], task }] });
+    it('an epic at version 3 with task defaults reads', () => assert.strictEqual(read(epicState), ''));
+    it('a task of an epic with its ticket reads', () => assert.strictEqual(read(childState), ''));
+    it('an epic source without task defaults reads', () => assert.strictEqual(read(withSource(undefined)), ''));
+    it('an unknown kind is refused', () => assert.match(read({ ...childState, kind: 'story' }), /cannot read .*"kind" must be one of task, process, epic/));
+    it('a state without a kind is refused', () => assert.match(read({ version: 2, sources: [] }), /"kind"/));
+    it('an epic at version 2 is refused', () => assert.match(read({ ...epicState, version: 2 }), /expected version 3/));
+    it('a task at version 3 is refused', () => assert.match(read({ ...childState, version: 3 }), /expected version 2/));
+    it('a process at version 3 is refused', () =>
+      assert.match(read({ version: 3, kind: 'process', skillName: 'p', sources: [] }), /expected version 2/));
+    it('"epic" on a process is refused', () =>
+      assert.match(read({ version: 2, kind: 'process', skillName: 'p', sources: [], epic: { slug: 'checkout-v2' } }), /"epic" belongs only to a task/));
+    it('"epic" on an epic is refused', () => assert.match(read({ ...epicState, epic: { slug: 'other' } }), /"epic" belongs only to a task/));
+    for (const [what, epic] of [['a string', 'checkout-v2'], ['a slug that is not kebab-case', { slug: '../x' }],
+      ['an extra key', { slug: 'checkout-v2', path: '/x' }], ['no slug', {}], ['null', null]]) {
+      it(`"epic" as ${what} is refused`, () => assert.match(read({ ...childState, epic }), /"epic" belongs only to a task/));
+    }
+    it('"ticket" without "epic" is refused', () => {
+      const { epic, ...plain } = childState;
+      assert.match(read(plain), /"ticket" belongs only to a task of an epic/);
+    });
+    for (const [what, ticket] of [['empty', ''], ['blank', '  '], ['a number', 42]]) {
+      it(`"ticket" ${what} is refused`, () => assert.match(read({ ...childState, ticket }), /"ticket" belongs only/));
+    }
+    it('"task" on a source of a task is refused', () =>
+      assert.match(read({ ...childState, sources: [{ name: 'api', task: epicState.sources[0].task }] }), /source api: "task" belongs only to an epic/));
+    const task = epicState.sources[0].task;
+    for (const [what, bad] of [['without cloneNm', { branch: 'b', base: '', carry: [] }], ['with an extra key', { ...task, verify: 'x' }],
+      ['with carry "all"', { ...task, carry: 'all' }], ['with a number in carry', { ...task, carry: [1] }],
+      ['with a branch that is not a string', { ...task, branch: null }], ['with cloneNm as a string', { ...task, cloneNm: 'yes' }],
+      ['as a list', []]]) {
+      it(`"task" ${what} is refused`, () => assert.match(read(withSource(bad)), /"task" belongs only to an epic/));
+    }
+    it('"task" on a reference is refused', () =>
+      assert.match(read({ ...epicState, sources: [{ ...epicState.sources[0], reference: true }] }), /source api: "task" belongs only to an epic source that is not a reference/));
+    it('"task" on a source without a name names it by number', () =>
+      assert.match(read({ ...childState, sources: [{ path: '/x' }, { task }] }), /source #2: "task"/));
+    it('stateProblem is the same check without a file', () => {
+      assert.strictEqual(W.stateProblem(epicState), '');
+      assert.match(W.stateProblem({ ...epicState, version: 2 }), /expected version 3/);
+    });
+
+    const epic = writeState(path.join(epics, 'checkout-v2'), epicState);
+    const bad = (a) => { try { W.assertSafe({ kind: 'task', epicWs: epic, ...a }, cfg); return ''; } catch (e) { return e.message; } };
+    it('a task path that leaves the epic is refused', () => assert.throws(() => W.childPath(epic, '../x'), /outside/));
+    it('a task path is inside the epic', () => assert.strictEqual(W.childPath(epic, 'first'), path.join(epic, 'first')));
+    it('a task of an epic is placed in the epic', () => assert.strictEqual(W.assertSafe({ kind: 'task', slug: 'first', epicWs: epic }, cfg), path.join(epic, 'first')));
+    it('a task named like a file of the epic is refused', () => assert.match(bad({ slug: 'runs' }), /can't be named runs: the epic uses/));
+    it('a task named team is refused', () => assert.match(bad({ slug: 'team' }), /can't be named team/));
+    it('a task named after a source of the epic is refused', () => assert.match(bad({ slug: 'api' }), /the epic has a source by that name/));
+    it('so is one that differs from it only in case', () => {
+      const upper = writeState(path.join(epics, 'upper'), { ...epicState, slug: 'upper', sources: [{ ...epicState.sources[0], name: 'Api' }] });
+      assert.match(bad({ slug: 'api', epicWs: upper }), /the epic has a source by that name/);
+    });
+    it('a process inside an epic is refused', () => assert.match(bad({ slug: 'p', kind: 'process', skillName: 'p' }), /only a task goes inside an epic, not kind process/));
+    it('an epic inside an epic is refused', () => assert.match(bad({ slug: 'e', kind: 'epic' }), /only a task goes inside an epic, not kind epic/));
+    it('an unknown kind is refused', () => assert.match(bad({ slug: 'x', kind: 'story' }), /workspace kind story/));
+    it('a missing kind is refused', () => assert.match(bad({ slug: 'x', kind: undefined }), /workspace kind undefined/));
+    it('a missing epic directory is refused cleanly', () => assert.match(bad({ slug: 'x', epicWs: path.join(epics, 'gone') }), /gone is not an epic/));
+    const unreadable = path.join(epics, 'unreadable');
+    fs.mkdirSync(path.join(unreadable, '.claude'), { recursive: true });
+    fs.writeFileSync(path.join(unreadable, W.STATE_FILE), '{');
+    it('an epic whose state does not parse is refused', () => assert.match(bad({ slug: 'x', epicWs: unreadable }), /cannot read/));
+    const answers = { kind: 'task', title: 'T', problem: ['p'], dod: [], links: [], invariants: [], repos: [] };
+    const e3 = await failure(() => generate.run({ ...answers, slug: 'orphan', epicWs: path.join(epics, 'gone') }, cfg));
+    it('generate.run refuses a task of a missing epic', () => assert.match(e3, /is not an epic/));
+    it('and creates nothing', () => {
+      assert.ok(!fs.existsSync(path.join(epics, 'gone')));
+      assert.ok(!fs.existsSync(path.join(wsRoot, 'orphan')));
+    });
+    fs.mkdirSync(path.join(epic, 'taken'));
+    it('a task that exists in the epic is refused', () => assert.match(bad({ slug: 'taken' }), /already exists/));
+    fs.symlinkSync(path.join(tmp, 'nowhere'), path.join(epic, 'dangling'));
+    it('so is a dangling link by that name', () => assert.match(bad({ slug: 'dangling' }), /already exists/));
+    it('a task of an epic still needs a kebab-case slug', () => assert.match(bad({ slug: '../x' }), /slug \.\.\/x/));
+    const notEpic = writeState(path.join(epics, 'plain'), { ...childState, slug: 'plain', epic: undefined, ticket: undefined });
+    it('a task only goes into an epic', () => assert.match(bad({ slug: 'first', epicWs: notEpic }), /is not an epic/));
+    it('without an epic the slug is placed in WS_ROOT as before', () => assert.strictEqual(W.assertSafe({ kind: 'task', slug: 'runs' }, cfg), path.join(wsRoot, 'runs')));
+
+    const first = writeState(path.join(epic, 'first'), childState);
+    writeState(path.join(epic, 'stray'), { ...childState, slug: 'stray', epic: { slug: 'other-epic' } });
+    writeState(path.join(epic, 'broken'), { ...childState, slug: 'broken', version: 9 });
+    writeState(path.join(epic, 'another'), { ...childState, slug: 'another', ticket: 'PROJ-43' });
+    // A source link to a directory that holds a task state is still a link, not a task.
+    const outsideTask = writeState(path.join(tmp, 'outside-task'), { ...childState, slug: 'outside-task' });
+    fs.symlinkSync(outsideTask, path.join(epic, 'linked'));
+    it('the epic of a task is the directory above it', () => assert.strictEqual(W.epicOf(first, W.readState(first)), epic));
+    it('a task outside an epic has none', () => assert.strictEqual(W.epicOf(notEpic, W.readState(notEpic)), null));
+    it("the epic's tasks: sorted, a foreign one flagged, broken and linked ones left out", () =>
+      assert.deepStrictEqual(W.childrenOf(epic).map((c) => [path.basename(c.ws), c.state.ticket, c.mismatch]),
+        [['another', 'PROJ-43', false], ['first', 'PROJ-42', false], ['stray', 'PROJ-42', true]]));
+    it('the tasks of something that is not an epic are refused', () => assert.throws(() => W.childrenOf(notEpic), /is not an epic/));
+  }
+
   console.log('\nwsg new');
   const demo = path.join(wsRoot, 'demo');
   {
@@ -1926,6 +2043,22 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     it('the old --promote spelling still works', () => {
       wsg(['new', 'to-promote-2', '--no-launch']);
       assert.strictEqual(wsg(['--promote', 'to-promote-2', '--skill', 'x']).code, 0);
+    });
+    // <task>/<source> looks like <epic>/<task>: it must not reach the source through its link.
+    // A folder of notes with a CLAUDE.md and no .git is what promote takes for a 0.1 workspace.
+    const target = path.join(tmp, 'promote-target');
+    fs.mkdirSync(target);
+    fs.writeFileSync(path.join(target, 'CLAUDE.md'), '# notes\n');
+    wsg(['new', 'promote-host', '--no-launch']);
+    const added = wsg(['add', target, '--reference', '--ws', 'promote-host']);
+    it('a source is linked into the host', () => {
+      assert.strictEqual(added.code, 0, added.all);
+      assert.ok(fs.lstatSync(path.join(wsRoot, 'promote-host', 'promote-target')).isSymbolicLink());
+    });
+    const r3 = wsg(['promote', 'promote-host/promote-target', '--skill', 'rel']);
+    it('promote <task>/<source> is not a workspace in WS_ROOT', () => assert.notStrictEqual(r3.code, 0, r3.all));
+    it('and writes nothing into the source', () => {
+      for (const f of ['journal.md', 'runs', '.claude']) assert.ok(!fs.existsSync(path.join(target, f)), f);
     });
   }
 

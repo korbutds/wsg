@@ -368,6 +368,56 @@ process.on('exit', () => {
     it('a slug is looked up in WS_ROOT', () => assert.strictEqual(config.resolveWs('oauth', cfg), path.join(wsRoot, 'oauth')));
     it('a dot is the current directory, not WS_ROOT', () => assert.strictEqual(config.resolveWs('.', cfg), process.cwd()));
     it('a path with ~ is expanded', () => assert.strictEqual(config.resolveWs('~/w/x', cfg), path.join(os.homedir(), 'w/x')));
+    {
+      // In WS_ROOT: an epic with a task and a source link, a plain task with a link and a directory.
+      // Resolved from an empty directory, where none of these paths exist.
+      const state = (dir, st) => {
+        fs.mkdirSync(path.join(dir, '.claude'), { recursive: true });
+        fs.writeFileSync(path.join(dir, '.claude', 'wsg.json'), JSON.stringify({ sources: [], ...st }));
+      };
+      const ep = path.join(wsRoot, 'resolve-epic');
+      state(ep, { version: 3, kind: 'epic', slug: 'resolve-epic' });
+      state(path.join(ep, 'first'), { version: 2, kind: 'task', slug: 'first', epic: { slug: 'resolve-epic' } });
+      fs.symlinkSync(docs, path.join(ep, 'docs'));
+      const plain = path.join(wsRoot, 'resolve-plain');
+      state(plain, { version: 2, kind: 'task', slug: 'resolve-plain' });
+      fs.symlinkSync(docs, path.join(plain, 'docs'));
+      fs.mkdirSync(path.join(plain, 'real'));
+      const broken = path.join(wsRoot, 'resolve-broken');
+      fs.mkdirSync(path.join(broken, '.claude', 'x'), { recursive: true });
+      fs.writeFileSync(path.join(broken, '.claude', 'wsg.json'), '{');
+      fs.mkdirSync(path.join(broken, 'real'));
+      const empty = path.join(tmp, 'resolve-here');
+      fs.mkdirSync(empty);
+      const from = (dir, fn) => {
+        const cwd = process.cwd();
+        process.chdir(dir);
+        try { return fn(); } finally { process.chdir(cwd); }
+      };
+      const at = (target) => from(empty, () => config.resolveWs(target, cfg));
+      const here = (rel) => path.join(fs.realpathSync(empty), rel);
+      it('<epic>/<task> is a task of an epic in WS_ROOT', () => assert.strictEqual(at('resolve-epic/first'), path.join(ep, 'first')));
+      it('with a trailing slash too', () => assert.strictEqual(at('resolve-epic/first/'), path.join(ep, 'first')));
+      it('<epic>/<source link> stays relative', () => assert.strictEqual(at('resolve-epic/docs'), here('resolve-epic/docs')));
+      it('<plain task>/<source link> stays relative', () => assert.strictEqual(at('resolve-plain/docs'), here('resolve-plain/docs')));
+      it('<plain task>/<directory> stays relative', () => assert.strictEqual(at('resolve-plain/real'), here('resolve-plain/real')));
+      it('under a state that does not read it stays relative', () => assert.strictEqual(at('resolve-broken/real'), here('resolve-broken/real')));
+      it('a task missing from the epic stays relative', () => assert.strictEqual(at('resolve-epic/gone'), here('resolve-epic/gone')));
+      it('an existing relative path still wins', () => {
+        fs.mkdirSync(path.join(empty, 'resolve-epic', 'first'), { recursive: true });
+        try { assert.strictEqual(at('resolve-epic/first'), here('resolve-epic/first')); } finally { fs.rmSync(path.join(empty, 'resolve-epic'), { recursive: true }); }
+      });
+      it('so does a dangling link by that path', () => {
+        fs.mkdirSync(path.join(empty, 'resolve-epic'));
+        fs.symlinkSync(path.join(tmp, 'nowhere'), path.join(empty, 'resolve-epic', 'first'));
+        try { assert.strictEqual(at('resolve-epic/first'), here('resolve-epic/first')); } finally { fs.rmSync(path.join(empty, 'resolve-epic'), { recursive: true }); }
+      });
+      it('a deeper or non-kebab path stays relative', () => {
+        assert.strictEqual(at('resolve-epic/first/x'), here('resolve-epic/first/x'));
+        assert.strictEqual(at('./resolve-epic'), here('resolve-epic'));
+        assert.strictEqual(at('Resolve-epic/first'), here('Resolve-epic/first'));
+      });
+    }
     it('a path with a space is printed quoted', () => assert.strictEqual(T.sh("/a b/c'd"), `'/a b/c'\\''d'`));
     it('a plain path is printed as is', () => assert.strictEqual(T.sh('/a/b-c'), '/a/b-c'));
     it('a bare ticket number is kept for the tracker prefix', () => assert.strictEqual(source.parseTicket('412'), '412'));

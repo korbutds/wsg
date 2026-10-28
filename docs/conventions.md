@@ -77,7 +77,8 @@ each one is attached (`path`, `name`, `mode`, `branch`, `base`, `target`, `verif
 
 Text that people and agents write — why, definition of done, out of scope, invariants, links, the
 ticket — lives only in `AGENTS.md`, outside the markers, and never in `wsg.json`: a copy there would
-drift from what the agent reads. Text outside the markers is never modified. A marker pair deleted
+drift from what the agent reads. One exception: a task inside an epic keeps the parsed ticket key
+in `wsg.json` as well, written once by `wsg new`, for the epic's branch templates. Text outside the markers is never modified. A marker pair deleted
 by hand is put back with a warning (a block new in this wsg version is added with a note that it is new); half a pair, or a `settings.json` that doesn't parse, makes
 `wsg add` refuse before it changes anything.
 
@@ -89,9 +90,11 @@ Workspaces created by wsg 0.1 have no `wsg.json`: `wsg check` reports on them as
 A source can't take a name the workspace uses itself — the template would be written through its
 symlink, over a file outside the workspace: `CLAUDE.md`, `AGENTS.md`, `README.md`, `notes.md`,
 `SETUP.md`, `journal.md`, `runs`, `mr-target-branch.txt`, `requirements.md`, `design.md`, `plan.md`,
-`review.md`, `team`, `.claude`, `.claude-memory`, `.learnings`, `.git` (compared case-insensitively).
-`repo` is allowed: the pointer is not created then. Workspace slugs and skill names are kebab-case;
-the `wsg-` prefix is reserved for the skills wsg writes itself.
+`review.md`, `team`, `tasks.md`, `decisions.md`, `knowledge.md`, `.claude`, `.claude-memory`,
+`.learnings`, `.git` (compared case-insensitively). `repo` is allowed: the pointer is not created
+then. A task inside an epic can't take these names either, nor the name of one of the epic's
+sources. Workspace slugs and skill names are kebab-case; the `wsg-` prefix is reserved for the
+skills wsg writes itself.
 
 ## Team
 
