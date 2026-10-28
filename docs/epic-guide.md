@@ -69,18 +69,34 @@ From the epic session (`/wsg-epic-sync` in Claude Code), and as step 1 of Starti
 
 ## Adding a repository
 
-From the epic session. A repository of an epic is a link to its shared checkout; its tasks get
-their own worktrees from it.
+From the epic session. A repository of an epic is a link to its shared checkout, with the defaults
+its tasks reuse; each task gets its own worktree of it.
 
-1. Run it with `--dry-run` first and show the owner the plan:
+1. Inspect the repository as the setup guide says: the branch naming convention
+   (`git -C <repo> for-each-ref --sort=-committerdate --format='%(refname:short)' refs/heads`),
+   the default branch, the verification command.
+2. Run it with `--dry-run` first and show the owner the plan:
 
    ```bash
-   wsg add <path> --branch-template '<user>/task/{slug}/{ticket}' [--base REF] [--carry a,b] \
-     [--[no-]clone-node-modules] [--verify CMD] --dry-run
+   wsg add <path> --branch-template '<user>/task/{slug}/{ticket}' [--base REF] [--carry all|none|a,b] \
+     [--[no-]clone-node-modules] [--target T] [--verify CMD] --dry-run
    ```
 
-   `{slug}` and `{ticket}` are the only placeholders. Without `--branch-template` the repository is
-   linked into each task instead; `--reference` attaches material outside git, never branched.
-2. After "ok", run it without `--dry-run`. Tasks created afterwards may take it with `--sources`;
+   - `--branch-template` follows the repository's convention. `{slug}` (the task's directory) and
+     `{ticket}` (its ticket key) are the only placeholders, at least one is required, and the plan
+     shows a sample branch (`task.sampleBranch`). Quote it: the braces are literal.
+   - `--base` is what a task's branch starts from; without it, `origin/<target>`.
+   - `--carry` picks the ignored files each task's worktree gets (`task.carryCandidates`): `all` by
+     default, resolved to the list there is now.
+   - `--target` and `--verify` are the repository's own, and its tasks reuse them.
+   - Without `--branch-template` the repository is linked into each task as is, and `--base`,
+     `--carry` and `--[no-]clone-node-modules` are refused. `--worktree`, `--branch` and
+     `--reset-to-base` are always refused: an epic has no branch of its own. `--reference`
+     attaches material outside git, never branched.
+3. After "ok", run it without `--dry-run`. Tasks created afterwards may take it with `--sources`;
    an existing task takes it with `wsg add <name>` from its own directory.
-3. Record what the repository is for in `knowledge.md` → Repositories.
+4. Record what the repository is for in `knowledge.md` → Repositories; its facts go into
+   `.claude/rules/<repo>.md`, which loads in the epic and in each task that reads the repository.
+
+`wsg remove <name>` drops the link and its defaults; tasks that already have the repository keep
+their worktrees and branches, and the removal names them.

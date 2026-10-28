@@ -58,6 +58,10 @@ a release, a dependency upgrade, a routine migration. Ask instead: what the proc
 tell a single run is finished. Its steps are not asked now — they are worked out with the owner on
 the first run and written into its skill. Its repositories are attached as links.
 
+**An epic workspace** (`.claude/ws-kind` says `epic`) attaches its repositories as links too, with
+the defaults its tasks reuse: follow `wsg guide epic` → Adding a repository for each one
+(`--branch-template` sets the branch every task gets a worktree on).
+
 ## 2. Sources
 
 At least one git repository is required; setup is not finished without one. For each repository

@@ -232,6 +232,7 @@ async function cmdAdd(args) {
     carry: flags['--carry'],
     cloneNm: flags['--clone-node-modules'] ? true : flags['--no-clone-node-modules'] ? false : undefined,
     note: flags['--note'],
+    branchTemplate: flags['--branch-template'],
   };
   const res = S.resolve(pos[0], opts, { ws, state });
   // What the generated files would become is worked out before anything changes: a settings.json

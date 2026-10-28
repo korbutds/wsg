@@ -71,6 +71,11 @@ repository: until it has one, `wsg check` warns that setup is not finished.
 | git repository you read | `--link`: symlink + `additionalDirectories` |
 | reference directory, no git | `--reference`: symlink + `additionalDirectories`, described in the layout |
 
+In an epic every git repository is a link: the epic has no branch of its own. `--branch-template`
+(`{slug}`, `{ticket}`) gives each task of the epic a worktree of it, with `--base`, `--carry` and
+`--[no-]clone-node-modules` as that worktree's defaults; without a template the repository is linked
+into each task as is. Its `.claude/rules/<name>.md` loads in the epic and in each task that reads it.
+
 A reference directory is material the task works from, not code it changes. The rule for it asks
 the agent to change files there only when the owner asks — a prompt, not a permission: nothing
 makes it read-only.
@@ -79,7 +84,8 @@ makes it read-only.
 
 `.claude/wsg.json` is the single source of truth for what the generator owns: the sources and how
 each one is attached (`path`, `name`, `mode`, `branch`, `base`, `target`, `verify`, `note`, `carry`,
-`cloneNm`, `reference`), plus the kind, slug and title. Every `wsg add` re-renders from it:
+`cloneNm`, `reference`, and in an epic `task: { branch, base, carry, cloneNm }`, the defaults its
+tasks get), plus the kind, slug and title. Every `wsg add` re-renders from it:
 
 | Where | What |
 |---|---|
