@@ -13,9 +13,11 @@ allowed-tools: Bash(wsg *)
    task — lowercase Latin letters, digits and hyphens, e.g. `oauth-refresh` or `faq-admin`.
 2. Pass a one-line title (`--title "…"`) or a ticket key or URL (`--ticket …`) only if the person
    gave one. For a repeatable engineering procedure (a release, a dependency upgrade) add
-   `--kind process --skill <name>`.
+   `--kind process`: its skill is named after the slug; `--skill <name>` only if the person wants
+   another name.
 3. Run `wsg new <slug> --no-launch` with those flags. Exit code 2 means the input was rejected and
-   nothing was created: show the message and agree on another slug.
+   nothing was created: show the message and do what it asks — agree on another slug, or pass
+   `--skill <name>`.
 4. Don't set the workspace up from this session. Tell the person to start a new one there —
    `ws <slug>` and then `/wsg-setup`, or `cd <path> && claude "/wsg-setup"` — because settings,
    rules and agents load from the directory a session starts in.

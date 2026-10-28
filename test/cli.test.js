@@ -215,7 +215,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       ['../x', ['new', '../x', '--no-launch']],
       ['an uppercase slug', ['new', 'Demo', '--no-launch']],
       ['an existing slug', ['new', 'demo', '--no-launch']],
-      ['a process without --skill', ['new', 'p1', '--kind', 'process', '--no-launch']],
+      ['a process named wsg-… without --skill', ['new', 'wsg-p1', '--kind', 'process', '--no-launch']],
       ['--skill on a task', ['new', 'p2', '--skill', 'x', '--no-launch']],
       ['an unknown kind', ['new', 'p3', '--kind', 'chore', '--no-launch']],
       ['an unknown flag', ['new', 'p4', '--titel', 'x']],
@@ -225,6 +225,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     for (const [name, args] of rejected) {
       const rr = wsg(args);
       it(`${name}: exit 2`, () => assert.strictEqual(rr.code, 2, rr.all));
+      if (args[1] === 'wsg-p1') it('the wsg-… process asks for --skill', () => assert.match(rr.err, /named after the slug[\s\S]*--skill <name>/));
     }
     it('rejected runs created nothing', () => assert.deepStrictEqual(tree(wsRoot), before));
 
@@ -234,6 +235,12 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       for (const f of ['.claude/skills/release/SKILL.md', 'journal.md', 'runs']) assert.ok(fs.existsSync(path.join(wsRoot, 'release-flow', f)), f);
     });
     it('a new process passes its check', () => assert.strictEqual(wsg(['check', 'release-flow']).code, 0));
+    const bare = wsg(['new', 'deps-upgrade', '--kind', 'process', '--no-launch']);
+    it('a process without --skill gets a skill named after the slug', () => {
+      assert.strictEqual(bare.code, 0, bare.all);
+      assert.ok(fs.existsSync(path.join(wsRoot, 'deps-upgrade', '.claude', 'skills', 'deps-upgrade', 'SKILL.md')));
+      assert.strictEqual(JSON.parse(fs.readFileSync(path.join(wsRoot, 'deps-upgrade', '.claude', 'wsg.json'), 'utf8')).skillName, 'deps-upgrade');
+    });
 
     const memory = path.join(tmp, 'rules.md');
     fs.writeFileSync(memory, '# my rules\n');
@@ -1443,6 +1450,45 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       assert.match(b.err, /cannot read settings/);
     });
     it('the usage names exit 130', () => assert.match(wsg(['--help']).out, /130/));
+
+    // A command's help: every flag it takes is described, and asking for it touches nothing.
+    const { FLAGS } = require(path.join(ROOT, 'lib', 'flags.js'));
+    for (const [lang, name] of [...Object.keys(FLAGS).map((n) => ['en', n]), ...Object.keys(FLAGS).map((n) => ['ru', n])]) {
+      const h = wsg(['help', name], { env: { WSG_LANG: lang } });
+      it(`wsg help ${name} (${lang}): exit 0, names the command`, () => {
+        assert.strictEqual(h.code, 0, h.all);
+        assert.match(h.out, new RegExp(`^wsg ${name}\\b`, 'm'));
+      });
+      for (const flag of Object.keys(FLAGS[name])) {
+        // --clone-node-modules and --no-clone-node-modules are described as one --[no-]clone-node-modules.
+        const pair = `--[no-]${flag.replace(/^--(no-)?/, '')}`;
+        it(`wsg help ${name} (${lang}) describes ${flag}`, () => assert.ok(h.out.includes(flag) || h.out.includes(pair), flag));
+      }
+      if (lang === 'en') {
+        it(`wsg ${name} --help is the same text`, () => assert.strictEqual(wsg([name, '--help']).out, h.out));
+        it(`wsg ${name} -h is the same text`, () => assert.strictEqual(wsg([name, '-h']).out, h.out));
+        it(`wsg help ${name} works with a broken config`, () => assert.strictEqual(wsg(['help', name], { env: { WSG_CONFIG: broken } }).code, 0));
+      }
+    }
+    it('the usage points to wsg help', () => assert.match(wsg(['--help']).out, /wsg help <command>/));
+    it('wsg --check --help is the help of check', () => assert.strictEqual(wsg(['--check', '--help']).out, wsg(['help', 'check']).out));
+    it('wsg --promote -h is the help of promote', () => assert.strictEqual(wsg(['--promote', '-h']).out, wsg(['help', 'promote']).out));
+    it('--help as a value is not help: add x --note --help runs add', () => {
+      const r = wsg(['add', 'x', '--note', '--help'], { env: { WSG_CONFIG: broken } });
+      assert.strictEqual(r.code, 1, r.all);
+      assert.match(r.err, /cannot read settings/);
+    });
+    it('wsg help of an unknown command: exit 2', () => assert.strictEqual(wsg(['help', 'nosuch']).code, 2));
+    it('wsg help with two commands: exit 2', () => assert.strictEqual(wsg(['help', 'new', 'add']).code, 2));
+    {
+      const before = tree(wsRoot);
+      const h = wsg(['new', '--help']);
+      it('wsg new --help prints help and creates nothing', () => {
+        assert.strictEqual(h.code, 0, h.all);
+        assert.match(h.out, /--title T/);
+        assert.deepStrictEqual(tree(wsRoot), before);
+      });
+    }
   }
 
   console.log('\nwsg remove');
@@ -1936,6 +1982,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       for (const span of codeSpans(text)) {
         for (const m of span.matchAll(/(?:^|[\s(])(?:wsg|node "<WSG_CLI>")\s+([a-z][a-z-]*)([^|&;]*)/g)) {
           const cmd = m[1];
+          if (cmd === 'help') continue;
           if (!FLAGS[cmd]) { out.push(`unknown command: wsg ${cmd}`); continue; }
           for (const f of m[2].match(/--[a-z][a-z-]*/g) || []) if (!(f in FLAGS[cmd])) out.push(`wsg ${cmd} has no ${f}`);
         }
@@ -2601,11 +2648,11 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     it('README names refresh, install-skills --uninstall and the advisor guide', () => {
       for (const x of ['`wsg refresh [--dry-run] [--ws SLUG\\|PATH]`', '`wsg install-skills [--uninstall]`', '`wsg guide [setup\\|advisor\\|teach]`', '## Advisor', '**Codex.**', 'docs/advisor-guide.md']) assert.ok(readme.includes(x), x);
     });
-    it('the version is 0.4.0, in package.json and its lock', () => {
-      assert.strictEqual(wsg(['--version']).out, '0.4.0\n');
+    it('the version is 0.4.1, in package.json and its lock', () => {
+      assert.strictEqual(wsg(['--version']).out, '0.4.1\n');
       const lock = JSON.parse(fs.readFileSync(path.join(ROOT, 'package-lock.json'), 'utf8'));
-      assert.strictEqual(lock.version, '0.4.0');
-      assert.strictEqual(lock.packages[''].version, '0.4.0');
+      assert.strictEqual(lock.version, '0.4.1');
+      assert.strictEqual(lock.packages[''].version, '0.4.1');
     });
 
     const bare = wsg([]);

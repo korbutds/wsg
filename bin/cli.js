@@ -38,7 +38,7 @@ try {
 const cmd = argv[0];
 const rest = argv.slice(1);
 
-if (cmd === undefined || cmd === '--help' || cmd === '-h' || cmd === 'help') {
+if (cmd === undefined || cmd === '--help' || cmd === '-h' || (cmd === 'help' && rest.length === 0)) {
   process.stdout.write(t('cli.usage'));
   process.exit(0);
 }
@@ -49,6 +49,22 @@ if (cmd === '--version' || cmd === '-v') {
 if (cmd === '--where') {
   process.stdout.write(`${ROOT}\n`);
   process.exit(0);
+}
+
+// A command's options: `wsg help <command>`, or `wsg <command> --help` as its only argument — only
+// then, so `--note --help` stays a value. Every command in lib/flags.js has a help.<command> text.
+{
+  const { FLAGS: COMMAND_FLAGS } = require(path.join(ROOT, 'lib', 'flags.js'));
+  const ALIASES = { '--check': 'check', '--promote': 'promote' };
+  const known = (c) => Object.prototype.hasOwnProperty.call(COMMAND_FLAGS, ALIASES[c] || c);
+  const asked = rest.length === 1 && (rest[0] === '--help' || rest[0] === '-h') && known(cmd);
+  if (cmd === 'help' || asked) {
+    const topic = cmd === 'help' ? rest[0] : cmd;
+    if (cmd === 'help' && rest.length > 1) invalid(t('cli.extraArg', { arg: rest[1] }));
+    if (!known(topic)) invalid(t('cli.unknownCommand', { cmd: topic }));
+    process.stdout.write(t(`help.${ALIASES[topic] || topic}`));
+    process.exit(0);
+  }
 }
 
 // The navigation function can't be a program: a child process can't change the
@@ -126,16 +142,21 @@ async function cmdNew(args) {
   if (!pos[0]) invalid(t('cli.newSlug'));
   const kind = flags['--kind'] || 'task';
   if (kind !== 'task' && kind !== 'process') invalid(t('cli.badKind', { kind }));
-  if (kind === 'process' && !flags['--skill']) invalid(t('cli.skillRequired'));
   if (kind === 'task' && flags['--skill']) invalid(t('cli.skillForProcess'));
   const W = lib('workspace');
   const S = lib('source');
+  // The skill named after the slug: a slug the skill rules reject asks for --skill, not another slug.
+  if (kind === 'process' && !flags['--skill'] && !W.slugError(pos[0])) {
+    const bad = W.skillError(pos[0]);
+    if (bad) invalid(t('workspace.badSkillFromSlug', { name: pos[0], why: bad }));
+  }
   const meta = {
     kind,
     slug: pos[0],
     title: (flags['--title'] || '').trim() || pos[0],
     ...S.ticketFields(flags['--ticket'], cfg),
-    skillName: flags['--skill'] || '',
+    // A process's skill is named after the slug unless --skill says otherwise.
+    skillName: flags['--skill'] || (kind === 'process' ? pos[0] : ''),
     // The digest of the owner's rules goes in whenever the file exists: the agent fills it during setup.
     personalRules: !!(cfg.WSG_GLOBAL_MEMORY && fs.existsSync(cfg.WSG_GLOBAL_MEMORY)),
   };

@@ -124,7 +124,7 @@ Look for evidence in this order, and stop at the first source that answers clear
    `cat <repo>/.git/packed-refs`) and run the planned `wsg add … --dry-run`.
 2. **The owner's rules.** The workspace `AGENTS.md` (Owner rules, Out of scope, Invariants),
    `notes.md`, `.claude/wsg.json`, and the personal rules file `AGENTS.md` names.
-3. **wsg facts.** The section below; `wsg --help`; the dry runs.
+3. **wsg facts.** The section below; `wsg --help` and `wsg help <command>`; the dry runs.
 4. **Sibling workspaces.** The workspace's parent directory is `WS_ROOT`: other workspaces there may
    have met the same ticket, spec or service. Search their knowledge files:
    `grep -ril '<ticket or term>' <WS_ROOT> --include=notes.md --include=AGENTS.md --include=LEARNINGS.md --include=ERRORS.md --exclude-dir=node_modules --exclude-dir=.git`

@@ -113,7 +113,7 @@ The commands the agent (or you) call:
 
 | Command | What it does |
 |---|---|
-| `wsg new <slug> [--title T] [--kind task\|process] [--skill NAME] [--ticket X] [--no-launch]` | Creates the skeleton and starts the agent; `--no-launch` prints the next step instead. |
+| `wsg new <slug> [--title T] [--kind task\|process] [--skill NAME] [--ticket X] [--no-launch]` | Creates the skeleton and starts the agent; `--no-launch` prints the next step instead. Only the slug is needed, and `--kind process` for a process: the setup dialogue asks for the rest. |
 | `wsg add <path> [--worktree\|--link\|--reference] [--branch B] [--base REF] [--reset-to-base] [--target T] [--verify CMD] [--carry all\|none\|a,b] [--[no-]clone-node-modules] [--note TEXT] [--dry-run] [--ws SLUG\|PATH]` | Attaches one source to the workspace you are in. An existing branch is attached as it is, one only on origin is continued; `--reset-to-base` starts it over (with a `backup/…`). Every check happens before anything is touched; a failure rolls back only this source. `--dry-run` prints the plan as JSON. |
 | `wsg remove <name> [--delete-ignored] [--dry-run] [--ws SLUG\|PATH]` | Detaches a source: a clean worktree (its branch is kept) or the symlink, its rule, and its generated parts. Ignored files that exist nowhere else (made in the worktree, or carried in and changed since) are deleted with the worktree only after `--delete-ignored`; a `node_modules` wsg cloned is not checked, so changes inside it are not protected. The way to fix a source attached with the wrong flags: remove, then add again. |
 | `wsg refresh [--dry-run] [--ws SLUG\|PATH]` | Brings the generated parts up to date with this wsg — e.g. adds the advisor block to a workspace made by 0.2 — and touches nothing else. `--dry-run` prints the files it would change as JSON. |
@@ -125,8 +125,9 @@ The commands the agent (or you) call:
 
 Exit codes: `0` ok, `1` the check found errors or a step failed and was rolled back, `2` invalid
 input — nothing was changed, `130` cancelled with Ctrl+C (or a closed terminal, `kill`) and rolled
-back. `--check` and `--promote` still work as aliases. `--help`, `--version`, `--where`,
-`shell-init`, `guide` and `install-skills` work even when the settings file can't be read.
+back. `--check` and `--promote` still work as aliases. `wsg help <command>` (or `wsg <command> --help`)
+describes a command's options. `--help`, `help`, `--version`, `--where`, `shell-init`, `guide` and
+`install-skills` work even when the settings file can't be read.
 
 What you get once setup is done:
 
@@ -164,7 +165,8 @@ A **task** is regular ticket work. A **process** is a repeatable engineering pro
 a dependency upgrade, a routine migration. A process keeps its procedure in a skill that is invoked
 manually (`/release 2.4`, or just `/release` to go through whatever is new), and its run log
 accumulates what broke last time. No tracker needed: runs are named by date.
-Create one with `wsg new <slug> --kind process --skill <name>`.
+Create one with `wsg new <slug> --kind process`: the skill is named after the slug, `--skill <name>`
+for another name.
 
 A task that turns out to be repeatable is turned into a process: `wsg promote <slug> --skill <name>`.
 
