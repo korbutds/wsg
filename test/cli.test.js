@@ -1730,6 +1730,214 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     if (fs.existsSync(path.join(wt, '.git'))) execFileSync('git', ['-C', repo, 'worktree', 'remove', '--force', wt]);
   }
 
+  console.log('\nteam, promote and refresh in an epic');
+  {
+    const root = path.join(tmp, 'epic-cmds-root');
+    const env = { WS_ROOT: root };
+    const ep = path.join(root, 'shop');
+    const repo = makeRepo('cmds-api');
+    for (const args of [['new', 'shop', '--kind', 'epic', '--ticket', 'EPIC-1', '--no-launch'],
+      ['add', repo, '--branch-template', 'alice/{slug}', '--ws', ep],
+      ['new', 'pay', '--epic', 'shop', '--ticket', 'PROJ-42', '--sources', 'none', '--no-launch'],
+      ['new', 'cart', '--epic', 'shop', '--sources', 'none', '--no-launch']]) {
+      const r = wsg(args, { env });
+      if (r.code !== 0) throw new Error(r.all);
+    }
+    const pay = path.join(ep, 'pay');
+    const cart = path.join(ep, 'cart');
+    const read = (dir, rel) => fs.readFileSync(path.join(dir, rel), 'utf8');
+    const dryRun = (args, opts) => {
+      const r = wsg(args, opts);
+      let plan = null;
+      try { plan = JSON.parse(r.out); } catch { /* reported by the assertions */ }
+      return { ...r, plan };
+    };
+
+    // team
+    const epBefore = tree(ep);
+    const te = wsg(['team', 'fullstack', '--ws', ep], { env });
+    it('wsg team in an epic: exit 2, team.epic, nothing touched', () => {
+      assert.strictEqual(te.code, 2, te.all);
+      assert.match(te.err, /wsg team does not run in an epic: .*Run it in a task of the epic/);
+      assert.deepStrictEqual(tree(ep), epBefore);
+    });
+    const ted = dryRun(['team', 'fullstack', '--dry-run', '--ws', ep], { env });
+    it('and with --dry-run: exit 2, the error in the JSON, nothing touched', () => {
+      assert.strictEqual(ted.code, 2, ted.all);
+      assert.match(ted.plan.errors[0], /does not run in an epic/);
+      assert.deepStrictEqual(ted.plan.created, []);
+      assert.deepStrictEqual(tree(ep), epBefore);
+    });
+    it('from inside the epic too', () => {
+      const r = wsg(['team', 'fullstack'], { cwd: ep, env });
+      assert.strictEqual(r.code, 2, r.all);
+      assert.match(r.all, /does not run in an epic/);
+      assert.deepStrictEqual(tree(ep), epBefore);
+    });
+    const tc = wsg(['team', 'fullstack', '--ws', cart], { env });
+    it('wsg team in a task of the epic works as in any task', () => {
+      assert.strictEqual(tc.code, 0, tc.all);
+      for (const rel of ['team/pm.md', 'team/workflow.md', '.claude/agents/wsg-reviewer.md', '.claude/skills/wsg-feature/SKILL.md']) {
+        assert.ok(fs.existsSync(path.join(cart, rel)), rel);
+      }
+      assert.strictEqual(W.readState(cart).team.preset, 'fullstack');
+      assert.deepStrictEqual(W.readState(cart).epic, { slug: 'shop' });
+    });
+    it('its AGENTS.md keeps the epic block and gets the team block', () => {
+      const text = read(cart, 'AGENTS.md');
+      assert.match(text, /<!-- wsg:epic -->\nThis task is part of epic `shop`/);
+      assert.match(text, /<!-- wsg:team -->/);
+    });
+    it('the epic itself is untouched', () => {
+      const now = tree(ep);
+      const was = { ...epBefore };
+      for (const t of [now, was]) for (const k of Object.keys(t)) if (k === 'cart' || k.startsWith(`cart${path.sep}`)) delete t[k];
+      assert.deepStrictEqual(now, was);
+    });
+    it('its check passes', () => {
+      const r = wsg(['check', cart], { env });
+      assert.strictEqual(r.code, 0, r.out);
+    });
+
+    // promote
+    const before2 = tree(ep);
+    const pe = wsg(['promote', ep, '--skill', 'weekly'], { env });
+    it('wsg promote in an epic: exit 2, nothing touched', () => {
+      assert.strictEqual(pe.code, 2, pe.all);
+      assert.match(pe.err, /an epic is not promoted to a process/);
+      assert.deepStrictEqual(tree(ep), before2);
+    });
+    const pt = wsg(['promote', pay, '--skill', 'weekly'], { env });
+    it('wsg promote in a task of the epic: exit 2, nothing touched', () => {
+      assert.strictEqual(pt.code, 2, pt.all);
+      assert.match(pt.err, /a task of an epic is not promoted to a process yet/);
+      assert.deepStrictEqual(tree(ep), before2);
+    });
+    it('from inside the task too', () => {
+      const r = wsg(['promote', '--skill', 'weekly'], { cwd: pay, env });
+      assert.strictEqual(r.code, 2, r.all);
+      assert.match(r.err, /a task of an epic/);
+      assert.deepStrictEqual(tree(ep), before2);
+    });
+
+    // refresh in the epic
+    const r0 = wsg(['refresh', '--ws', ep], { env });
+    it('wsg refresh in a fresh epic: up to date, nothing touched', () => {
+      assert.strictEqual(r0.code, 0, r0.all);
+      assert.match(r0.out, /up to date/);
+      assert.deepStrictEqual(tree(ep), before2);
+    });
+    it('an epic gets no repo pointer and no mr-target-branch.txt', () => {
+      assert.ok(W.readState(ep).sources.some((s) => s.mode === 'link'), 'no linked source');
+      for (const rel of ['repo', 'mr-target-branch.txt']) assert.ok(!fs.existsSync(path.join(ep, rel)), rel);
+    });
+    const tasksMd = read(ep, 'tasks.md');
+    const epAgents = read(ep, 'AGENTS.md');
+    const epClaude = read(ep, 'CLAUDE.md');
+    it('tasks.md lists both tasks in its block', () => assert.match(tasksMd, /<!-- wsg:tasks -->\n- `cart\/`\n- `pay\/` PROJ-42\n<!-- \/wsg:tasks -->/));
+    fs.writeFileSync(path.join(ep, 'tasks.md'), tasksMd.replace(/\n<!-- wsg:tasks -->\n[\s\S]*?<!-- \/wsg:tasks -->\n/, ''));
+    fs.writeFileSync(path.join(ep, 'AGENTS.md'), epAgents.replace(/<!-- wsg:advisor -->\n[\s\S]*?<!-- \/wsg:advisor -->\n/, ''));
+    fs.writeFileSync(path.join(ep, 'CLAUDE.md'), epClaude.replace(/\n<!-- wsg:advisor -->\n[\s\S]*?<!-- \/wsg:advisor -->\n/, ''));
+    const edited = tree(ep);
+    const d1 = dryRun(['refresh', '--dry-run', '--ws', ep], { env });
+    it('blocks deleted in the epic: --dry-run lists AGENTS.md, CLAUDE.md, tasks.md, touching nothing', () => {
+      assert.strictEqual(d1.code, 0, d1.all);
+      assert.deepStrictEqual(d1.plan.files, ['AGENTS.md', 'CLAUDE.md', 'tasks.md']);
+      assert.deepStrictEqual(tree(ep), edited);
+    });
+    it('each as markers restored, not as a block new in this version', () => {
+      for (const [file, name] of [['AGENTS.md', 'advisor'], ['CLAUDE.md', 'advisor'], ['tasks.md', 'tasks']]) {
+        assert.ok(d1.plan.warnings.some((w) => w.startsWith(`${file}: the <!-- wsg:${name} --> markers were missing`)), JSON.stringify(d1.plan.warnings));
+      }
+      assert.ok(!d1.plan.warnings.some((w) => /new in wsg/.test(w)), JSON.stringify(d1.plan.warnings));
+    });
+    const r1 = wsg(['refresh', '--ws', ep], { env });
+    it('wsg refresh puts the epic\'s blocks back as they were', () => {
+      assert.strictEqual(r1.code, 0, r1.all);
+      assert.match(r1.out, /Updated: AGENTS\.md, CLAUDE\.md, tasks\.md/);
+      assert.strictEqual(read(ep, 'AGENTS.md'), epAgents);
+      // A block restored under a heading goes right below it, without the skeleton's blank line.
+      assert.strictEqual(read(ep, 'CLAUDE.md'), epClaude.replace('## Claude Code only\n\n', '## Claude Code only\n'));
+      assert.strictEqual(read(ep, 'tasks.md'), tasksMd.replace('# Tasks: shop\n\n', '# Tasks: shop\n'));
+      const now = tree(ep);
+      const was = { ...before2 };
+      for (const t of [now, was]) for (const k of ['CLAUDE.md', 'tasks.md']) delete t[k];
+      assert.deepStrictEqual(now, was);
+    });
+    fs.writeFileSync(path.join(ep, 'CLAUDE.md'), epClaude);
+    fs.writeFileSync(path.join(ep, 'tasks.md'), tasksMd);
+    fs.writeFileSync(path.join(ep, 'tasks.md'), tasksMd.replace('- `cart/`\n', '- `gone/`\n'));
+    const d2 = dryRun(['refresh', '--dry-run', '--ws', ep], { env });
+    const r2 = wsg(['refresh', '--ws', ep], { env });
+    it('an edit inside the tasks block: listed, then rendered back', () => {
+      assert.deepStrictEqual(d2.plan.files, ['tasks.md']);
+      assert.strictEqual(r2.code, 0, r2.all);
+      assert.strictEqual(read(ep, 'tasks.md'), tasksMd);
+    });
+    it('still no repo pointer or mr-target-branch.txt', () => {
+      for (const rel of ['repo', 'mr-target-branch.txt']) assert.ok(!fs.existsSync(path.join(ep, rel)), rel);
+    });
+
+    // refresh in a task of the epic
+    const payAgents = read(pay, 'AGENTS.md');
+    const noEpicBlock = payAgents.replace(/<!-- wsg:epic -->\n[\s\S]*?<!-- \/wsg:epic -->\n/, '');
+    it('the task has the epic block', () => assert.notStrictEqual(noEpicBlock, payAgents));
+    fs.writeFileSync(path.join(pay, 'AGENTS.md'), noEpicBlock);
+    const d3 = dryRun(['refresh', '--dry-run', '--ws', pay], { env });
+    it('the epic block deleted in a task: --dry-run lists AGENTS.md only', () => {
+      assert.strictEqual(d3.code, 0, d3.all);
+      assert.deepStrictEqual(d3.plan.files, ['AGENTS.md']);
+      assert.ok(d3.plan.warnings.some((w) => /AGENTS\.md: the <!-- wsg:epic --> markers were missing/.test(w)), JSON.stringify(d3.plan.warnings));
+      assert.strictEqual(read(pay, 'AGENTS.md'), noEpicBlock);
+    });
+    const r3 = wsg(['refresh'], { cwd: pay, env });
+    it('wsg refresh in the task puts it back as it was', () => {
+      assert.strictEqual(r3.code, 0, r3.all);
+      assert.strictEqual(read(pay, 'AGENTS.md'), payAgents);
+    });
+    fs.writeFileSync(path.join(pay, 'AGENTS.md'), payAgents.replace('the directory above', 'somewhere'));
+    it('an edit inside the epic block is rendered back', () => {
+      const r = wsg(['refresh', '--ws', pay], { env });
+      assert.strictEqual(r.code, 0, r.all);
+      assert.strictEqual(read(pay, 'AGENTS.md'), payAgents);
+    });
+
+    // The epic broken: its state, its AGENTS.md and tasks.md unreadable. The task renders from its own state.
+    const epicFiles = ['.claude/wsg.json', 'AGENTS.md', 'tasks.md', 'knowledge.md'].map((rel) => [rel, read(ep, rel)]);
+    fs.writeFileSync(path.join(ep, W.STATE_FILE), '{ not json');
+    fs.unlinkSync(path.join(ep, 'AGENTS.md'));
+    fs.unlinkSync(path.join(ep, 'knowledge.md'));
+    fs.writeFileSync(path.join(ep, 'tasks.md'), '<!-- wsg:tasks -->\n');
+    fs.writeFileSync(path.join(pay, 'AGENTS.md'), noEpicBlock);
+    const brokenEpic = tree(ep);
+    delete brokenEpic[path.join('pay', 'AGENTS.md')];
+    const d4 = dryRun(['refresh', '--dry-run', '--ws', pay], { env });
+    const r4 = wsg(['refresh', '--ws', pay], { env });
+    it('with the epic broken, a task still refreshes from its own state', () => {
+      assert.strictEqual(d4.code, 0, d4.all);
+      assert.deepStrictEqual(d4.plan.files, ['AGENTS.md']);
+      assert.deepStrictEqual(d4.plan.errors, []);
+      assert.strictEqual(r4.code, 0, r4.all);
+      assert.strictEqual(read(pay, 'AGENTS.md'), payAgents);
+    });
+    it('and leaves the epic as it was', () => {
+      const now = tree(ep);
+      delete now[path.join('pay', 'AGENTS.md')];
+      assert.deepStrictEqual(now, brokenEpic);
+    });
+    it('the broken epic\'s own refresh is refused: exit 2', () => {
+      const r = wsg(['refresh', '--ws', ep], { env });
+      assert.strictEqual(r.code, 2, r.all);
+      assert.match(r.err, /cannot read/);
+    });
+    for (const [rel, body] of epicFiles) fs.writeFileSync(path.join(ep, rel), body);
+    it('restored, the epic is up to date again', () => {
+      const r = wsg(['refresh', '--ws', ep], { env });
+      assert.strictEqual(r.code, 0, r.all);
+      assert.match(r.out, /up to date/);
+    });
+  }
+
   console.log('\nlaunching the agent');
   {
     it('claude gets /wsg-setup as its first message', () => {

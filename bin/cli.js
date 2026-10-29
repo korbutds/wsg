@@ -626,7 +626,12 @@ async function cmdPromote(args) {
   // promote is synchronous to the end: a signal handler would never run, only swallow Ctrl+C.
   const ws = config.resolveWs(target, cfg);
   if (fs.existsSync(path.join(ws, '.claude'))) lock(ws, { signals: false });
-  return lib('promote').run(target, cfg, { skillName: flags['--skill'] });
+  try {
+    return await lib('promote').run(target, cfg, { skillName: flags['--skill'] });
+  } catch (e) {
+    if (e.invalid) invalid(e.message);
+    throw e;
+  }
 }
 
 function cmdInstallSkills(args) {
