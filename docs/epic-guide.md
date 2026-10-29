@@ -25,11 +25,15 @@ From the epic session, when the owner asks to start work on a ticket.
    ```
 
    Without `--sources` the task gets no repository, unless the epic has exactly one with a branch
-   template. A task without a git repository reports "setup not finished" until one is attached:
-   say so. When the owner wants to see the branches first, run
-   `wsg new <slug> --epic <epic> --dry-run` with the same flags: it prints the plan, nothing made.
-4. After it runs, the task's `AGENTS.md` points to `../knowledge.md` and `../tasks.md`, and holds
-   the epic's Owner rules when they are filled in here. Tell the owner how to open a session in
+   template. A source with a template becomes the task's own worktree on the branch it gives
+   (`{ticket}` needs `--ticket`); a branch of that name that exists is attached as it is, one only
+   on origin is continued. A source without one is linked as is. A task without a git repository
+   reports "setup not finished" until one is attached: say so. When the owner wants to see the
+   branches first, run `wsg new <slug> --epic <epic> --dry-run` with the same flags: it prints the
+   plan, nothing made. A source that can't be attached refuses the whole task, nothing made.
+4. After it runs, the output names the sources the task took; the task's `AGENTS.md` points to
+   `../knowledge.md` and `../tasks.md`, and holds the epic's Owner rules when they are filled in
+   here. Tell the owner how to open a session in
    the task directory; the task is worked on there, not here.
 
 ## Working
@@ -96,7 +100,8 @@ its tasks reuse; each task gets its own worktree of it.
      `--reset-to-base` are always refused: an epic has no branch of its own. `--reference`
      attaches material outside git, never branched.
 3. After "ok", run it without `--dry-run`. Tasks created afterwards may take it with `--sources`;
-   an existing task takes it with `wsg add <name>` from its own directory.
+   an existing task takes it with `wsg add <name>` from its own directory (`--dry-run` shows the
+   branch first; a flag given there wins over the epic's default; `./<name>` is a path instead).
 4. Record what the repository is for in `knowledge.md` → Repositories; its facts go into
    `.claude/rules/<repo>.md`, which loads in the epic and in each task that reads the repository.
 

@@ -1038,6 +1038,436 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     });
   }
 
+  console.log('\nsources from the epic');
+  {
+    const root = path.join(tmp, 'epic-src-root');
+    const env = { WS_ROOT: root };
+    const ep = path.join(root, 'shop');
+    wsg(['new', 'shop', '--kind', 'epic', '--ticket', 'EPIC-1', '--no-launch'], { env });
+    // Repositories with an origin, as a team's are.
+    const withOrigin = (name) => {
+      const dir = makeRepo(name);
+      const bare = path.join(tmp, `${name}-origin.git`);
+      git(tmp, ['init', '-q', '--bare', bare]);
+      git(dir, ['remote', 'add', 'origin', bare]);
+      git(dir, ['push', '-q', 'origin', 'main']);
+      return dir;
+    };
+    const sApi = withOrigin('src-api');
+    const sWeb = withOrigin('src-web');
+    const sLib = makeRepo('src-lib');
+    const sDocs = path.join(tmp, 'src-docs');
+    fs.mkdirSync(sDocs);
+    const TPL = 'alice/task/{slug}/{ticket}';
+    for (const args of [[sApi, '--branch-template', TPL, '--carry', '.env', '--verify', 'npm test', '--note', 'the API'],
+      [sWeb, '--branch-template', 'alice/{slug}', '--carry', 'none'], [sLib], [sDocs, '--reference', '--note', 'specs']]) {
+      const r = wsg(['add', ...args, '--ws', ep], { env });
+      if (r.code !== 0) throw new Error(r.all);
+    }
+    const S = require(path.join(ROOT, 'lib', 'source.js'));
+    const epic = W.readState(ep);
+    const vars = { slug: 'pay', ticket: 'PROJ-42' };
+    const ctxOf = (slug) => ({ ws: path.join(ep, slug), state: { kind: 'task', epic: { slug: 'shop' }, sources: [] }, home: path.join(ep, slug) });
+
+    const m = S.fromEpic('src-api', epic, vars, {}, ctxOf('pay'));
+    it('fromEpic: a source with a template becomes a worktree on the expanded branch', () => {
+      assert.deepStrictEqual(m.errors, []);
+      assert.strictEqual(m.spec.mode, 'worktree');
+      assert.strictEqual(m.spec.branch, 'alice/task/pay/PROJ-42');
+      assert.strictEqual(m.spec.start, 'new');
+      assert.strictEqual(m.spec.base, 'origin/main');
+      assert.strictEqual(m.spec.path, sApi);
+    });
+    it('fromEpic: the epic\'s target, verify, note, carry and clone flag; marked from the epic', () => {
+      assert.strictEqual(m.spec.target, 'main');
+      assert.strictEqual(m.spec.verify, 'npm test');
+      assert.strictEqual(m.spec.note, 'the API');
+      assert.deepStrictEqual(m.spec.carry, ['.env']);
+      assert.strictEqual(m.spec.cloneNm, false);
+      assert.strictEqual(m.spec.from, 'epic');
+      assert.strictEqual(m.plan.from, 'epic');
+    });
+    it('fromEpic: {slug} only expands without a ticket', () => {
+      const r = S.fromEpic('src-web', epic, { slug: 'pay', ticket: '' }, {}, ctxOf('pay'));
+      assert.deepStrictEqual(r.errors, []);
+      assert.strictEqual(r.spec.branch, 'alice/pay');
+      assert.deepStrictEqual(r.spec.carry, []);
+    });
+    it('fromEpic: {ticket} without a ticket is refused, naming the template', () => {
+      const r = S.fromEpic('src-api', epic, { slug: 'pay', ticket: '' }, {}, ctxOf('pay'));
+      assert.strictEqual(r.spec, null);
+      assert.match(r.errors.join('\n'), /the epic's branch template alice\/task\/\{slug\}\/\{ticket\} needs the task's ticket key, and none was given: make the task with --ticket <KEY>/);
+    });
+    it('fromEpic: a ticket given without a key says so, and suggests a key or --branch', () => {
+      const r = S.fromEpic('src-api', epic, { slug: 'pay', ticket: '', given: 'a..b' }, {}, ctxOf('pay'));
+      assert.match(r.errors.join('\n'), /the ticket given, a\.\.b, has none wsg can use in a branch name \(a key like PROJ-42\): give --ticket a key, or attach the source later from the task with wsg add src-api --branch B/);
+      assert.doesNotMatch(r.errors.join('\n'), /make the task with --ticket/);
+    });
+    it('fromEpic: a task made already without a key is told to give --branch', () => {
+      const r = S.fromEpic('src-api', epic, { slug: 'pay', ticket: '', made: true }, {}, ctxOf('pay'));
+      assert.match(r.errors.join('\n'), /and this task has none in its state: give --branch B$/);
+    });
+    it('fromEpic: a source gone from disk is reported once, without a carry warning beside it', () => {
+      const e2 = JSON.parse(JSON.stringify(epic));
+      e2.sources[0].path = path.join(tmp, 'src-api-gone');
+      const r = S.fromEpic('src-api', e2, vars, {}, ctxOf('pay'));
+      assert.match(r.errors.join('\n'), /src-api-gone/);
+      assert.deepStrictEqual(r.warnings, []);
+    });
+    it('fromEpic: a flag given wins over the epic\'s default', () => {
+      const r = S.fromEpic('src-api', epic, vars, { branch: 'bob/own', verify: 'make', note: 'mine', carry: 'none', target: 'main' }, ctxOf('pay'));
+      assert.deepStrictEqual(r.errors, []);
+      assert.strictEqual(r.spec.branch, 'bob/own');
+      assert.strictEqual(r.spec.verify, 'make');
+      assert.strictEqual(r.spec.note, 'mine');
+      assert.deepStrictEqual(r.spec.carry, []);
+    });
+    it('fromEpic: --branch wins even when the template needs a ticket the task has none of', () => {
+      const r = S.fromEpic('src-api', epic, { slug: 'pay', ticket: '' }, { branch: 'bob/own' }, ctxOf('pay'));
+      assert.deepStrictEqual(r.errors, []);
+      assert.strictEqual(r.spec.branch, 'bob/own');
+    });
+    it('fromEpic: --link takes the source as a link, without the task defaults', () => {
+      const r = S.fromEpic('src-api', epic, vars, { mode: 'link' }, ctxOf('pay'));
+      assert.deepStrictEqual(r.errors, []);
+      assert.strictEqual(r.spec.mode, 'link');
+      assert.strictEqual(r.spec.branch, '');
+      assert.strictEqual(r.spec.verify, 'npm test');
+    });
+    it('fromEpic: a source without a template is linked as is; a reference stays a reference', () => {
+      const l = S.fromEpic('src-lib', epic, vars, {}, ctxOf('pay'));
+      assert.deepStrictEqual(l.errors, []);
+      assert.strictEqual(l.spec.mode, 'link');
+      const d = S.fromEpic('src-docs', epic, vars, {}, ctxOf('pay'));
+      assert.deepStrictEqual(d.errors, []);
+      assert.strictEqual(d.spec.reference, true);
+      assert.strictEqual(d.spec.note, 'specs');
+    });
+    it('fromEpic: names compare case-insensitively; an unknown one lists the epic\'s sources', () => {
+      assert.strictEqual(S.fromEpic('SRC-LIB', epic, vars, {}, ctxOf('pay')).spec.name, 'src-lib');
+      assert.match(S.fromEpic('nope', epic, vars, {}, ctxOf('pay')).errors.join('\n'), /the epic shop has no source nope \(its sources: src-api, src-web, src-lib, src-docs\)/);
+    });
+    it('fromEpic: the epic\'s base for a new branch; a carried file gone since is dropped with a warning', () => {
+      const e2 = JSON.parse(JSON.stringify(epic));
+      Object.assign(e2.sources[0].task, { base: 'main', carry: ['.env', 'gone.txt'] });
+      const r = S.fromEpic('src-api', e2, vars, {}, ctxOf('pay'));
+      assert.deepStrictEqual(r.errors, []);
+      assert.strictEqual(r.spec.base, 'main');
+      assert.deepStrictEqual(r.spec.carry, ['.env']);
+      assert.match(r.warnings.join('\n'), /^gone\.txt from the epic's carry list is no longer in the main checkout: not copied$/);
+    });
+
+    // A branch of the template's name that exists: attached as it is, the epic's base not applied.
+    const keptSha = git(sApi, ['commit-tree', '-p', 'main', '-m', 'open MR', 'main^{tree}']);
+    git(sApi, ['update-ref', 'refs/heads/alice/task/kept/PROJ-5', keptSha]);
+    // One only on origin: continued.
+    const remoteSha = git(sApi, ['commit-tree', '-p', 'main', '-m', 'on origin', 'main^{tree}']);
+    git(sApi, ['update-ref', 'refs/heads/alice/task/far/PROJ-6', remoteSha]);
+    git(sApi, ['push', '-q', 'origin', 'alice/task/far/PROJ-6']);
+    git(sApi, ['branch', '-D', 'alice/task/far/PROJ-6']);
+    it('fromEpic: an existing branch is attached as is, even with a base in the epic', () => {
+      const e2 = JSON.parse(JSON.stringify(epic));
+      e2.sources[0].task.base = 'main';
+      const r = S.fromEpic('src-api', e2, { slug: 'kept', ticket: 'PROJ-5' }, {}, ctxOf('kept'));
+      assert.deepStrictEqual(r.errors, []);
+      assert.strictEqual(r.spec.start, 'attach');
+      const f = S.fromEpic('src-api', e2, { slug: 'far', ticket: 'PROJ-6' }, {}, ctxOf('far'));
+      assert.deepStrictEqual(f.errors, []);
+      assert.strictEqual(f.spec.start, 'continue');
+      assert.strictEqual(f.spec.base, 'origin/alice/task/far/PROJ-6');
+    });
+
+    // wsg new --epic --sources: refusals and dry runs touch nothing.
+    const snapshot = () => ({ tree: tree(root), api: branches(sApi), web: branches(sWeb), wt: worktrees(sApi) + worktrees(sWeb) });
+    const before = snapshot();
+    const dry = wsg(['new', 'pay', '--epic', 'shop', '--ticket', 'PROJ-42', '--sources', 'src-api,src-lib,src-docs', '--dry-run'], { env });
+    let dp = null;
+    try { dp = JSON.parse(dry.out); } catch { /* reported below */ }
+    it('new --dry-run: exit 0, the plan as JSON', () => {
+      assert.strictEqual(dry.code, 0, dry.all);
+      assert.strictEqual(dp.workspace, path.join(ep, 'pay'));
+      assert.deepStrictEqual(dp.errors, []);
+    });
+    it('new --dry-run: the task\'s state, its sources from the epic', () => {
+      assert.deepStrictEqual(dp.state.epic, { slug: 'shop' });
+      assert.strictEqual(dp.state.ticket, 'PROJ-42');
+      assert.deepStrictEqual(dp.state.sources.map((s) => [s.name, s.mode, s.branch, s.from]), [
+        ['src-api', 'worktree', 'alice/task/pay/PROJ-42', 'epic'], ['src-lib', 'link', '', 'epic'], ['src-docs', 'link', '', 'epic']]);
+      assert.strictEqual(W.stateProblem(dp.state), '');
+    });
+    it('new --dry-run: each source\'s plan, as add --dry-run shows it', () => {
+      assert.deepStrictEqual(dp.sources.map((p) => p.name), ['src-api', 'src-lib', 'src-docs']);
+      assert.strictEqual(dp.sources[0].start, 'new');
+      assert.strictEqual(dp.sources[0].base, 'origin/main');
+      assert.deepStrictEqual(dp.sources[0].carryCandidates, ['.env', 'local.pem']);
+    });
+    it('new --dry-run of a plain task: its state, no sources', () => {
+      const r = wsg(['new', 'plain-dry', '--ticket', 'PROJ-1', '--dry-run'], { env });
+      assert.strictEqual(r.code, 0, r.all);
+      const p = JSON.parse(r.out);
+      assert.strictEqual(p.workspace, path.join(root, 'plain-dry'));
+      assert.deepStrictEqual(p.state.sources, []);
+      assert.ok(!('epic' in p.state) && !('ticket' in p.state));
+    });
+    it('new --dry-run of a task that exists: exit 2, the error in the plan', () => {
+      const r = wsg(['new', 'shop', '--dry-run'], { env });
+      assert.strictEqual(r.code, 2, r.all);
+      assert.match(JSON.parse(r.out).errors.join('\n'), /already exists/);
+    });
+    const kd = wsg(['new', 'kept', '--epic', 'shop', '--ticket', 'PROJ-5', '--sources', 'src-api', '--dry-run'], { env });
+    it('new --dry-run: an existing branch of the template\'s name is attached as is', () => {
+      assert.strictEqual(kd.code, 0, kd.all);
+      assert.strictEqual(JSON.parse(kd.out).sources[0].start, 'attach');
+    });
+    for (const [name, args, re, where = 'err'] of [
+      ['an unknown source', ['--sources', 'src-api,nope'], /the epic shop has no source nope \(its sources: src-api, src-web, src-lib, src-docs\)/],
+      ['a source named twice', ['--sources', 'src-api,SRC-API'], /--sources names src-api twice/],
+      ['none with names', ['--sources', 'none,src-api'], /--sources none stands alone/],
+      ['an empty --sources', ['--sources', ','], /--sources needs a value/],
+      ['{ticket} without a ticket', ['--sources', 'src-api'], /wsg: src-api: the epic's branch template alice\/task\/\{slug\}\/\{ticket\} needs the task's ticket key, and none was given/],
+      ['{ticket} with a ticket that has no key', ['--ticket', 'a..b', '--sources', 'src-api'], /wsg: src-api: the epic's branch template .* the ticket given, a\.\.b, has none wsg can use in a branch name/],
+      ['a branch already checked out', ['--ticket', 'PROJ-42', '--sources', 'src-web'], /src-web: .*alice\/pay/, 'err'],
+    ]) {
+      // A worktree of alice/pay, the branch src-web would give the task, is checked out elsewhere.
+      if (name === 'a branch already checked out') git(sWeb, ['worktree', 'add', '-q', '-b', 'alice/pay', path.join(tmp, 'src-web-busy'), 'main']);
+      const r = wsg(['new', 'pay', '--epic', 'shop', ...args, '--no-launch'], { env });
+      if (name === 'a branch already checked out') {
+        git(sWeb, ['worktree', 'remove', '--force', path.join(tmp, 'src-web-busy')]);
+        git(sWeb, ['branch', '-D', 'alice/pay']);
+      }
+      it(`new --sources, ${name}: exit 2`, () => {
+        assert.strictEqual(r.code, 2, r.all);
+        assert.match(r[where], re);
+      });
+    }
+    it('--sources without --epic: exit 2', () => {
+      const r = wsg(['new', 'lone', '--sources', 'src-api', '--no-launch'], { env });
+      assert.strictEqual(r.code, 2, r.all);
+      assert.match(r.err, /--sources applies only with --epic/);
+    });
+    it('the dry runs and the refusals touched nothing: files, branches, worktrees', () => assert.deepStrictEqual(snapshot(), before));
+
+    // The task, with a worktree, a link and a reference from the epic.
+    const pay = path.join(ep, 'pay');
+    const made = wsg(['new', 'pay', '--epic', 'shop', '--ticket', 'PROJ-42', '--sources', 'src-api,src-lib,src-docs', '--no-launch'], { env });
+    const ps = W.readState(pay);
+    it('new --sources: exit 0, the sources attached', () => {
+      assert.strictEqual(made.code, 0, made.all);
+      assert.deepStrictEqual(ps.sources.map((s) => [s.name, s.mode, s.reference, s.from]), [
+        ['src-api', 'worktree', false, 'epic'], ['src-lib', 'link', false, 'epic'], ['src-docs', 'link', true, 'epic']]);
+    });
+    it('the output names them', () => {
+      assert.match(made.out, /From the epic: src-api \(a worktree on alice\/task\/pay\/PROJ-42\), src-lib \(a link\), src-docs \(a reference\)\./);
+      assert.doesNotMatch(made.out, /setup not finished|no repositories yet/);
+    });
+    it('the worktree is on the template\'s branch, the carried file copied', () => {
+      assert.strictEqual(git(path.join(pay, 'src-api'), ['branch', '--show-current']), 'alice/task/pay/PROJ-42');
+      assert.ok(fs.existsSync(path.join(pay, 'src-api', '.env')));
+      assert.ok(!fs.existsSync(path.join(pay, 'src-api', 'local.pem')));
+      assert.ok(fs.lstatSync(path.join(pay, 'src-lib')).isSymbolicLink());
+    });
+    it('the task\'s state passes, with from: "epic" on its sources', () => assert.strictEqual(W.stateProblem(ps), ''));
+    it('the epic\'s tasks.md lists the task', () => assert.match(fs.readFileSync(path.join(ep, 'tasks.md'), 'utf8'), /- `pay\/` PROJ-42\n/));
+    const childRule = fs.readFileSync(path.join(pay, '.claude', 'rules', 'src-api.md'), 'utf8');
+    const epicRule = fs.readFileSync(path.join(ep, '.claude', 'rules', 'src-api.md'), 'utf8');
+    it('the task\'s rule states its branch and points to the epic\'s rule for the shared facts', () => {
+      assert.match(childRule, /^---\n# generated by wsg[^\n]*\npaths:\n {2}- "src-api\/\*\*"\n---\n/);
+      assert.match(childRule, /- Task branch: `alice\/task\/pay\/PROJ-42`, target `main`\./);
+      assert.match(childRule, /Taken from the epic: its rule `\.\.\/\.claude\/rules\/src-api\.md` holds the facts every task needs/);
+      assert.match(childRule, /goes under `## For the epic` in `notes\.md`/);
+    });
+    it('and the epic\'s rule, loaded there too, leaves the branch to it', () => {
+      assert.match(epicRule, /In a task of the epic, `src-api\/` is the task's own worktree: its branch is in the task's rule/);
+      assert.doesNotMatch(epicRule, /alice\/task\/pay/);
+    });
+    const pc = wsg(['check', pay], { env });
+    it('the task with a worktree from the epic passes its check, setup done but for Why', () => {
+      assert.strictEqual(pc.code, 0, pc.out);
+      assert.match(pc.out, /Total: 0 errors/);
+      assert.doesNotMatch(pc.out, /no git repository attached/);
+    });
+
+    // wsg add <name> in the task: the epic's source; ./<name> a path.
+    const lockFiles = () => [ep, pay].filter((d) => fs.existsSync(path.join(d, '.claude', 'wsg.lock')));
+    const beforeAdd = snapshot();
+    const ad = wsg(['add', 'src-web', '--dry-run'], { env, cwd: pay });
+    let ap = null;
+    try { ap = JSON.parse(ad.out); } catch { /* reported below */ }
+    it('add <name> --dry-run in the task: the epic\'s source, merged, nothing touched', () => {
+      assert.strictEqual(ad.code, 0, ad.all);
+      assert.strictEqual(ap.from, 'epic');
+      assert.strictEqual(ap.mode, 'worktree');
+      assert.strictEqual(ap.branch, 'alice/pay');
+      assert.deepStrictEqual(ap.carry, []);
+      assert.ok(ap.files.includes(path.join('.claude', 'rules', 'src-web.md')), ap.files.join(' '));
+      assert.deepStrictEqual(snapshot(), beforeAdd);
+    });
+    fs.writeFileSync(path.join(ep, '.claude', 'wsg.lock'), JSON.stringify({ pid: process.pid, time: new Date().toISOString() }));
+    const busy = wsg(['add', 'src-web'], { env, cwd: pay });
+    fs.unlinkSync(path.join(ep, '.claude', 'wsg.lock'));
+    it('add <name> takes the epic\'s lock too: busy, exit 2, the task\'s lock not left', () => {
+      assert.strictEqual(busy.code, 2, busy.all);
+      assert.match(busy.err, /another wsg command is running/);
+      assert.deepStrictEqual(lockFiles(), []);
+    });
+    const aw = wsg(['add', 'src-web'], { env, cwd: path.join(pay, 'src-api') });
+    it('add <name> from inside the task: attached as a worktree on the template\'s branch', () => {
+      assert.strictEqual(aw.code, 0, aw.all);
+      const s = W.readState(pay).sources.find((x) => x.name === 'src-web');
+      assert.deepStrictEqual([s.mode, s.branch, s.from], ['worktree', 'alice/pay', 'epic']);
+      assert.strictEqual(git(path.join(pay, 'src-web'), ['branch', '--show-current']), 'alice/pay');
+    });
+    it('both locks released', () => assert.deepStrictEqual(lockFiles(), []));
+    it('the task still passes its check', () => assert.strictEqual(wsg(['check', pay], { env }).code, 0));
+    it('./<name> is a path, not the epic\'s source', () => {
+      const r = wsg(['add', './src-lib', '--dry-run', '--ws', pay], { env, cwd: tmp });
+      const p = JSON.parse(r.out);
+      assert.ok(!('from' in p), r.out);
+      assert.strictEqual(p.path, sLib);
+      assert.match(p.errors.join('\n'), /the epic|src-lib/);
+    });
+    it('a name the epic has no source by is a path, as in any task', () => {
+      const r = wsg(['add', 'no-such-dir', '--dry-run'], { env, cwd: pay });
+      assert.strictEqual(r.code, 2);
+      assert.match(JSON.parse(r.out).errors.join('\n'), /no-such-dir does not exist/);
+    });
+    it('in a task of an epic a bare name takes the epic\'s lock even when no source has it: decided again under it', () => {
+      fs.writeFileSync(path.join(ep, '.claude', 'wsg.lock'), JSON.stringify({ pid: process.pid, time: new Date().toISOString() }));
+      let r;
+      try { r = wsg(['add', 'no-such-dir'], { env, cwd: pay }); } finally { fs.unlinkSync(path.join(ep, '.claude', 'wsg.lock')); }
+      assert.strictEqual(r.code, 2, r.all);
+      assert.match(r.err, /another wsg command is running/);
+    });
+    it('a ./path takes only the task\'s lock', () => {
+      fs.writeFileSync(path.join(ep, '.claude', 'wsg.lock'), JSON.stringify({ pid: process.pid, time: new Date().toISOString() }));
+      let r;
+      try { r = wsg(['add', './no-such-dir'], { env, cwd: pay }); } finally { fs.unlinkSync(path.join(ep, '.claude', 'wsg.lock')); }
+      assert.strictEqual(r.code, 2, r.all);
+      assert.match(r.err, /no-such-dir does not exist/);
+    });
+    it('a source named none is refused in an epic: --sources none could never pick it', () => {
+      const r = wsg(['add', makeRepo('none'), '--ws', ep, '--dry-run'], { env });
+      assert.strictEqual(r.code, 2, r.all);
+      assert.match(JSON.parse(r.out).errors.join('\n'), /a source of an epic can't be named none: wsg new --sources none means no source/);
+    });
+
+    // A failure in the second source's worktree add: the whole task goes, the epic as it was.
+    const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+    const failBin = path.join(tmp, 'epic-fail-git');
+    fs.mkdirSync(failBin, { recursive: true });
+    fs.writeFileSync(path.join(failBin, 'git'), [
+      '#!/bin/sh',
+      'if [ "$3" = worktree ] && [ "$4" = add ]; then',
+      '  for a in "$@"; do case "$a" in */src-web) echo "injected failure" >&2; exit 1;; esac; done',
+      'fi',
+      `exec ${JSON.stringify(realGit)} "$@"`, ''].join('\n'), { mode: 0o755 });
+    const failEnv = { ...env, PATH: `${failBin}:${ENV.PATH}` };
+    const tasksBefore = fs.readFileSync(path.join(ep, 'tasks.md'), 'utf8');
+    const beforeFail = snapshot();
+    const doomed = wsg(['new', 'doomed', '--epic', 'shop', '--ticket', 'PROJ-9', '--sources', 'src-api,src-web', '--no-launch'], { env: failEnv });
+    it('a failure in the second source: exit 1, rolled back', () => {
+      assert.strictEqual(doomed.code, 1, doomed.all);
+      assert.match(doomed.err, /injected failure/);
+      assert.match(doomed.err, /Deleted created branch alice\/task\/doomed\/PROJ-9/);
+    });
+    it('the first worktree, its branch and the task directory are gone', () => {
+      assert.ok(!fs.existsSync(path.join(ep, 'doomed')));
+      assert.ok(!branches(sApi).includes('alice/task/doomed/PROJ-9'));
+      assert.strictEqual(worktrees(sApi) + worktrees(sWeb), beforeFail.wt);
+    });
+    it('tasks.md as it was, no lock left, nothing else changed', () => {
+      assert.strictEqual(fs.readFileSync(path.join(ep, 'tasks.md'), 'utf8'), tasksBefore);
+      assert.deepStrictEqual(lockFiles(), []);
+      assert.deepStrictEqual(snapshot(), beforeFail);
+    });
+    const keptFail = wsg(['new', 'kept', '--epic', 'shop', '--ticket', 'PROJ-5', '--sources', 'src-api,src-web', '--no-launch'], { env: failEnv });
+    it('a branch that existed before is attached, and a rollback never deletes it', () => {
+      assert.strictEqual(keptFail.code, 1, keptFail.all);
+      assert.match(keptFail.all, /attached as it is/);
+      assert.strictEqual(git(sApi, ['rev-parse', 'alice/task/kept/PROJ-5']), keptSha);
+      assert.ok(!fs.existsSync(path.join(ep, 'kept')));
+    });
+    it('the same task without the failure: the existing branch attached as it is', () => {
+      const r = wsg(['new', 'kept', '--epic', 'shop', '--ticket', 'PROJ-5', '--sources', 'src-api', '--no-launch'], { env });
+      assert.strictEqual(r.code, 0, r.all);
+      assert.strictEqual(git(path.join(ep, 'kept', 'src-api'), ['rev-parse', 'HEAD']), keptSha);
+    });
+
+    // Q2: without --sources.
+    const none = wsg(['new', 'bare', '--epic', 'shop', '--no-launch'], { env });
+    it('two sources with a template, no --sources: none taken, and the output says check will warn', () => {
+      assert.strictEqual(none.code, 0, none.all);
+      assert.deepStrictEqual(W.readState(path.join(ep, 'bare')).sources, []);
+      assert.match(none.out, /No git repository from the epic: attach one from the task with wsg add <name> \(the epic's sources: src-api, src-web, src-lib, src-docs\)/);
+      assert.match(none.out, /wsg check says "setup not finished"/);
+    });
+    it('--sources none: none taken', () => {
+      const r = wsg(['new', 'nothing', '--epic', 'shop', '--ticket', 'PROJ-8', '--sources', 'none', '--no-launch'], { env });
+      assert.strictEqual(r.code, 0, r.all);
+      assert.deepStrictEqual(W.readState(path.join(ep, 'nothing')).sources, []);
+    });
+    {
+      wsg(['new', 'solo', '--kind', 'epic', '--no-launch'], { env });
+      const solo = path.join(root, 'solo');
+      const sOne = withOrigin('solo-api');
+      wsg(['add', sOne, '--branch-template', TPL, '--ws', solo], { env });
+      wsg(['add', makeRepo('solo-lib'), '--ws', solo], { env });
+      const one = wsg(['new', 'first', '--epic', 'solo', '--ticket', 'PROJ-11', '--no-launch'], { env });
+      it('the only source with a template is taken by default', () => {
+        assert.strictEqual(one.code, 0, one.all);
+        assert.deepStrictEqual(W.readState(path.join(solo, 'first')).sources.map((s) => [s.name, s.branch]), [['solo-api', 'alice/task/first/PROJ-11']]);
+      });
+      const noKey = wsg(['new', 'second', '--epic', 'solo', '--no-launch'], { env });
+      it('taken by default, its {ticket} with no ticket: left out with a warning, the task made', () => {
+        assert.strictEqual(noKey.code, 0, noKey.all);
+        assert.match(noKey.all, /the epic's source solo-api is not taken: its branch template needs the task's ticket key/);
+        assert.deepStrictEqual(W.readState(path.join(solo, 'second')).sources, []);
+      });
+      it('taken by default, a ticket given without a key: the warning says so, not "give --ticket"', () => {
+        const r = wsg(['new', 'fourth', '--epic', 'solo', '--ticket', 'a..b', '--no-launch'], { env });
+        assert.strictEqual(r.code, 0, r.all);
+        assert.match(r.all, /the ticket given, a\.\.b, has none wsg can use in a branch name \(a key like PROJ-42\)\. Give --ticket a key, or attach it later with wsg add solo-api --branch B/);
+        assert.deepStrictEqual(W.readState(path.join(solo, 'fourth')).sources, []);
+      });
+      it('asked for by name, it is refused', () => {
+        const r = wsg(['new', 'third', '--epic', 'solo', '--sources', 'solo-api', '--no-launch'], { env });
+        assert.strictEqual(r.code, 2, r.all);
+        assert.ok(!fs.existsSync(path.join(solo, 'third')));
+      });
+      execFileSync('git', ['-C', sOne, 'worktree', 'remove', '--force', path.join(solo, 'first', 'solo-api')]);
+    }
+
+    // wsg remove of a source taken from the epic: as for any worktree.
+    const rm = wsg(['remove', 'src-web', '--ws', pay], { env });
+    it('remove of a derived worktree: the worktree goes, the branch stays', () => {
+      assert.strictEqual(rm.code, 0, rm.all);
+      assert.ok(!fs.existsSync(path.join(pay, 'src-web')));
+      assert.ok(branches(sWeb).includes('alice/pay'));
+      assert.ok(!W.readState(pay).sources.some((s) => s.name === 'src-web'));
+      assert.match(rm.out, /branch alice\/pay is kept/);
+    });
+    it('"from" only on a source of a task of an epic, only as "epic"', () => {
+      const plain = { version: 2, kind: 'task', slug: 'p', sources: [{ name: 'x', from: 'epic' }] };
+      assert.match(W.stateProblem(plain), /source x: "from" belongs only to a source of a task of an epic/);
+      assert.match(W.stateProblem({ ...ps, sources: [{ ...ps.sources[0], from: 'elsewhere' }] }), /"from" belongs only/);
+    });
+    it('a plain task\'s add and new know nothing of epics: no "from"', () => {
+      const r = wsg(['new', 'plain-src', '--no-launch'], { env });
+      assert.strictEqual(r.code, 0, r.all);
+      const ws = path.join(root, 'plain-src');
+      const a = wsg(['add', sLib, '--link'], { env, cwd: ws });
+      assert.strictEqual(a.code, 0, a.all);
+      assert.ok(!('from' in W.readState(ws).sources[0]));
+      assert.doesNotMatch(r.out, /A task of epic|From the epic|No git repository from the epic/);
+    });
+    for (const d of ['pay', 'kept']) {
+      for (const n of ['src-api', 'src-web']) {
+        const wt = path.join(ep, d, n);
+        if (fs.existsSync(path.join(wt, '.git'))) execFileSync('git', ['-C', n === 'src-api' ? sApi : sWeb, 'worktree', 'remove', '--force', wt]);
+      }
+    }
+  }
+
   console.log('\nlaunching the agent');
   {
     it('claude gets /wsg-setup as its first message', () => {
@@ -3620,7 +4050,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       assert.strictEqual(ge.out, fs.readFileSync(path.join(ROOT, 'docs', 'epic-guide.md'), 'utf8'));
     });
     // The guide describes the epic as it will work: these flags come with the commits that add them.
-    const LATER = ['wsg new has no --sources', 'wsg new has no --dry-run', 'no such flag: --sources'];
+    const LATER = [];
     it('every other wsg command and flag in the epic guide exists', () =>
       assert.deepStrictEqual(flagProblems(ge.out).filter((p) => !LATER.includes(p)), []));
     it('and every LATER entry is still in the guide: none is left to hide a new mistake', () =>

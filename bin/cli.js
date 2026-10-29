@@ -156,9 +156,12 @@ async function cmdNew(args) {
     const bad = W.skillError(pos[0]);
     if (bad) invalid(t('workspace.badSkillFromSlug', { name: pos[0], why: bad }));
   }
+  const dryRun = !!flags['--dry-run'];
+  if (flags['--sources'] !== undefined && flags['--epic'] === undefined) invalid(t('cli.sourcesNeedEpic'));
   // A task of an epic: the epic is named, never taken from the current directory. It is a workspace
   // right in WS_ROOT, where `<epic>/<task>` resolves; one elsewhere is refused.
   let epicWs = '';
+  let epic = null;
   let release = () => {};
   if (flags['--epic'] !== undefined) {
     if (!flags['--epic']) invalid(t('cli.needsValue', { arg: '--epic' }));
@@ -169,13 +172,20 @@ async function cmdNew(args) {
     if (!fs.existsSync(given)) invalid(t('cli.noEpic', { ws: given }));
     if (path.dirname(real(given)) !== real(cfg.WS_ROOT)) invalid(t('cli.epicOutsideRoot', { ws: given, root: cfg.WS_ROOT }));
     epicWs = path.join(cfg.WS_ROOT, path.basename(real(given)));
-    try {
-      W.epicState(epicWs);
-    } catch (e) {
-      invalid(e.message);
+    const readEpic = () => {
+      try {
+        return W.epicState(epicWs);
+      } catch (e) {
+        return invalid(e.message);
+      }
+    };
+    epic = readEpic();
+    // Held from the checks to the tasks.md write: a task made or a source added meanwhile is seen,
+    // so the state is read again under it. A dry run changes nothing and takes no lock, as in add.
+    if (!dryRun) {
+      release = lock(epicWs);
+      epic = readEpic();
     }
-    // Held from the checks to the tasks.md write: a task made or a source added meanwhile is seen.
-    release = lock(epicWs);
   }
   const meta = {
     kind,
@@ -188,16 +198,64 @@ async function cmdNew(args) {
     // The digest of the owner's rules goes in whenever the file exists: the agent fills it during setup.
     personalRules: !!(cfg.WSG_GLOBAL_MEMORY && fs.existsSync(cfg.WSG_GLOBAL_MEMORY)),
   };
+  const generate = lib('generate');
+  const errors = [];
+  let planned = null;
   try {
-    W.assertSafe(meta, cfg);
+    planned = W.assertSafe(meta, cfg);
   } catch (e) {
-    invalid(e.message);
+    if (!dryRun) invalid(e.message);
+    errors.push(e.message);
+  }
+  // The epic's sources the task takes, every one resolved before anything is made: one refused
+  // refuses the task, with nothing touched.
+  const taken = { specs: [], plans: [], warnings: [], notes: [] };
+  if (epic && planned) {
+    const vars = { slug: meta.slug, ticket: generate.ticketKey(meta), given: (flags['--ticket'] || '').trim() };
+    let names = epicSourcesOf(epic, flags['--sources']);
+    // The one taken by default, when its branch needs a ticket the task has none of: left for later,
+    // not a refusal of a task nobody asked a source for. Asked for by name, it is refused.
+    if (flags['--sources'] === undefined && names.length && !vars.ticket && S.epicSource(epic, names[0]).task.branch.includes('{ticket}')) {
+      taken.warnings.push(t(vars.given ? 'cli.epicDefaultTicketNoKey' : 'cli.epicDefaultNeedsTicket', { name: names[0], ticket: vars.given }));
+      names = [];
+    }
+    const state = { kind: 'task', epic: { slug: epic.slug }, sources: [] };
+    // The task is not made yet: its real path is the epic's, and its name.
+    const home = path.join(fs.realpathSync.native(epicWs), meta.slug);
+    for (const name of names) {
+      const res = S.fromEpic(name, epic, vars, {}, { ws: planned, state, home });
+      taken.plans.push(res.plan);
+      errors.push(...res.errors.map((e) => `${name}: ${e}`));
+      taken.warnings.push(...res.warnings.map((w) => `${name}: ${w}`));
+      taken.notes.push(...res.notes.map((n) => `${name}: ${n}`));
+      if (res.spec) {
+        taken.specs.push(res.spec);
+        state.sources.push(res.spec);
+      }
+    }
+  }
+  if (dryRun) {
+    const state = { ...generate.skeletonState({ ...meta, ...(epic ? { epic: { slug: epic.slug }, ticketKey: generate.ticketKey(meta) } : {}) }), sources: taken.specs };
+    process.stdout.write(`${JSON.stringify({
+      workspace: planned || (epicWs ? path.join(epicWs, meta.slug) : path.join(cfg.WS_ROOT, meta.slug)),
+      state,
+      sources: taken.plans,
+      errors,
+      warnings: taken.warnings,
+    }, null, 2)}\n`);
+    return errors.length ? INVALID : 0;
+  }
+  if (errors.length) {
+    for (const e of errors) process.stderr.write(`wsg: ${e}\n`);
+    return INVALID;
   }
   guardPlatform();
   const ui = lib('ui');
+  for (const w of taken.warnings) ui.warn(w);
+  for (const n of taken.notes) ui.info(`  ${n}`);
   let ws;
   try {
-    ws = await lib('generate').create(meta, cfg);
+    ws = await generate.create({ ...meta, ...(epic ? { sources: taken.specs } : {}) }, cfg);
   } catch (e) {
     // The epic's files that can't be read or rendered: refused before anything was made.
     if (e && e.invalid) invalid(e.message);
@@ -210,9 +268,16 @@ async function cmdNew(args) {
   }
   // Not held through the agent's session: its setup runs wsg add, and the epic must stay usable.
   release();
-  ui.head(t('cli.created', { ws }));
-  // Sources of the epic are not taken into its tasks yet: the setup attaches them as for any task.
-  if (epicWs) ui.info(t('cli.epicTaskNext', { epic: path.basename(epicWs) }));
+  ui.head(t(epicWs && taken.specs.length ? 'cli.createdWithSources' : 'cli.created', { ws }));
+  if (epicWs) {
+    ui.info(t('cli.epicTaskNext', { epic: path.basename(epicWs) }));
+    // As attached: a worktree on the branch it got, a link, a reference.
+    const got = lib('workspace').readState(ws).sources.filter((s) => s.from === 'epic');
+    const shown = got.map((s) => t(`cli.epicAs.${s.reference ? 'reference' : s.mode}`, { name: s.name, branch: s.branch }));
+    if (got.length) ui.info(t('cli.epicAttached', { list: shown.join(', ') }));
+    // Without a git repository the task is not set up: check says so until one is attached.
+    if (!got.some((s) => !s.reference)) ui.info(t('cli.epicNoGit', { list: epic.sources.map((s) => s.name).join(', ') || '—' }));
+  }
 
   const L = lib('launch');
   const agent = L.resolveAgent(cfg);
@@ -242,6 +307,31 @@ async function cmdNew(args) {
   return 0;
 }
 
+// The epic's sources a new task of it takes: `--sources a,b`, `none`, or — not given — the one with a
+// branch template when the epic has exactly one, else none. A name the epic has no source by is
+// refused with the list; S.fromEpic matches names as it does.
+function epicSourcesOf(epic, given) {
+  if (given === undefined) {
+    const templated = epic.sources.filter((s) => s && s.task);
+    return templated.length === 1 ? [templated[0].name] : [];
+  }
+  const names = given.split(',').map((x) => x.trim()).filter(Boolean);
+  if (!names.length) invalid(t('cli.needsValue', { arg: '--sources' }));
+  if (names.some((n) => n.toLowerCase() === 'none')) {
+    if (names.length > 1) invalid(t('cli.sourcesNone'));
+    return [];
+  }
+  const S = lib('source');
+  const seen = new Set();
+  for (const n of names) {
+    const s = S.epicSource(epic, n);
+    if (!s) invalid(t('add.epicSourceUnknown', { name: n, epic: epic.slug, list: epic.sources.map((x) => x.name).join(', ') || '—' }));
+    if (seen.has(s.name)) invalid(t('cli.sourcesTwice', { name: s.name }));
+    seen.add(s.name);
+  }
+  return names.map((n) => S.epicSource(epic, n).name);
+}
+
 async function cmdAdd(args) {
   const { flags, pos } = parse(args, FLAGS.add, 1);
   if (!pos[0]) invalid(t('cli.addPath'));
@@ -258,14 +348,37 @@ async function cmdAdd(args) {
   const S = lib('source');
   const generate = lib('generate');
   const ui = lib('ui');
+  const readState = (dir) => {
+    try {
+      return W.readState(dir);
+    } catch (e) {
+      return invalid(e.message);
+    }
+  };
+  // In a task of an epic, a name with no / that one of the epic's sources has is that source, with
+  // the epic's defaults for its tasks; `./name` is a path, as everywhere.
+  const fromEpic = (st) => {
+    if (!st.epic || pos[0].includes('/')) return null;
+    const epicWs = W.epicOf(ws, st);
+    let epic;
+    try {
+      epic = W.epicState(epicWs);
+    } catch (e) {
+      return invalid(t('cli.epicUnreadable', { name: pos[0], msg: e.message }));
+    }
+    return S.epicSource(epic, pos[0]) ? { epicWs, epic } : null;
+  };
+  let state = readState(ws);
+  let derived = fromEpic(state);
   // Held from the checks to the last write: the state they read is the state that gets changed.
-  if (!flags['--dry-run']) lock(ws);
-
-  let state;
-  try {
-    state = W.readState(ws);
-  } catch (e) {
-    invalid(e.message);
+  // In a task of an epic, for a name that may be one of its sources, the epic's too — always the
+  // epic's first, then the task's — whether it is one or not: a source added or removed in between
+  // is seen, as both are read again and the name decided again under the locks.
+  if (!flags['--dry-run']) {
+    if (state.epic && !pos[0].includes('/')) lock(W.epicOf(ws, state));
+    lock(ws);
+    state = readState(ws);
+    derived = fromEpic(state);
   }
   const opts = {
     mode: modes.length ? modes[0].slice(2) : undefined,
@@ -279,7 +392,9 @@ async function cmdAdd(args) {
     note: flags['--note'],
     branchTemplate: flags['--branch-template'],
   };
-  const res = S.resolve(pos[0], opts, { ws, state });
+  const res = derived
+    ? S.fromEpic(pos[0], derived.epic, { slug: state.slug, ticket: state.ticket || '', made: true }, opts, { ws, state })
+    : S.resolve(pos[0], opts, { ws, state });
   // What the generated files would become is worked out before anything changes: a settings.json
   // that doesn't parse, or a half-deleted marker pair, refuses the add here.
   let planned = { files: [], settingsChanged: false, warnings: [] };
