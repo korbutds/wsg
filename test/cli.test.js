@@ -1115,6 +1115,241 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     it('and the rest of the workspace is what it was', () => assert.deepStrictEqual(tree(demo), before));
   }
 
+  console.log('\nrollback keeps what changed while wsg ran');
+  {
+    const S = require(path.join(ROOT, 'lib', 'source.js'));
+    const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+    // git worktree add that hangs and dies: meanwhile the agent edits AGENTS.md.
+    const ws1 = path.join(wsRoot, 'edit-during-worktree');
+    wsg(['new', 'edit-during-worktree', '--no-launch']);
+    const slowGit = path.join(tmp, 'slow-git');
+    fs.mkdirSync(slowGit);
+    fs.writeFileSync(path.join(slowGit, 'git'),
+      `#!/bin/sh\ncase " $* " in *" worktree add "*) printf 'edited during the add\\n' >> ${JSON.stringify(path.join(ws1, 'AGENTS.md'))}; echo "fatal: smudge filter lfs failed" >&2; exit 1;; esac\nexec ${JSON.stringify(realGit)} "$@"\n`, { mode: 0o755 });
+    const repo1 = makeRepo('rollback-repo');
+    const r = wsg(['add', repo1, '--branch', 'task/hung'], { cwd: ws1, env: { PATH: `${slowGit}:${ENV.PATH}` } });
+    it('the add fails and rolls back', () => {
+      assert.strictEqual(r.code, 1, r.all);
+      assert.match(r.err, /smudge filter lfs failed/);
+    });
+    it('the edit made during the add survives', () => assert.match(fs.readFileSync(path.join(ws1, 'AGENTS.md'), 'utf8'), /edited during the add\n$/));
+    it('silently: the add never wrote AGENTS.md', () => assert.doesNotMatch(r.err, /changed while wsg ran/));
+    it('the rest is rolled back', () => {
+      assert.ok(!fs.existsSync(path.join(ws1, 'rollback-repo')));
+      assert.ok(!fs.existsSync(path.join(ws1, '.claude', 'rules', 'rollback-repo.md')));
+      assert.deepStrictEqual(W.readState(ws1).sources, []);
+    });
+
+    // A failure after the run wrote AGENTS.md and created the rule, both edited before it failed.
+    // The write of `file` dies half-way, as on a full disk: half its bytes, then ENOSPC. Writes go
+    // through a temporary file next to the target, so that is the one that is cut.
+    const failAt = (ws, file, edit, fn) => {
+      const real = fs.writeFileSync;
+      const errs = [];
+      const errWrite = process.stderr.write;
+      const target = path.join(ws, file);
+      fs.writeFileSync = function (p, body, ...rest) {
+        if (typeof p === 'string' && path.dirname(p) === path.dirname(target) && path.basename(p).startsWith(`.${path.basename(target)}.wsg-`)) {
+          edit();
+          real.call(this, p, String(body).slice(0, Math.floor(String(body).length / 2)), ...rest);
+          throw Object.assign(new Error('ENOSPC: no space left on device, write'), { code: 'ENOSPC' });
+        }
+        return real.call(this, p, body, ...rest);
+      };
+      return (async () => {
+        let e = '';
+        const log = console.log;
+        console.log = () => {};
+        process.stderr.write = (x) => { errs.push(String(x)); return true; };
+        try { await fn(); } catch (x) { e = x.message; } finally {
+          fs.writeFileSync = real;
+          console.log = log;
+          process.stderr.write = errWrite;
+        }
+        return { e, err: errs.join('') };
+      })();
+    };
+    const temps = (dir) => Object.keys(tree(dir)).filter((f) => /\.wsg-\d+-\d+\.tmp$/.test(f));
+    const ws2 = path.join(wsRoot, 'edit-after-write');
+    wsg(['new', 'edit-after-write', '--no-launch']);
+    const claudeBefore = fs.readFileSync(path.join(ws2, 'CLAUDE.md'));
+    const spec = S.resolve(api, { mode: 'link' }, { ws: ws2, state: W.readState(ws2) }).spec;
+    const rule = path.join(ws2, '.claude', 'rules', 'api.md');
+    const f2 = await failAt(ws2, 'README.md', () => {
+      fs.appendFileSync(path.join(ws2, 'AGENTS.md'), 'agent note\n');
+      fs.appendFileSync(rule, 'agent rule note\n');
+    }, () => generate.add(ws2, spec, cfg));
+    it('the add fails at README.md', () => assert.match(f2.e, /ENOSPC/));
+    it('AGENTS.md, written by the run and edited since, is kept as it is, with a warning', () => {
+      const text = fs.readFileSync(path.join(ws2, 'AGENTS.md'), 'utf8');
+      assert.match(text, /symlink to the shared checkout[\s\S]*agent note\n$/);
+      assert.match(f2.err, /AGENTS\.md changed while wsg ran, so it is kept as it is now[^\n]*wsg refresh/);
+    });
+    it('a rule the run created, edited since, is kept too', () => {
+      assert.match(fs.readFileSync(rule, 'utf8'), /agent rule note\n$/);
+      assert.match(f2.err, /rules\/api\.md changed while wsg ran, so it is kept as it is now: check it by hand[^\n]*wsg refresh does not touch it/);
+    });
+    it('the rollback says which files it kept', () =>
+      assert.match(f2.err, /Rollback complete, except the files kept as they changed during the run: [^\n]*AGENTS\.md/));
+    it('and leaves no temporary file', () => assert.deepStrictEqual(temps(ws2), []));
+    it('what the run did not write is as it was, and the link is gone', () => {
+      assert.ok(fs.readFileSync(path.join(ws2, 'CLAUDE.md')).equals(claudeBefore));
+      assert.ok(!fs.existsSync(path.join(ws2, 'api')));
+      assert.deepStrictEqual(W.readState(ws2).sources, []);
+    });
+
+    // A file the run created and nobody touched is removed; one it rewrote is put back.
+    const ws3 = path.join(wsRoot, 'untouched-rollback');
+    wsg(['new', 'untouched-rollback', '--no-launch']);
+    const agentsBefore = fs.readFileSync(path.join(ws3, 'AGENTS.md'));
+    const readmeBefore = fs.readFileSync(path.join(ws3, 'README.md'));
+    const spec3 = S.resolve(api, { mode: 'link' }, { ws: ws3, state: W.readState(ws3) }).spec;
+    const f3 = await failAt(ws3, 'README.md', () => {}, () => generate.add(ws3, spec3, cfg));
+    it('unchanged files: put back byte for byte, the created rule removed, no warning', () => {
+      assert.match(f3.e, /ENOSPC/);
+      assert.ok(fs.readFileSync(path.join(ws3, 'AGENTS.md')).equals(agentsBefore));
+      assert.ok(!fs.existsSync(path.join(ws3, '.claude', 'rules', 'api.md')));
+      assert.doesNotMatch(f3.err, /changed while wsg ran/);
+      assert.match(f3.err, /Rollback complete\.\n/);
+    });
+    it('the write cut half-way left README.md as it was, and no temporary file', () => {
+      assert.ok(fs.readFileSync(path.join(ws3, 'README.md')).equals(readmeBefore));
+      assert.deepStrictEqual(temps(ws3), []);
+    });
+
+    // wsg remove: the same.
+    const ws4 = path.join(wsRoot, 'edit-during-remove');
+    wsg(['new', 'edit-during-remove', '--no-launch']);
+    wsg(['add', api, '--link'], { cwd: ws4 });
+    const rule4 = fs.readFileSync(path.join(ws4, '.claude', 'rules', 'api.md'));
+    const f4 = await failAt(ws4, 'README.md', () => fs.appendFileSync(path.join(ws4, 'AGENTS.md'), 'agent note\n'),
+      () => generate.remove(ws4, 'api', cfg));
+    it('remove: the edited AGENTS.md is kept, with a warning', () => {
+      assert.match(f4.e, /ENOSPC/);
+      assert.match(fs.readFileSync(path.join(ws4, 'AGENTS.md'), 'utf8'), /agent note\n$/);
+      assert.match(f4.err, /AGENTS\.md changed while wsg ran/);
+    });
+    it('and the rest comes back: the link, its rule, the state', () => {
+      assert.ok(fs.lstatSync(path.join(ws4, 'api')).isSymbolicLink());
+      assert.ok(fs.readFileSync(path.join(ws4, '.claude', 'rules', 'api.md')).equals(rule4));
+      assert.deepStrictEqual(W.readState(ws4).sources.map((x) => x.name), ['api']);
+    });
+
+    // Edits made while git ran, then the run writes the files and is cancelled: the rollback takes
+    // back only its own writes, to the bytes right before them — the edits included. git edits the
+    // files itself (the agent, meanwhile) and sends the stop to wsg, which reads it once the job is
+    // done: the rollback of a finished job, as on Ctrl+C.
+    const ws5 = path.join(wsRoot, 'edit-then-cancel');
+    wsg(['new', 'edit-then-cancel', '--no-launch']);
+    const termGit = path.join(tmp, 'term-git');
+    fs.mkdirSync(termGit);
+    const edits = ['AGENTS.md', 'README.md'].map((f) => `printf 'agent edit\\n' >> ${JSON.stringify(path.join(ws5, f))}`).join('; ');
+    fs.writeFileSync(path.join(termGit, 'git'),
+      `#!/bin/sh\ncase " $* " in *" worktree add "*) ${edits}; kill -TERM $PPID;; esac\nexec ${JSON.stringify(realGit)} "$@"\n`, { mode: 0o755 });
+    const repo5 = makeRepo('cancel-repo');
+    const r5 = wsg(['add', repo5, '--branch', 'task/cancel'], { cwd: ws5, env: { PATH: `${termGit}:${ENV.PATH}` } });
+    it('cancelled after git finished: exit 130', () => assert.strictEqual(r5.code, 130, r5.all));
+    it('the edits made while git ran survive the rollback', () => {
+      for (const f of ['AGENTS.md', 'README.md']) {
+        const text = fs.readFileSync(path.join(ws5, f), 'utf8');
+        assert.match(text, /agent edit\n$/, f);
+        assert.doesNotMatch(text, /cancel-repo/, f);
+      }
+    });
+    it('the rest of the add is taken back, and the workspace is said to be as it was', () => {
+      assert.ok(!fs.existsSync(path.join(ws5, 'cancel-repo')));
+      assert.deepStrictEqual(W.readState(ws5).sources, []);
+      assert.ok(!branches(repo5).includes('task/cancel'));
+      assert.match(r5.err, /Cancelled, the workspace is as it was\./);
+      assert.deepStrictEqual(temps(ws5), []);
+    });
+
+    // A file system without hard links (exFAT, FAT32): a new file is written by an exclusive copy.
+    const noLinks = async (fn) => {
+      const real = fs.linkSync;
+      fs.linkSync = () => { throw Object.assign(new Error('ENOTSUP: operation not supported on socket, link'), { code: 'ENOTSUP' }); };
+      try { return await quietAsync(fn); } finally { fs.linkSync = real; }
+    };
+    const ws7 = path.join(wsRoot, 'no-hard-links');
+    wsg(['new', 'no-hard-links', '--no-launch']);
+    const spec7 = S.resolve(api, { mode: 'link' }, { ws: ws7, state: W.readState(ws7) }).spec;
+    await noLinks(() => generate.add(ws7, spec7, cfg));
+    it('without hard links a new file is still written: the add creates its rule', () => {
+      assert.match(fs.readFileSync(path.join(ws7, '.claude', 'rules', 'api.md'), 'utf8'), /^---\n# generated by wsg/);
+      assert.deepStrictEqual(W.readState(ws7).sources.map((x) => x.name), ['api']);
+      assert.deepStrictEqual(temps(ws7), []);
+    });
+    const appeared = path.join(ws7, 'appeared.md');
+    fs.writeFileSync(appeared, 'mine\n');
+    const e7 = await noLinks(() => { try { generate.putFile(appeared, 'wsg\n', { create: true }); return ''; } catch (x) { return x.code; } });
+    it('and the copy still never writes over a path that appeared', () => {
+      assert.strictEqual(e7, 'EEXIST');
+      assert.strictEqual(fs.readFileSync(appeared, 'utf8'), 'mine\n');
+      assert.deepStrictEqual(temps(ws7), []);
+    });
+
+    // An undo step that finds the path not its own writes nothing, and the rollback keeps the path.
+    const ws8 = path.join(wsRoot, 'link-replaced');
+    wsg(['new', 'link-replaced', '--no-launch']);
+    const spec8 = S.resolve(api, { mode: 'link' }, { ws: ws8, state: W.readState(ws8) }).spec;
+    const f8 = await failAt(ws8, 'README.md', () => {
+      fs.unlinkSync(path.join(ws8, 'api'));
+      fs.writeFileSync(path.join(ws8, 'api'), 'mine\n');
+    }, () => generate.add(ws8, spec8, cfg));
+    it('a file put where the link was, during the run, is kept by the rollback', () => {
+      assert.match(f8.e, /ENOSPC/);
+      assert.strictEqual(fs.readFileSync(path.join(ws8, 'api'), 'utf8'), 'mine\n');
+      assert.match(f8.err, /api changed while wsg ran/);
+    });
+
+    // A path that can't be put back doesn't stop the others, and the rollback doesn't claim success.
+    const ws9 = path.join(wsRoot, 'restore-fails');
+    wsg(['new', 'restore-fails', '--no-launch']);
+    const spec9 = S.resolve(api, { mode: 'link' }, { ws: ws9, state: W.readState(ws9) }).spec;
+    const realRename = fs.renameSync;
+    const agents9 = path.join(ws9, 'AGENTS.md');
+    const f9 = await failAt(ws9, 'README.md', () => {
+      fs.renameSync = function (a, b) {
+        if (b === agents9) throw Object.assign(new Error('EIO: i/o error, rename'), { code: 'EIO' });
+        return realRename.call(this, a, b);
+      };
+    }, () => generate.add(ws9, spec9, cfg)).finally(() => { fs.renameSync = realRename; });
+    it('one path failing to come back is reported', () => {
+      assert.match(f9.err, /could not put back AGENTS\.md: EIO/);
+      assert.match(f9.err, /Rollback finished with an error \(above\): the workspace may not be as it was/);
+      assert.doesNotMatch(f9.err, /Rollback complete/);
+    });
+    it('and the rest is still taken back', () => {
+      assert.ok(!fs.existsSync(path.join(ws9, '.claude', 'rules', 'api.md')));
+      assert.ok(!fs.existsSync(path.join(ws9, 'api')));
+      assert.deepStrictEqual(W.readState(ws9).sources, []);
+      assert.deepStrictEqual(temps(ws9), []);
+    });
+
+    // wsg team: a file it created, edited before the run failed, is kept, and so is its directory.
+    const team = require(path.join(ROOT, 'lib', 'team.js'));
+    const ws6 = path.join(wsRoot, 'team-rollback');
+    wsg(['new', 'team-rollback', '--no-launch']);
+    const plan6 = team.plan(ws6, W.readState(ws6), 'fullstack');
+    it('team: the run is to create .claude/skills/wsg-feature and team/', () => {
+      assert.ok(!fs.existsSync(path.join(ws6, '.claude', 'skills', 'wsg-feature')));
+      assert.ok(!fs.existsSync(path.join(ws6, 'team')));
+    });
+    const workflow = path.join(ws6, 'team', 'workflow.md');
+    const f6 = await failAt(ws6, 'AGENTS.md', () => fs.appendFileSync(workflow, 'agent note\n'), () => team.apply(ws6, plan6));
+    it('team: the run fails at AGENTS.md', () => assert.match(f6.e, /ENOSPC/));
+    it('team: the created file edited during the run is kept, with a warning', () => {
+      assert.match(fs.readFileSync(workflow, 'utf8'), /agent note\n$/);
+      assert.match(f6.err, /team\/workflow\.md changed while wsg ran, so it is kept as it is now: check it by hand/);
+    });
+    it('team: its directory stays, the other created files and directories are gone', () => {
+      assert.deepStrictEqual(fs.readdirSync(path.join(ws6, 'team')), ['workflow.md']);
+      assert.deepStrictEqual(fs.readdirSync(path.join(ws6, '.claude', 'agents')), []);
+      assert.ok(!fs.existsSync(path.join(ws6, '.claude', 'skills', 'wsg-feature')));
+      assert.deepStrictEqual(temps(ws6), []);
+    });
+  }
+
   console.log('\nwsg add: generated parts that were edited by hand');
   {
     const wsM = path.join(wsRoot, 'markers');

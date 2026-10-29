@@ -99,6 +99,11 @@ function guardPlatform() {
   }
 }
 
+// What a cancelled add, remove or team says: the workspace as it was, as it was but for the files
+// the rollback kept because they changed during the run, or — a rollback step failed — neither.
+const cancelled = (e) => (e.rollbackFailed ? t('cli.cancelledIncomplete')
+  : e.kept && e.kept.length ? t('cli.cancelledKept', { list: e.kept.join(', ') }) : t('cli.addCancelled'));
+
 // lib/flags.js parses; invalid input exits 2 before anything is touched.
 function parse(args, spec, maxPositional) {
   const r = lib('flags').parse(args, spec, maxPositional);
@@ -272,7 +277,7 @@ async function cmdAdd(args) {
     if (settingsChanged) ui.info(t('cli.restart', { path: res.spec.path }));
   } catch (e) {
     if (e && e.name === 'Interrupted') {
-      process.stderr.write(`${t('cli.addCancelled')}\n`);
+      process.stderr.write(`${cancelled(e)}\n`);
       return 130;
     }
     throw e;
@@ -330,7 +335,7 @@ async function cmdRemove(args) {
       return INVALID;
     }
     if (e && e.name === 'Interrupted') {
-      process.stderr.write(`${t('cli.addCancelled')}\n`);
+      process.stderr.write(`${cancelled(e)}\n`);
       return 130;
     }
     throw e;
@@ -426,7 +431,7 @@ async function cmdTeam(args) {
     ({ written } = await team.apply(ws, p));
   } catch (e) {
     if (e && e.name === 'Interrupted') {
-      process.stderr.write(`${t('cli.addCancelled')}\n`);
+      process.stderr.write(`${cancelled(e)}\n`);
       return 130;
     }
     throw e;
