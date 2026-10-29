@@ -755,6 +755,289 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     });
   }
 
+  console.log('\nwsg new --epic: a task inside an epic');
+  {
+    const root = path.join(tmp, 'epic-new-root');
+    const env = { WS_ROOT: root };
+    const ep = path.join(root, 'shop');
+    wsg(['new', 'shop', '--kind', 'epic', '--ticket', 'EPIC-1', '--no-launch'], { env });
+    const ws = path.join(ep, 'pay-fix');
+    const read = (rel) => fs.readFileSync(path.join(ws, rel), 'utf8');
+    const r = wsg(['new', 'pay-fix', '--epic', 'shop', '--ticket', 'https://tracker.example.com/browse/PROJ-42', '--title', 'Pay fix', '--no-launch'], { env });
+    it('exits 0 and makes the task in the epic directory', () => {
+      assert.strictEqual(r.code, 0, r.all);
+      assert.ok(fs.statSync(path.join(ws, W.STATE_FILE)).isFile());
+      assert.ok(!fs.existsSync(path.join(root, 'pay-fix')));
+    });
+    it('the output says it is a task of the epic and that its repositories come with the setup', () => {
+      assert.match(r.out, /A task of epic shop, listed in its tasks\.md/);
+      assert.match(r.out, /wsg add <path>; until a git repository is attached, wsg check says "setup not finished"/);
+      assert.match(r.out, new RegExp(`cd ${ws.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}`));
+    });
+    const state = JSON.parse(read(W.STATE_FILE));
+    it('wsg.json: version 2, kind task, the epic link and the ticket key parsed from the URL', () => {
+      assert.strictEqual(state.version, 2);
+      assert.strictEqual(state.kind, 'task');
+      assert.deepStrictEqual(state.epic, { slug: 'shop' });
+      assert.strictEqual(state.ticket, 'PROJ-42');
+      assert.deepStrictEqual(state.sources, []);
+    });
+    it('the state reads, and the epic finds it as its task', () => {
+      assert.strictEqual(W.stateProblem(state), '');
+      assert.deepStrictEqual(W.childrenOf(ep).map((c) => path.basename(c.ws)), ['pay-fix']);
+      assert.strictEqual(W.epicOf(ws, state), ep);
+    });
+    const agents = read('AGENTS.md');
+    const block = agents.slice(agents.indexOf('<!-- wsg:epic -->'), agents.indexOf('<!-- /wsg:epic -->') + '<!-- /wsg:epic -->'.length);
+    it('AGENTS.md: the epic block right after the advisor block', () => {
+      assert.match(agents, /<!-- \/wsg:advisor -->\n<!-- wsg:epic -->\n/);
+      assert.match(agents, /^Ticket: https:\/\/tracker\.example\.com\/browse\/PROJ-42$/m);
+    });
+    it('the block: the epic, ../knowledge.md before the first edit, ../tasks.md, ## For the epic in notes.md', () => {
+      assert.match(block, /part of epic `shop`, the directory above \(`\.\.`\)/);
+      assert.match(block, /Before the first edit, read `\.\.\/knowledge\.md`/);
+      assert.match(block, /`\.\.\/tasks\.md`/);
+      assert.match(block, /`## For the epic` in `notes\.md`, dated, with evidence/);
+    });
+    it('the block is plain text, small', () => {
+      assert.doesNotMatch(block, /(^|\s)@/);
+      assert.ok(Buffer.byteLength(block) <= 450, Buffer.byteLength(block));
+    });
+    it('otherwise the AGENTS.md of a task', () => {
+      for (const h of ['## Why', '## Definition of done', '## Out of scope', '## Layout', '## Verification', '## Invariants are not findings', '## Code map']) assert.ok(agents.includes(h), h);
+    });
+    it('notes.md has a ## For the epic section', () => assert.match(read('notes.md'), /\n## For the epic\n\n<!-- what the next task of the epic should know/));
+    it('README.md names the epic', () => assert.match(read('README.md'), /^Workspace kind: \*\*task\*\* \(epic `shop`\)\.$/m));
+    it('the epic\'s tasks.md lists it', () => assert.match(fs.readFileSync(path.join(ep, 'tasks.md'), 'utf8'), /<!-- wsg:tasks -->\n- `pay-fix\/` PROJ-42 — Pay fix\n<!-- \/wsg:tasks -->/));
+    it('rendering the new task changes nothing', () =>
+      assert.deepStrictEqual(generate.changedFiles(generate.computeRender(ws, W.readState(ws), null)), []));
+    it('nor does rendering the epic', () =>
+      assert.deepStrictEqual(generate.changedFiles(generate.computeRender(ep, W.readState(ep), null)), []));
+    const ct = wsg(['check', ws], { env });
+    it('the task passes its check', () => {
+      assert.strictEqual(ct.code, 0, ct.out);
+      assert.match(ct.out, /Total: 0 errors/);
+    });
+    const ce = wsg(['check', ep], { env });
+    it('and the epic passes its check', () => {
+      assert.strictEqual(ce.code, 0, ce.out);
+      assert.match(ce.out, /Total: 0 errors/);
+    });
+
+    it('a key given as is is kept; free text gives no key', () => {
+      assert.strictEqual(wsg(['new', 'by-key', '--epic', 'shop', '--ticket', 'PROJ-7', '--no-launch'], { env }).code, 0);
+      assert.strictEqual(W.readState(path.join(ep, 'by-key')).ticket, 'PROJ-7');
+      assert.strictEqual(wsg(['new', 'by-text', '--epic', 'shop', '--ticket', 'the login bug', '--no-launch'], { env }).code, 0);
+      assert.ok(!('ticket' in W.readState(path.join(ep, 'by-text'))));
+      assert.match(fs.readFileSync(path.join(ep, 'by-text', 'AGENTS.md'), 'utf8'), /^Ticket: the login bug$/m);
+    });
+    it('without --ticket: no ticket in the state', () => {
+      assert.strictEqual(wsg(['new', 'no-key', '--epic', path.join(ep), '--no-launch'], { env }).code, 0);
+      assert.ok(!('ticket' in W.readState(path.join(ep, 'no-key'))));
+    });
+    it('tasks.md lists them all, by directory', () =>
+      assert.match(fs.readFileSync(path.join(ep, 'tasks.md'), 'utf8'), /<!-- wsg:tasks -->\n- `by-key\/` PROJ-7\n- `by-text\/`\n- `no-key\/`\n- `pay-fix\/` PROJ-42 — Pay fix\n<!-- \/wsg:tasks -->/));
+
+    it('refresh in the task puts the epic block back from its own state, with the epic unreadable', () => {
+      const file = path.join(ws, 'AGENTS.md');
+      const epicState = path.join(ep, W.STATE_FILE);
+      const was = fs.readFileSync(epicState, 'utf8');
+      fs.writeFileSync(file, agents.replace(`${block}\n`, ''));
+      fs.writeFileSync(epicState, '{');
+      let rr;
+      try { rr = wsg(['refresh', '--ws', ws], { env }); } finally { fs.writeFileSync(epicState, was); }
+      assert.strictEqual(rr.code, 0, rr.all);
+      assert.match(rr.all, /AGENTS\.md: the <!-- wsg:epic --> markers were missing/);
+      assert.strictEqual(fs.readFileSync(file, 'utf8'), agents);
+    });
+    it('a plain task gets no epic block, no For the epic, no epic in README', () => {
+      wsg(['new', 'plain-task', '--no-launch'], { env });
+      const p = path.join(root, 'plain-task');
+      assert.doesNotMatch(fs.readFileSync(path.join(p, 'AGENTS.md'), 'utf8'), /wsg:epic/);
+      assert.doesNotMatch(fs.readFileSync(path.join(p, 'notes.md'), 'utf8'), /For the epic/);
+      assert.match(fs.readFileSync(path.join(p, 'README.md'), 'utf8'), /^Workspace kind: \*\*task\*\*\.$/m);
+      const st = W.readState(p);
+      assert.ok(!('epic' in st) && !('ticket' in st));
+    });
+
+    // The agent starts once the task is made; the epic's lock must be gone by then: its setup runs
+    // wsg add in the epic's directory. A fake claude records whether the lock is there.
+    {
+      const bin = path.join(tmp, 'lock-agent');
+      fs.mkdirSync(bin, { recursive: true });
+      const seen = path.join(tmp, 'lock-agent.seen');
+      fs.writeFileSync(path.join(bin, 'claude'), `#!/bin/sh\nif [ -e ../.claude/wsg.lock ]; then echo held; else echo free; fi > ${JSON.stringify(seen)}\n`, { mode: 0o755 });
+      const tty = path.join(tmp, 'lock-agent-tty.js');
+      fs.writeFileSync(tty, 'process.stdin.isTTY = true; process.stdout.isTTY = true;\n');
+      const la = wsg(['new', 'launched-kid', '--epic', 'shop'], { env: { ...env, WSG_NO_LAUNCH: '', WSG_AGENT: path.join(bin, 'claude'), NODE_OPTIONS: `-r ${tty}` } });
+      it('the agent is started in the task', () => {
+        assert.strictEqual(la.code, 0, la.all);
+        assert.ok(fs.existsSync(seen), la.all);
+      });
+      it('with the epic\'s lock already released', () => assert.strictEqual(fs.readFileSync(seen, 'utf8').trim(), 'free'));
+      fs.rmSync(path.join(ep, 'launched-kid'), { recursive: true });
+      wsg(['refresh', '--ws', ep], { env });
+    }
+    // On a file system that ignores case, the epic as typed finds it: the task still names it as it is.
+    if (fs.existsSync(path.join(root, 'SHOP'))) {
+      const rc = wsg(['new', 'case-kid', '--epic', 'SHOP', '--no-launch'], { env });
+      it('--epic in another case: the epic\'s own name everywhere', () => {
+        assert.strictEqual(rc.code, 0, rc.all);
+        const kid = path.join(ep, 'case-kid');
+        assert.match(rc.out, /A task of epic shop,/);
+        assert.strictEqual(JSON.parse(fs.readFileSync(path.join(kid, '.claude', 'settings.json'), 'utf8')).autoMemoryDirectory, path.join(kid, '.claude-memory'));
+        assert.doesNotMatch(fs.readFileSync(path.join(kid, 'README.md'), 'utf8'), /SHOP/);
+        assert.match(wsg(['refresh', '--ws', kid], { env }).out, /up to date/);
+      });
+      fs.rmSync(path.join(ep, 'case-kid'), { recursive: true });
+      wsg(['refresh', '--ws', ep], { env });
+    }
+
+    // Refusals: exit 2, and nothing anywhere in the root changed.
+    const repo = makeRepo('epic-new-api');
+    wsg(['add', repo, '--ws', ep], { env });
+    fs.mkdirSync(path.join(tmp, 'elsewhere'), { recursive: true });
+    wsg(['new', 'far', '--kind', 'epic', '--no-launch'], { env: { WS_ROOT: path.join(tmp, 'elsewhere') } });
+    const before = tree(root);
+    for (const [name, args, re] of [
+      ['a missing epic', ['new', 'x', '--epic', 'nope'], /no epic .*nope/],
+      ['a workspace that is no epic', ['new', 'x', '--epic', 'plain-task'], /plain-task is not an epic/],
+      ['a task of the epic as the epic', ['new', 'x', '--epic', 'shop/pay-fix'], /is not in WS_ROOT/],
+      ['an epic outside WS_ROOT', ['new', 'x', '--epic', path.join(tmp, 'elsewhere', 'far')], /is not in WS_ROOT/],
+      ['--kind process', ['new', 'x', '--kind', 'process', '--epic', 'shop'], /only a task goes inside an epic, not kind process/],
+      ['--kind epic', ['new', 'x', '--kind', 'epic', '--epic', 'shop'], /only a task goes inside an epic, not kind epic/],
+      ['an empty --epic', ['new', 'x', '--epic', ''], /--epic needs a value/],
+      ['a name the epic uses', ['new', 'team', '--epic', 'shop'], /can't be named team: the epic uses the name itself/],
+      ['a source\'s name', ['new', 'epic-new-api', '--epic', 'shop'], /can't be named epic-new-api: the epic has a source by that name/],
+      ['a task that exists', ['new', 'pay-fix', '--epic', 'shop'], /already exists/],
+      ['an uppercase slug', ['new', 'Pay', '--epic', 'shop'], /Lowercase/],
+    ]) {
+      const rf = wsg([...args, '--no-launch'], { env });
+      it(`${name}: exit 2`, () => {
+        assert.strictEqual(rf.code, 2, rf.all);
+        assert.match(rf.err, re);
+      });
+    }
+    const lockFile = path.join(ep, '.claude', 'wsg.lock');
+    fs.writeFileSync(lockFile, JSON.stringify({ pid: process.pid, time: new Date().toISOString() }));
+    const busy = wsg(['new', 'x', '--epic', 'shop', '--no-launch'], { env });
+    fs.unlinkSync(lockFile);
+    it('the epic locked by another command: exit 2', () => {
+      assert.strictEqual(busy.code, 2, busy.all);
+      assert.match(busy.err, /another wsg command is running/);
+    });
+    it('and none of them touched anything', () => assert.deepStrictEqual(tree(root), before));
+    it('a tasks.md block that can\'t be rendered refuses the task before it is made', () => {
+      const tf = path.join(ep, 'tasks.md');
+      const was = fs.readFileSync(tf, 'utf8');
+      fs.writeFileSync(tf, was.replace('<!-- /wsg:tasks -->\n', ''));
+      const mid = tree(root);
+      try {
+        const rb = wsg(['new', 'x', '--epic', 'shop', '--no-launch'], { env });
+        assert.strictEqual(rb.code, 2, rb.all);
+        assert.match(rb.err, /tasks\.md/);
+        assert.deepStrictEqual(tree(root), mid);
+      } finally { fs.writeFileSync(tf, was); }
+    });
+
+    // A failure after tasks.md was written: the task goes, tasks.md comes back.
+    const tasksBefore = fs.readFileSync(path.join(ep, 'tasks.md'), 'utf8');
+    const rename = fs.renameSync;
+    fs.renameSync = (from, to) => {
+      rename(from, to);
+      if (to === path.join(ep, 'tasks.md')) throw new Error('injected');
+    };
+    let msg;
+    try {
+      msg = await failure(() => generate.createInEpic({ kind: 'task', slug: 'doomed', title: 'doomed', ticket: '', ticketUrl: '', personalRules: false, epicWs: ep },
+        { WS_ROOT: root, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' }));
+    } finally { fs.renameSync = rename; }
+    it('a failure after tasks.md was written rolls back', () => assert.strictEqual(msg, 'injected'));
+    it('the task directory is gone', () => assert.ok(!fs.existsSync(path.join(ep, 'doomed'))));
+    it('tasks.md is as it was', () => assert.strictEqual(fs.readFileSync(path.join(ep, 'tasks.md'), 'utf8'), tasksBefore));
+  }
+
+  console.log('\nwsg new --epic: Owner rules from the epic');
+  {
+    const root = path.join(tmp, 'epic-rules-root');
+    const memory = path.join(tmp, 'epic-owner-rules.md');
+    fs.writeFileSync(memory, '# my rules\n');
+    const env = { WS_ROOT: root, WSG_GLOBAL_MEMORY: memory };
+    const ep = path.join(root, 'rules-epic');
+    // No --ticket: the epic's AGENTS.md has Ticket: FILL IN outside its Owner rules.
+    wsg(['new', 'rules-epic', '--kind', 'epic', '--no-launch'], { env });
+    const epicAgents = path.join(ep, 'AGENTS.md');
+    const childAgents = (slug) => fs.readFileSync(path.join(ep, slug, 'AGENTS.md'), 'utf8');
+    const plainRules = (slug) => {
+      wsg(['new', `${slug}-plain`, '--no-launch'], { env });
+      const a = fs.readFileSync(path.join(root, `${slug}-plain`, 'AGENTS.md'), 'utf8');
+      return a.slice(a.indexOf('## Owner rules'), a.indexOf('## Code map'));
+    };
+    it('the epic\'s section still has FILL IN: the task gets the usual one', () => {
+      const n = wsg(['new', 'first', '--epic', 'rules-epic', '--no-launch'], { env });
+      assert.strictEqual(n.code, 0, n.all);
+      const a = childAgents('first');
+      assert.strictEqual(a.slice(a.indexOf('## Owner rules'), a.indexOf('## Code map')), plainRules('first'));
+      assert.match(a, /FILL IN with a digest of `.*epic-owner-rules\.md`/);
+    });
+    const filled = [
+      '## Owner rules (override tool defaults)', '',
+      '1. Change nothing until an explicit "ok".',
+      '2. alice reviews every MR.', '',
+      '```text', '## not a heading inside a fence', '```', '',
+    ].join('\n');
+    const text = fs.readFileSync(epicAgents, 'utf8');
+    fs.writeFileSync(epicAgents, `${text.slice(0, text.indexOf('## Owner rules'))}${filled}\n## Epic only\n\nnot for the tasks\n`);
+    it('the epic still has Ticket: FILL IN elsewhere', () => assert.match(fs.readFileSync(epicAgents, 'utf8'), /^Ticket: FILL IN/m));
+    it('the section filled in: copied as is, before the code map, up to the next heading', () => {
+      const n = wsg(['new', 'second', '--epic', 'rules-epic', '--no-launch'], { env });
+      assert.strictEqual(n.code, 0, n.all);
+      const a = childAgents('second');
+      assert.ok(a.includes(`${filled}\n## Code map`), a);
+      assert.doesNotMatch(a, /FILL IN with a digest/);
+      assert.doesNotMatch(a, /Epic only|not for the tasks/);
+    });
+    it('also into a task made without personal rules', () => {
+      const n = wsg(['new', 'third', '--epic', 'rules-epic', '--no-launch'], { env: { WS_ROOT: root } });
+      assert.strictEqual(n.code, 0, n.all);
+      assert.ok(childAgents('third').includes(`${filled}\n## Code map`));
+    });
+    it('a task with copied rules passes its check', () => {
+      const c = wsg(['check', path.join(ep, 'second')], { env });
+      assert.strictEqual(c.code, 0, c.out);
+    });
+    it('FILL IN back in the section: not copied', () => {
+      fs.writeFileSync(epicAgents, fs.readFileSync(epicAgents, 'utf8').replace('2. alice reviews every MR.', '2. FILL IN'));
+      wsg(['new', 'fourth', '--epic', 'rules-epic', '--no-launch'], { env });
+      assert.match(childAgents('fourth'), /FILL IN with a digest of/);
+      assert.ok(!childAgents('fourth').includes('alice reviews'));
+    });
+    it('a section with a generated marker in it is not copied, and the task says why', () => {
+      fs.writeFileSync(epicAgents, fs.readFileSync(epicAgents, 'utf8').replace('2. FILL IN', '2. Keep `<!-- wsg:layout -->` intact.'));
+      assert.strictEqual(generate.epicOwnerRules(ep), null);
+      const n = wsg(['new', 'fifth', '--epic', 'rules-epic', '--no-launch'], { env });
+      assert.strictEqual(n.code, 0, n.all);
+      assert.match(n.all, /the epic's Owner rules were not copied into the task: they hold a <!-- wsg:… --> marker/);
+      assert.match(childAgents('fifth'), /FILL IN with a digest of/);
+    });
+    it('an unclosed fence: not copied either, with the reason', () => {
+      fs.writeFileSync(epicAgents, fs.readFileSync(epicAgents, 'utf8').replace('2. Keep `<!-- wsg:layout -->` intact.', '2. alice reviews.')
+        .replace('## not a heading inside a fence\n```\n', '## not a heading inside a fence\n'));
+      const n = wsg(['new', 'sixth', '--epic', 'rules-epic', '--no-launch'], { env });
+      assert.strictEqual(n.code, 0, n.all);
+      assert.match(n.all, /leave a code fence open/);
+    });
+    it('a section with FILL IN is not warned about, even with the fence open', () => {
+      fs.writeFileSync(epicAgents, fs.readFileSync(epicAgents, 'utf8').replace('2. alice reviews.', '2. FILL IN'));
+      assert.doesNotMatch(wsg(['new', 'seventh', '--epic', 'rules-epic', '--no-launch'], { env }).all, /not copied/);
+    });
+    it('no section at all: the task gets the usual one', () => {
+      const a = fs.readFileSync(epicAgents, 'utf8');
+      fs.writeFileSync(epicAgents, a.slice(0, a.indexOf('## Owner rules')));
+      assert.strictEqual(generate.epicOwnerRules(ep), null);
+    });
+  }
+
   console.log('\nlaunching the agent');
   {
     it('claude gets /wsg-setup as its first message', () => {
@@ -3337,9 +3620,11 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       assert.strictEqual(ge.out, fs.readFileSync(path.join(ROOT, 'docs', 'epic-guide.md'), 'utf8'));
     });
     // The guide describes the epic as it will work: these flags come with the commits that add them.
-    const LATER = ['wsg new has no --epic', 'wsg new has no --sources', 'wsg new has no --dry-run', 'no such flag: --sources'];
+    const LATER = ['wsg new has no --sources', 'wsg new has no --dry-run', 'no such flag: --sources'];
     it('every other wsg command and flag in the epic guide exists', () =>
       assert.deepStrictEqual(flagProblems(ge.out).filter((p) => !LATER.includes(p)), []));
+    it('and every LATER entry is still in the guide: none is left to hide a new mistake', () =>
+      assert.deepStrictEqual(LATER.filter((p) => !flagProblems(ge.out).includes(p)), []));
     it('the epic guide stays agent-neutral', () => assert.doesNotMatch(ge.out, /Agent tool|subagent_type|\bTask tool\b/));
     it('every wsg command and flag in the advisor guide exists', () => assert.deepStrictEqual(flagProblems(advisorGuide), []));
     it('every wsg command and flag in the agent file exists', () => assert.deepStrictEqual(flagProblems(agentTpl), []));

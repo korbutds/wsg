@@ -47,7 +47,8 @@ Go through these in order. Each answer goes into its section of `AGENTS.md`, rep
 8. **Links** — spec, designs, related MRs: one `Name: URL` line each, under the title.
 9. **Owner rules** — only if `AGENTS.md` has an "Owner rules" section: read the file it names, and
    condense the rules that matter for this task into a short numbered list there. Keep the six
-   required lines.
+   required lines. A section already filled in, with no FILL IN (in a task of an epic, copied from
+   the epic), is left as it is.
 
 If the title is just the slug or not in English, propose a better one and update the `# ` heading
 of every file that repeats it.

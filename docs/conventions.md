@@ -56,6 +56,12 @@ workspaces in directories of the epic. Beyond what a task has, the epic holds:
 An epic has no `repo` pointer and no `mr-target-branch.txt`: those belong to its tasks. The
 procedures are in `wsg guide epic`, so any agent can follow them; the skills only point there.
 
+A task of the epic is made with `wsg new <slug> --epic <epic>`, in `<epic>/<slug>/`, and the
+epic's `tasks.md` lists it. Its `wsg.json` links it to the epic (`"epic": { "slug": … }`) and keeps
+the ticket key; its `AGENTS.md` has a `<!-- wsg:epic -->` block pointing to `../knowledge.md` and
+`../tasks.md`, and the epic's Owner rules section, copied as is when it holds no FILL IN; its
+`notes.md` has `## For the epic`, where it stages what the epic should learn from it.
+
 A task that turns out to be repeatable is turned into a process: `wsg promote <slug> --skill <name>`. Sources,
 rules and memory stay; a skill stub and a log with the first run are added. There is no reverse
 conversion — there's no use case for it.
@@ -89,7 +95,7 @@ tasks get), plus the kind, slug and title. Every `wsg add` re-renders from it:
 
 | Where | What |
 |---|---|
-| `AGENTS.md` | `<!-- wsg:advisor -->` — the one-line rule that questions for the owner go through the advisor first; `<!-- wsg:team -->` — three lines pointing to the team, only after `wsg team`; `<!-- wsg:layout -->` — the source lines of Layout; `<!-- wsg:verification -->` — the Verification bullets |
+| `AGENTS.md` | `<!-- wsg:advisor -->` — the one-line rule that questions for the owner go through the advisor first; `<!-- wsg:team -->` — three lines pointing to the team, only after `wsg team`; `<!-- wsg:epic -->` — in a task of an epic, the pointers to the epic, from the task's own state; `<!-- wsg:layout -->` — the source lines of Layout; `<!-- wsg:verification -->` — the Verification bullets |
 | `CLAUDE.md` | `<!-- wsg:imports -->` — the `@<repo>/AGENTS.md` imports (`@AGENTS.md` itself stays outside) |
 | `README.md` | `<!-- wsg:sources -->` — the sources table and the launch commands |
 | `.claude/skills/<skill>/SKILL.md` | in a process workspace with a team: `<!-- wsg:team -->` — one pointer line to `team/workflow.md`, written by `wsg team` after the first `# ` heading |

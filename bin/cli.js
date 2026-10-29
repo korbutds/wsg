@@ -116,9 +116,10 @@ const { FLAGS } = lib('flags');
 
 // add, remove and promote change wsg.json: one at a time per workspace (lib/lock.js).
 // opts: as acquire takes them.
+// Returns release(): a command that goes on after its writes (wsg new starts the agent) lets go first.
 function lock(ws, opts) {
   try {
-    lib('lock').acquire(ws, opts);
+    return lib('lock').acquire(ws, opts);
   } catch (e) {
     if (e.invalid) invalid(e.message);
     throw e;
@@ -155,9 +156,31 @@ async function cmdNew(args) {
     const bad = W.skillError(pos[0]);
     if (bad) invalid(t('workspace.badSkillFromSlug', { name: pos[0], why: bad }));
   }
+  // A task of an epic: the epic is named, never taken from the current directory. It is a workspace
+  // right in WS_ROOT, where `<epic>/<task>` resolves; one elsewhere is refused.
+  let epicWs = '';
+  let release = () => {};
+  if (flags['--epic'] !== undefined) {
+    if (!flags['--epic']) invalid(t('cli.needsValue', { arg: '--epic' }));
+    if (kind !== 'task') invalid(t('workspace.epicTaskKind', { kind }));
+    const given = config.resolveWs(flags['--epic'], cfg);
+    // native: the name as it is on disk — on macOS `PAY` finds `pay`, and the task must say `pay`.
+    const real = (p) => { try { return fs.realpathSync.native(p); } catch { return path.resolve(p); } };
+    if (!fs.existsSync(given)) invalid(t('cli.noEpic', { ws: given }));
+    if (path.dirname(real(given)) !== real(cfg.WS_ROOT)) invalid(t('cli.epicOutsideRoot', { ws: given, root: cfg.WS_ROOT }));
+    epicWs = path.join(cfg.WS_ROOT, path.basename(real(given)));
+    try {
+      W.epicState(epicWs);
+    } catch (e) {
+      invalid(e.message);
+    }
+    // Held from the checks to the tasks.md write: a task made or a source added meanwhile is seen.
+    release = lock(epicWs);
+  }
   const meta = {
     kind,
     slug: pos[0],
+    ...(epicWs ? { epicWs } : {}),
     title: (flags['--title'] || '').trim() || pos[0],
     ...S.ticketFields(flags['--ticket'], cfg),
     // A process's skill is named after the slug unless --skill says otherwise.
@@ -172,8 +195,24 @@ async function cmdNew(args) {
   }
   guardPlatform();
   const ui = lib('ui');
-  const ws = await lib('generate').create(meta, cfg);
+  let ws;
+  try {
+    ws = await lib('generate').create(meta, cfg);
+  } catch (e) {
+    // The epic's files that can't be read or rendered: refused before anything was made.
+    if (e && e.invalid) invalid(e.message);
+    // tasks.md edited during the run is kept: "nothing created" would not be the whole truth.
+    if (e && e.name === 'Interrupted' && (e.rollbackFailed || (e.kept && e.kept.length))) {
+      process.stderr.write(`\n${cancelled(e)}\n`);
+      return 130;
+    }
+    throw e;
+  }
+  // Not held through the agent's session: its setup runs wsg add, and the epic must stay usable.
+  release();
   ui.head(t('cli.created', { ws }));
+  // Sources of the epic are not taken into its tasks yet: the setup attaches them as for any task.
+  if (epicWs) ui.info(t('cli.epicTaskNext', { epic: path.basename(epicWs) }));
 
   const L = lib('launch');
   const agent = L.resolveAgent(cfg);
@@ -189,7 +228,8 @@ async function cmdNew(args) {
   if (launch && launch.kind === 'claude') {
     // ws starts the agent but doesn't type for it: the skill is the first thing to type there.
     const shellrc = lib('shellrc');
-    if (shellrc.loaded() || shellrc.isHooked()) ui.info(t('cli.nextWs', { slug: meta.slug }));
+    // ws doesn't know a task inside an epic yet: the cd line below is the way in.
+    if (!epicWs && (shellrc.loaded() || shellrc.isHooked())) ui.info(t('cli.nextWs', { slug: meta.slug }));
     ui.info(`  ${launch.display}`);
   } else if (launch) {
     ui.info(`  ${launch.display}`);

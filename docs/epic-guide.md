@@ -26,9 +26,11 @@ From the epic session, when the owner asks to start work on a ticket.
 
    Without `--sources` the task gets no repository, unless the epic has exactly one with a branch
    template. A task without a git repository reports "setup not finished" until one is attached:
-   say so. Run it with `--dry-run` first when the owner wants to see the branches.
-4. After it runs, the task's `AGENTS.md` points to `../knowledge.md` and `../tasks.md`. Tell the
-   owner how to open a session in the task directory; the task is worked on there, not here.
+   say so. When the owner wants to see the branches first, run
+   `wsg new <slug> --epic <epic> --dry-run` with the same flags: it prints the plan, nothing made.
+4. After it runs, the task's `AGENTS.md` points to `../knowledge.md` and `../tasks.md`, and holds
+   the epic's Owner rules when they are filled in here. Tell the owner how to open a session in
+   the task directory; the task is worked on there, not here.
 
 ## Working
 
