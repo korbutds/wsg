@@ -499,7 +499,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     it('the check reports the epic parts', () => {
       assert.match(c.out, /kind: epic/);
       for (const re of [/OK +epic-knowledge\.md — the pointer to knowledge\.md, loaded every session/, /OK +knowledge\.md — \d+ B/,
-        /OK +tasks\.md lists the tasks/, /OK +skill wsg-epic-task — invoked manually only/, /OK +skill wsg-epic-close/, /OK +skill wsg-epic-sync/]) {
+        /OK +tasks\.md has its <!-- wsg:tasks --> block/, /OK +skill wsg-epic-task — invoked manually only/, /OK +skill wsg-epic-close/, /OK +skill wsg-epic-sync/]) {
         assert.match(c.out, re);
       }
     });
@@ -1466,6 +1466,268 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
         if (fs.existsSync(path.join(wt, '.git'))) execFileSync('git', ['-C', n === 'src-api' ? sApi : sWeb, 'worktree', 'remove', '--force', wt]);
       }
     }
+  }
+
+  console.log('\nwsg check: an epic and its tasks');
+  {
+    const root = path.join(tmp, 'epic-check-root');
+    const env = { WS_ROOT: root };
+    const ep = path.join(root, 'shop');
+    const repo = makeRepo('chk-api');
+    for (const args of [['new', 'shop', '--kind', 'epic', '--ticket', 'EPIC-1', '--no-launch'],
+      ['add', repo, '--branch-template', 'alice/{slug}', '--ws', ep],
+      // The epic's one source with a template: the task gets a worktree of it.
+      ['new', 'pay', '--epic', 'shop', '--ticket', 'PROJ-42', '--no-launch'],
+      ['new', 'bare', '--epic', 'shop', '--sources', 'none', '--no-launch']]) {
+      const r = wsg(args, { env });
+      if (r.code !== 0) throw new Error(r.all);
+    }
+    const pay = path.join(ep, 'pay');
+    const bare = path.join(ep, 'bare');
+    const checkOut = (dir, extra = {}) => wsg(['check', dir], { env: { ...env, ...extra } });
+    // The budget lines of a task of an epic: its own bytes, the epic's, the total.
+    const budget = (out) => ({
+      own: Number((/this task: ≈(\d+) B/.exec(out) || [])[1]),
+      epic: Number((/the epic above: ≈(\d+) B/.exec(out) || [])[1]),
+      total: Number((/≈(\d+) B into every session/.exec(out) || [])[1]),
+    });
+    const size = (rel) => fs.statSync(path.join(ep, rel)).size;
+
+    const cp = checkOut(pay);
+    it('a fresh task of the epic with a derived worktree: 0 errors', () => {
+      assert.ok(W.readState(pay).sources.some((x) => x.from === 'epic' && x.mode === 'worktree'), 'no derived worktree');
+      assert.strictEqual(cp.code, 0, cp.out);
+      assert.match(cp.out, /Total: 0 errors/);
+    });
+    it('it reports the epic link and the epic block', () => {
+      assert.match(cp.out, /OK +part of epic shop, the directory above/);
+      assert.match(cp.out, /OK +AGENTS\.md points to the epic's knowledge\.md and tasks\.md/);
+    });
+    it('the budget adds the epic CLAUDE.md and its rule without paths:, apart', () => {
+      const b = budget(cp.out);
+      assert.strictEqual(b.epic, size('CLAUDE.md') + size('.claude/rules/epic-knowledge.md'), cp.out);
+      assert.strictEqual(b.total, b.own + b.epic, cp.out);
+      assert.match(cp.out, /the epic above: ≈\d+ B — CLAUDE\.md \d+ B, \.claude\/rules\/epic-knowledge\.md \d+ B/);
+    });
+    it('the epic\'s rule with paths: is named, not counted', () => {
+      assert.ok(fs.existsSync(path.join(ep, '.claude', 'rules', 'chk-api.md')));
+      assert.match(cp.out, /not counted, paths: set .*\.claude\/rules\/chk-api\.md/);
+      assert.doesNotMatch(cp.out, /the epic above:.*chk-api/);
+    });
+    it('the epic\'s @AGENTS.md is not counted: an import outside the task is not loaded', () =>
+      assert.doesNotMatch(cp.out, /the epic above:.*AGENTS\.md/));
+    it('a fresh task without sources: 0 errors', () => {
+      const r = checkOut(bare);
+      assert.strictEqual(r.code, 0, r.out);
+      assert.match(r.out, /Total: 0 errors/);
+    });
+    const ce = checkOut(ep);
+    it('the epic: 0 errors, its tasks listed with their tickets', () => {
+      assert.strictEqual(ce.code, 0, ce.out);
+      assert.match(ce.out, /Total: 0 errors/);
+      assert.match(ce.out, /OK +task bare\n.*OK +task pay PROJ-42/);
+      assert.doesNotMatch(ce.out, /run wsg refresh/);
+    });
+    it('the epic\'s own budget has no breakdown', () => assert.doesNotMatch(ce.out, /this task:|the epic above/));
+
+    const extra = path.join(ep, '.claude', 'rules', 'extra.md');
+    fs.writeFileSync(extra, '# for every task\n');
+    it('a rule without paths: added to the epic counts in the task', () => {
+      const b = budget(checkOut(pay).out);
+      assert.strictEqual(b.epic, size('CLAUDE.md') + size('.claude/rules/epic-knowledge.md') + size('.claude/rules/extra.md'));
+    });
+    fs.unlinkSync(extra);
+    it('WSG_PARENT_CONTEXT naming the epic CLAUDE.md is counted once', () => {
+      const r = checkOut(pay, { WSG_PARENT_CONTEXT: path.join(ep, 'CLAUDE.md') });
+      assert.strictEqual(budget(r.out).total, budget(cp.out).total, r.out);
+      assert.match(r.out, /is the epic's, counted once/);
+    });
+    it('WSG_PARENT_CONTEXT as a symlink to the epic CLAUDE.md is counted once too', () => {
+      const ln = path.join(tmp, 'epic-check-parent-link.md');
+      fs.symlinkSync(path.join(ep, 'CLAUDE.md'), ln);
+      const r = checkOut(pay, { WSG_PARENT_CONTEXT: ln });
+      assert.strictEqual(budget(r.out).total, budget(cp.out).total, r.out);
+      assert.match(r.out, /is the epic's, counted once/);
+    });
+    it('the epic\'s CLAUDE.local.md and its agents\' descriptions count in the task', () => {
+      const local = path.join(ep, 'CLAUDE.local.md');
+      const agent = path.join(ep, '.claude', 'agents', 'helper.md');
+      fs.writeFileSync(local, 'x'.repeat(50));
+      fs.mkdirSync(path.dirname(agent), { recursive: true });
+      fs.writeFileSync(agent, '---\nname: helper\ndescription: abcdefghij\n---\nbody that is not counted\n');
+      const r = checkOut(pay);
+      fs.unlinkSync(local);
+      fs.rmSync(path.dirname(agent), { recursive: true });
+      assert.strictEqual(budget(r.out).epic, budget(cp.out).epic + 60, r.out);
+      assert.match(r.out, /CLAUDE\.local\.md 50 B/);
+      assert.match(r.out, /\.claude\/agents\/helper\.md \(description\) 10 B/);
+    });
+    it('a task opened through a symlink is still in its epic', () => {
+      const ln = path.join(root, 'paylink');
+      fs.symlinkSync(pay, ln);
+      const r = checkOut(ln);
+      fs.unlinkSync(ln);
+      assert.strictEqual(r.code, 0, r.out);
+      assert.match(r.out, /OK +part of epic shop, the directory above/);
+      assert.strictEqual(budget(r.out).epic, budget(cp.out).epic, r.out);
+    });
+    if (process.getuid && process.getuid() === 0) console.log('  skip  an unreadable epic rules directory (running as root)');
+    else {
+      it('an unreadable epic rules directory: WARN, the check goes on', () => {
+        const dir = path.join(ep, '.claude', 'rules');
+        fs.chmodSync(dir, 0o000);
+        let r;
+        try { r = checkOut(pay); } finally { fs.chmodSync(dir, 0o755); }
+        assert.strictEqual(r.code, 0, r.out);
+        assert.match(r.out, /WARN \.claude\/rules in the directory above can't be read \(EACCES\): not counted in the budget/);
+        assert.match(r.out, /Total: 0 errors/);
+      });
+    }
+    it('another WSG_PARENT_CONTEXT is counted on top', () => {
+      const pc = path.join(tmp, 'epic-check-parent.md');
+      fs.writeFileSync(pc, 'x'.repeat(100));
+      const r = checkOut(pay, { WSG_PARENT_CONTEXT: pc });
+      assert.strictEqual(budget(r.out).total, budget(cp.out).total + 100, r.out);
+      assert.match(r.out, /counted parent /);
+    });
+
+    // The link to the epic, broken each way and put back.
+    const stateFile = path.join(bare, W.STATE_FILE);
+    const stateText = fs.readFileSync(stateFile, 'utf8');
+    fs.writeFileSync(stateFile, stateText.replace('"slug": "shop"', '"slug": "other"'));
+    const mm = checkOut(bare);
+    it('a task naming another epic: FAIL epic link broken, with the fix', () => {
+      assert.strictEqual(mm.code, 1, mm.out);
+      assert.match(mm.out, /FAIL epic link broken: the directory above is epic shop, but this task's state names other — move the task into its epic's directory, or fix "epic" in \.claude\/wsg\.json/);
+    });
+    it('and the epic warns about it, without failing', () => {
+      const r = checkOut(ep);
+      assert.strictEqual(r.code, 0, r.out);
+      assert.match(r.out, /WARN task bare names epic other in its state, not shop: moved or copied by hand/);
+    });
+    it('the epic\'s files are counted as "the directory above" once the link is broken', () => {
+      assert.match(mm.out, /the directory above: ≈\d+ B — CLAUDE\.md/);
+      assert.doesNotMatch(mm.out, /the epic above/);
+    });
+    fs.writeFileSync(stateFile, stateText);
+    it('put back, both clear', () => {
+      assert.doesNotMatch(checkOut(bare).out, /epic link broken/);
+      assert.doesNotMatch(checkOut(ep).out, /names epic other/);
+    });
+    const epicState = path.join(ep, W.STATE_FILE);
+    const epicText = fs.readFileSync(epicState, 'utf8');
+    fs.writeFileSync(epicState, JSON.stringify({ ...JSON.parse(epicText), kind: 'process', version: 2, sources: [] }));
+    it('the directory above is no epic: FAIL', () => {
+      const r = checkOut(bare);
+      assert.strictEqual(r.code, 1, r.out);
+      assert.match(r.out, /FAIL epic link broken: the directory above, .*shop, is a process workspace, not an epic/);
+    });
+    fs.writeFileSync(epicState, '{');
+    it('its state does not read: FAIL, with the reason', () =>
+      assert.match(checkOut(bare).out, /FAIL epic link broken: cannot read .*wsg\.json: /));
+    fs.writeFileSync(epicState, epicText);
+    it('a task of an epic outside any epic: FAIL', () => {
+      assert.strictEqual(wsg(['new', 'solo', '--no-launch'], { env }).code, 0);
+      const f = path.join(root, 'solo', W.STATE_FILE);
+      fs.writeFileSync(f, JSON.stringify({ ...JSON.parse(fs.readFileSync(f, 'utf8')), epic: { slug: 'shop' } }));
+      const r = checkOut(path.join(root, 'solo'));
+      assert.strictEqual(r.code, 1, r.out);
+      assert.match(r.out, /FAIL epic link broken: the directory above, .*, is no wsg workspace/);
+    });
+    it('an "epic" that is not { slug }: FAIL', () => {
+      fs.writeFileSync(stateFile, stateText.replace('"slug": "shop"', '"slug": "Shop!"'));
+      assert.match(checkOut(bare).out, /FAIL epic link broken: \.claude\/wsg\.json: "epic" belongs only to a task/);
+      fs.writeFileSync(stateFile, stateText);
+    });
+    it('the link put back: 0 errors again', () => assert.match(checkOut(bare).out, /Total: 0 errors/));
+    it('an epic with a stray "epic": FAIL for the state, no task section', () => {
+      fs.writeFileSync(epicState, JSON.stringify({ ...JSON.parse(epicText), epic: { slug: 'shop' } }));
+      const r = checkOut(ep);
+      fs.writeFileSync(epicState, epicText);
+      assert.strictEqual(r.code, 1, r.out);
+      assert.match(r.out, /FAIL \.claude\/wsg\.json — "epic" belongs only to a task, and this workspace is kind epic: remove it/);
+      assert.doesNotMatch(r.out, /epic link broken|move the task|this task:/);
+      assert.strictEqual(r.out.match(/^Epic$/gm).length, 1, r.out);
+    });
+    it('a process with a stray "epic": the same', () => {
+      assert.strictEqual(wsg(['new', 'prc', '--kind', 'process', '--skill', 'run-it', '--no-launch'], { env }).code, 0);
+      const f = path.join(root, 'prc', W.STATE_FILE);
+      fs.writeFileSync(f, JSON.stringify({ ...JSON.parse(fs.readFileSync(f, 'utf8')), epic: { slug: 'shop' } }));
+      const r = checkOut(path.join(root, 'prc'));
+      assert.strictEqual(r.code, 1, r.out);
+      assert.match(r.out, /FAIL \.claude\/wsg\.json — "epic" belongs only to a task, and this workspace is kind process/);
+      assert.doesNotMatch(r.out, /^Epic$|epic link broken|this task:/m);
+    });
+
+    const agentsFile = path.join(bare, 'AGENTS.md');
+    const agentsText = fs.readFileSync(agentsFile, 'utf8');
+    fs.writeFileSync(agentsFile, agentsText.replace(/<!-- wsg:epic -->\n[\s\S]*?<!-- \/wsg:epic -->\n/, ''));
+    it('no epic block in AGENTS.md: WARN, run wsg refresh', () => {
+      const r = checkOut(bare);
+      assert.strictEqual(r.code, 0, r.out);
+      assert.match(r.out, /WARN AGENTS\.md has no <!-- wsg:epic --> block: .* run wsg refresh/);
+    });
+    it('wsg refresh brings it back, and the warning goes', () => {
+      assert.strictEqual(wsg(['refresh', '--ws', bare], { env }).code, 0);
+      assert.strictEqual(fs.readFileSync(agentsFile, 'utf8'), agentsText);
+      assert.doesNotMatch(checkOut(bare).out, /no <!-- wsg:epic -->/);
+    });
+
+    // A source the task took from the epic that the epic dropped since.
+    const es = JSON.parse(epicText);
+    fs.writeFileSync(epicState, JSON.stringify({ ...es, sources: [] }));
+    it('a derived source the epic no longer has: WARN, informational', () => {
+      const r = checkOut(pay);
+      assert.strictEqual(r.code, 0, r.out);
+      assert.match(r.out, /WARN source chk-api was taken from the epic, which has no source of that name now — the task keeps it/);
+    });
+    fs.writeFileSync(epicState, epicText);
+    it('the epic has it again: no warning', () => assert.doesNotMatch(checkOut(pay).out, /was taken from the epic/));
+
+    // In the epic: a task directory whose state doesn't read, a workspace that is no task of it.
+    const broken = path.join(ep, 'broken');
+    fs.mkdirSync(path.join(broken, '.claude'), { recursive: true });
+    fs.writeFileSync(path.join(broken, W.STATE_FILE), '{');
+    it('a task whose state does not read: WARN, the epic does not fail', () => {
+      const r = checkOut(ep);
+      assert.strictEqual(r.code, 0, r.out);
+      assert.match(r.out, /WARN broken\/ — cannot read .*: not listed as a task of the epic until it is fixed/);
+      assert.match(r.out, /OK +task pay PROJ-42/);
+    });
+    fs.writeFileSync(path.join(broken, W.STATE_FILE), JSON.stringify({ version: 2, kind: 'task', slug: 'broken', sources: [] }));
+    it('a workspace inside the epic that is not its task: WARN', () =>
+      assert.match(checkOut(ep).out, /WARN broken\/ is a task workspace inside the epic, but not its task: its state has no "epic"/));
+    fs.rmSync(broken, { recursive: true });
+    it('removed, both clear', () => assert.doesNotMatch(checkOut(ep).out, /broken\//));
+
+    // A task made by hand, so tasks.md does not list it yet.
+    fs.mkdirSync(path.join(ep, 'hand', '.claude'), { recursive: true });
+    fs.writeFileSync(path.join(ep, 'hand', W.STATE_FILE), JSON.stringify({ version: 2, kind: 'task', slug: 'hand', sources: [], epic: { slug: 'shop' } }));
+    it('tasks.md out of date: WARN, run wsg refresh', () => {
+      const r = checkOut(ep);
+      assert.strictEqual(r.code, 0, r.out);
+      assert.match(r.out, /WARN tasks\.md lists other tasks than this directory holds — run wsg refresh/);
+    });
+    it('after wsg refresh it clears', () => {
+      assert.strictEqual(wsg(['refresh', '--ws', ep], { env }).code, 0);
+      assert.doesNotMatch(checkOut(ep).out, /tasks\.md lists other tasks/);
+    });
+    fs.rmSync(path.join(ep, 'hand'), { recursive: true });
+    wsg(['refresh', '--ws', ep], { env });
+
+    const adapter = path.join(ep, '.claude', 'agents', 'wsg-reviewer.md');
+    fs.mkdirSync(path.dirname(adapter), { recursive: true });
+    fs.writeFileSync(adapter, '---\nname: wsg-reviewer\ndescription: x\nmodel: inherit\n---\nRead `team/reviewer.md`.\n');
+    it('a team adapter in the epic: WARN, it loads into every task session', () =>
+      assert.match(checkOut(ep).out, /WARN \.claude\/agents\/wsg-reviewer\.md in an epic: every session of its tasks loads it too/));
+    fs.unlinkSync(adapter);
+    it('removed, it clears; the epic is back to 0 errors', () => {
+      const r = checkOut(ep);
+      assert.doesNotMatch(r.out, /in an epic: every session/);
+      assert.match(r.out, /Total: 0 errors/);
+    });
+    const wt = path.join(pay, 'chk-api');
+    if (fs.existsSync(path.join(wt, '.git'))) execFileSync('git', ['-C', repo, 'worktree', 'remove', '--force', wt]);
   }
 
   console.log('\nlaunching the agent');
