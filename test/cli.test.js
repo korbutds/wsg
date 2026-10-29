@@ -878,6 +878,24 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       fs.rmSync(path.join(ep, 'launched-kid'), { recursive: true });
       wsg(['refresh', '--ws', ep], { env });
     }
+    // With ws loaded in the shell, the next step is ws: <epic>/<task> for a task of an epic.
+    {
+      const loaded = { ...env, WSG_WS_LOADED: '1' };
+      const nk = wsg(['new', 'ws-kid', '--epic', 'shop', '--no-launch'], { env: loaded });
+      it('with ws loaded, a task of an epic is entered with ws <epic>/<task>', () => {
+        assert.strictEqual(nk.code, 0, nk.all);
+        assert.match(nk.out, /^ {2}ws shop\/ws-kid +then type \/wsg-setup$/m);
+      });
+      const np = wsg(['new', 'ws-plain', '--no-launch'], { env: loaded });
+      it('and a plain task with ws <slug>', () => {
+        assert.strictEqual(np.code, 0, np.all);
+        assert.match(np.out, /^ {2}ws ws-plain +then type \/wsg-setup$/m);
+      });
+      it('without ws, no ws line', () => assert.doesNotMatch(r.out, /^ {2}ws /m));
+      fs.rmSync(path.join(ep, 'ws-kid'), { recursive: true });
+      fs.rmSync(path.join(root, 'ws-plain'), { recursive: true });
+      wsg(['refresh', '--ws', ep], { env });
+    }
     // On a file system that ignores case, the epic as typed finds it: the task still names it as it is.
     if (fs.existsSync(path.join(root, 'SHOP'))) {
       const rc = wsg(['new', 'case-kid', '--epic', 'SHOP', '--no-launch'], { env });

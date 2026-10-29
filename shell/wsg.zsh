@@ -3,6 +3,7 @@
 #
 #   ws                  list workspaces
 #   ws <slug>           jump in and start the agent from WSG_AGENT
+#   ws <epic>/<task>    the same for a task inside an epic
 #                       (claude continues the previous session, if any)
 #   ws <slug> --new     jump in and start a new session
 #   ws <slug> --cd      only jump in
@@ -13,6 +14,10 @@
 # The agent is asked on the first `ws <slug>` and saved to the config. The config is reread on
 # every call, so a change made by hand or in another tab applies at once.
 # A slug can be shortened to an unambiguous prefix: ws daz
+# A task of an epic can be named alone: ws cart for checkout-v2/cart. A workspace named exactly
+# so wins; otherwise the task does when one epic has it, even over a workspace whose name only
+# starts with it (pay-old vs checkout-v2/pay); two epics with it are ambiguous. Then prefixes:
+# of workspaces and of task names (ws car), or inside an epic (ws checkout-v2/ca).
 #
 # The @-delimited keys in double quotes are UI strings: `wsg shell-init zsh` replaces them in
 # the configured language (lib/i18n), so ws never has to start Node. Source the output of
@@ -77,6 +82,25 @@ _ws_list() {
   done
 }
 
+# A task of an epic: a real directory in it (not a source's symlink) with CLAUDE.md and the state
+# file, and no .git — a checkout of the epic has .git, a task keeps its worktrees one level down.
+_ws_tasks() {
+  local t
+  for t in "$1"/*(N/); do
+    [[ -f "$t/CLAUDE.md" && -f "$t/.claude/wsg.json" && ! -e "$t/.git" ]] && print -r -- "${t:t}"
+  done
+}
+
+_ws_list_all() {              # every workspace ws can jump into: slugs, then <epic>/<task>
+  local name t
+  for name in $(_ws_list); do
+    print -r -- "$name"
+    _ws_kind_of "$WS_ROOT/$name"
+    [ "$REPLY" = epic ] || continue
+    for t in $(_ws_tasks "$WS_ROOT/$name"); do print -r -- "$name/$t"; done
+  done
+}
+
 _ws_repo_state() {            # state of one checkout: branch, detached, rebase, dirty
   local r="$1" b gd st dirty=''
   b="$(git -C "$r" branch --show-current 2>/dev/null)"
@@ -98,9 +122,13 @@ _ws_repo_state() {            # state of one checkout: branch, detached, rebase,
   print -nP -- "%F{red}${st}%f$dirty"
 }
 
-_ws_kind() {                  # task|process
+# The kind in REPLY without a fork: $(<file) is read by the shell itself, a listing or a
+# completion over hundreds of workspaces would otherwise start a process for each.
+_ws_kind_of() {               # task|process|epic
   local f="$1/.claude/ws-kind"
-  [ -f "$f" ] && tr -d ' \n' < "$f" || print -n task
+  local k
+  REPLY=task
+  [ -f "$f" ] && k="$(<"$f")" && REPLY="${k//[ $'\n']/}"
 }
 
 _ws_sessions_dir() {          # Claude Code history directory for a path
@@ -184,6 +212,36 @@ _ws_codex() {                 # codex only sees its launch directory: add symlin
   eval "$run ${(j: :)${(q)add[@]}}"
 }
 
+# One line of the listing and its repositories; pad indents a task of an epic under it.
+# Sets REPLY to the kind, so the caller knows an epic without reading it again.
+_ws_show() {
+  local d="$1" name="$2" pad="$3" sub shared extra=""
+  local kind; _ws_kind_of "$d"; kind="$REPLY"
+  # session history can only be counted for Claude Code: other agents store it differently
+  if _ws_is_claude; then
+    local -a jf; jf=("$(_ws_sessions_dir "$d")"/*.jsonl(N))
+    extra=" · @@ws.list.sessions@@: ${#jf}"
+  fi
+  # the texts are printf arguments, never the format: a translation may hold a %
+  case "$kind" in
+    process)
+      local -a rf; rf=("$d"/runs/*.md(N))
+      printf '  %s%-*s %-7s%s · %s: %d\n' "$pad" $(( 18 - ${#pad} )) "$name" "@@ws.list.process@@" "$extra" "@@ws.list.runs@@" "${#rf}" ;;
+    epic) printf '  %s%-*s %-7s%s\n' "$pad" $(( 18 - ${#pad} )) "$name" "@@ws.list.epic@@" "$extra" ;;
+    *) printf '  %s%-*s %-7s%s\n' "$pad" $(( 18 - ${#pad} )) "$name" "@@ws.list.task@@" "$extra" ;;
+  esac
+  # a task of an epic has no .git, so the epic's tasks never pass for its repositories
+  for sub in "$d"/*(ND-/); do
+    # the repo pointer is a duplicate: a relative link to a sibling (a source named repo is absolute)
+    [[ "${sub:t}" == repo && -L "$sub" && "$(readlink "$sub")" != */* ]] && continue
+    [ -e "$sub/.git" ] || continue
+    shared=""
+    [ -L "$sub" ] && shared=" @@ws.list.shared@@"
+    print -r -- "      $pad${sub:t}: $(_ws_repo_state "$sub" "$kind")$shared"
+  done
+  REPLY="$kind"
+}
+
 ws() {
   # Reread on every call: the agent may have been changed by hand or in another tab.
   _ws_load_config
@@ -193,42 +251,33 @@ ws() {
   fi
   local root="$WS_ROOT"
   local slug="$1" mode="${2:---session}"
+  # A completed directory keeps its slash: without stripping it, the session would be named
+  # cart/ and looked up under a path that ends in -, so --continue would never fire.
+  while [[ "$slug" == ?*/ ]]; do slug="${slug%/}"; done
 
   if [ -z "$slug" ]; then
     print -P "%B@@ws.list.title@@%b  ${root/#$HOME/~}"
-    local d name sub shared
+    local name t
     for name in $(_ws_list); do
-      d="$root/$name"
-      local kind="$(_ws_kind "$d")" extra=""
-      # session history can only be counted for Claude Code: other agents store it differently
-      if _ws_is_claude; then
-        local -a jf; jf=("$(_ws_sessions_dir "$d")"/*.jsonl(N))
-        extra=" · @@ws.list.sessions@@: ${#jf}"
-      fi
-      if [ "$kind" = process ]; then
-        local -a rf; rf=("$d"/runs/*.md(N))
-        # the texts are printf arguments, never the format: a translation may hold a %
-        printf '  %-18s %-7s%s · %s: %d\n' "$name" "@@ws.list.process@@" "$extra" "@@ws.list.runs@@" "${#rf}"
-      else
-        printf '  %-18s %-7s%s\n' "$name" "@@ws.list.task@@" "$extra"
-      fi
-      for sub in "$d"/*(ND-/); do
-        # the repo pointer is a duplicate: a relative link to a sibling (a source named repo is absolute)
-        [[ "${sub:t}" == repo && -L "$sub" && "$(readlink "$sub")" != */* ]] && continue
-        [ -e "$sub/.git" ] || continue
-        shared=""
-        [ -L "$sub" ] && shared=" @@ws.list.shared@@"
-        print -r -- "      ${sub:t}: $(_ws_repo_state "$sub" "$kind")$shared"
-      done
+      _ws_show "$root/$name" "$name" ''
+      [ "$REPLY" = epic ] || continue
+      for t in $(_ws_tasks "$root/$name"); do _ws_show "$root/$name/$t" "$name/$t" '  '; done
     done
     print -P "\n%F{242}@@ws.list.create@@%f"
     return 0
   fi
 
   local dir="$root/$slug"
-  if [ ! -d "$dir" ]; then                       # unambiguous prefix
-    local -a m; m=(${(f)"$(_ws_list)"})
-    m=(${(M)m:#${slug}*})
+  if [ ! -d "$dir" ]; then
+    local -a all top m; all=(${(f)"$(_ws_list_all)"}); top=(${all:#*/*})
+    # A bare name: a task of an epic by its own name first, then prefixes of slugs and of task
+    # names. With a /, a prefix of <epic>/<task>. A prefix of an epic does not drag its tasks in.
+    if [[ "$slug" == */* ]]; then
+      m=(${(M)all:#${slug}*})
+    else
+      m=(${(M)all:#*/${slug}})
+      (( ${#m} )) || m=(${(M)top:#${slug}*} ${(M)all:#*/${slug}*})
+    fi
     if [ ${#m} -eq 1 ]; then
       slug="${m[1]}"; dir="$root/$slug"
       print -P "%F{242}→ $slug%f"
@@ -273,5 +322,5 @@ ws() {
   esac
 }
 
-_ws_complete() { compadd -- $(_ws_list) }
+_ws_complete() { compadd -- $(_ws_list_all) }
 compdef _ws_complete ws 2>/dev/null

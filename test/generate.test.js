@@ -619,6 +619,107 @@ process.on('exit', () => {
     fs.rmSync(cfgFile);
     it('the listing counts Claude sessions for claude with flags', () =>
       assert.match(list("WSG_AGENT='claude --model opus'"), /sessions: \d+/));
+
+    // Epics and their tasks, made by wsg itself; a git repository by hand in the epic and in a task.
+    console.log('\nws: epics and their tasks');
+    const epicRoot = path.join(tmp, 'ws-epics');
+    const epicHome = path.join(tmp, 'ws-epics-home');
+    fs.mkdirSync(epicHome, { recursive: true });
+    const wsgEnv = { ...process.env, HOME: epicHome, PATH: `${fakeBin}:${process.env.PATH}`, WS_ROOT: epicRoot,
+      WSG_CONFIG: path.join(tmp, 'no-config'), WSG_NO_LAUNCH: '1', WSG_LANG: 'en', WSG_AGENT: '' };
+    const wsgNew = (...args) => execFileSync(process.execPath, [path.join(ROOT, 'bin', 'cli.js'), 'new', ...args, '--no-launch'],
+      { encoding: 'utf8', env: wsgEnv });
+    wsgNew('checkout-v2', '--kind', 'epic', '--ticket', 'EPIC-1');
+    wsgNew('billing', '--kind', 'epic', '--ticket', 'EPIC-2');
+    wsgNew('cart', '--epic', 'checkout-v2');
+    wsgNew('pay-fix', '--epic', 'checkout-v2');
+    wsgNew('pay-fix', '--epic', 'billing');
+    wsgNew('search');
+    const gitInit = (dir) => {
+      fs.mkdirSync(dir, { recursive: true });
+      execFileSync('git', ['init', '-q', '-b', 'main', dir], { stdio: 'ignore' });
+    };
+    gitInit(path.join(epicRoot, 'checkout-v2', 'web'));
+    gitInit(path.join(epicRoot, 'checkout-v2', 'cart', 'api'));
+    // A session of the task, under its own path: the epic's count stays 0.
+    const cartSessions = path.join(epicHome, '.claude', 'projects', path.join(epicRoot, 'checkout-v2', 'cart').replace(/[^a-zA-Z0-9]/g, '-'));
+    fs.mkdirSync(cartSessions, { recursive: true });
+    fs.writeFileSync(path.join(cartSessions, 's.jsonl'), '{}\n');
+    const epicCfg = path.join(tmp, 'ws-epics-config');
+    fs.writeFileSync(epicCfg, 'WSG_AGENT=claude\n');
+    const ez = (script) => require('node:child_process').spawnSync('zsh', ['-f', '-c',
+      `source ${JSON.stringify(wsZsh)}; ${script}`],
+      { encoding: 'utf8', input: '', env: { ...process.env, HOME: epicHome, PATH: `${fakeBin}:${process.env.PATH}`,
+        WS_ROOT: epicRoot, WSG_CONFIG: epicCfg, WSG_AGENT: '', WSG_TEST_X: '' } });
+    const listing = ez('ws').stdout;
+    it('ws: an epic is listed with its kind, then its repositories', () =>
+      assert.match(listing, /^ {2}checkout-v2 {8}epic {4}· sessions: 0\n {6}web: main\n/m));
+    it('ws: its tasks follow, indented, as <epic>/<task>, each with its own sessions and repositories', () => {
+      assert.match(listing, /\n {6}web: main\n {4}checkout-v2\/cart task {4}· sessions: 1\n {8}api: main\n {4}checkout-v2\/pay-fix task {4}· sessions: 0\n/);
+      assert.match(listing, /^ {4}billing\/pay-fix +task /m);
+    });
+    it('ws: a task of an epic is not listed as its repository', () =>
+      assert.doesNotMatch(listing, /^ +(cart|pay-fix):/m));
+    it('ws: a plain task is listed as before', () =>
+      assert.match(listing, /^ {2}search {13}task {4}· sessions: 0$/m));
+    it('ws: the epic label is translated', () => {
+      const ru = path.join(tmp, 'wsg-ru.zsh');
+      fs.writeFileSync(ru, renderWs('ru'));
+      const r = require('node:child_process').spawnSync('zsh', ['-f', '-c', `source ${JSON.stringify(ru)}; ws`],
+        { encoding: 'utf8', input: '', env: { ...process.env, HOME: epicHome, WS_ROOT: epicRoot, WSG_CONFIG: epicCfg, WSG_AGENT: '' } });
+      assert.match(r.stdout, /^ {2}checkout-v2 +эпик /m);
+    });
+    const jump = (arg) => {
+      const r = ez(`ws ${arg}; print -r -- "pwd=$PWD"`);
+      return r.stdout + r.stderr;
+    };
+    it('ws <epic>/<task> starts the agent in the task, the session named <epic>/<task>', () => {
+      const out = jump('checkout-v2/pay-fix');
+      assert.match(out, /^claude \[-n\] \[checkout-v2\/pay-fix\]$/m);
+      assert.match(out, /pwd=.*\/checkout-v2\/pay-fix$/m);
+    });
+    it('ws <epic>/<task> continues the task\'s own session', () =>
+      assert.match(jump('checkout-v2/cart'), /^claude \[--continue\]$/m));
+    it('a bare task name finds the task when one epic has it', () => {
+      const out = jump('cart --cd');
+      assert.match(out, /→ checkout-v2\/cart/);
+      assert.match(out, /pwd=.*\/checkout-v2\/cart$/m);
+    });
+    it('a bare task name two epics have is ambiguous, both named', () => {
+      const out = jump('pay-fix --cd');
+      assert.match(out, /ambiguous: billing\/pay-fix checkout-v2\/pay-fix/);
+      assert.doesNotMatch(out, /pwd=.*pay-fix$/m);
+    });
+    it('a prefix of a task name finds it', () =>
+      assert.match(jump('car --cd'), /pwd=.*\/checkout-v2\/cart$/m));
+    it('a prefix after <epic>/ looks inside that epic', () =>
+      assert.match(jump('checkout-v2/pa --cd'), /pwd=.*\/checkout-v2\/pay-fix$/m));
+    it('a prefix of an epic is the epic, its tasks do not make it ambiguous', () =>
+      assert.match(jump('check --cd'), /pwd=.*\/checkout-v2$/m));
+    it('a prefix both a slug and a task have is ambiguous', () =>
+      assert.match(jump('c --cd'), /ambiguous: checkout-v2 checkout-v2\/cart\n/));
+    it('a prefix of tasks in two epics is ambiguous', () =>
+      assert.match(jump('pay --cd'), /ambiguous: billing\/pay-fix checkout-v2\/pay-fix/));
+    it('a name nothing has: the usual message', () =>
+      assert.match(jump('nope --cd'), /no workspace 'nope'/));
+    it('a trailing slash is dropped: the session is the task\'s own', () => {
+      assert.match(jump('checkout-v2/cart/'), /^claude \[--continue\]$/m);
+      assert.match(jump('checkout-v2/pay-fix//'), /^claude \[-n\] \[checkout-v2\/pay-fix\]$/m);
+    });
+    // A source of the epic, as wsg links one: a symlink to a checkout outside.
+    fs.symlinkSync(repo, path.join(epicRoot, 'checkout-v2', 'shared-api'));
+    it('ws <epic>/<source> still goes into the shared checkout', () =>
+      assert.match(jump('checkout-v2/shared-api --cd'), /pwd=.*\/checkout-v2\/shared-api$/m));
+    // compadd is stubbed: zsh -f has no completion system, the stub prints what it is offered.
+    it('completion offers slugs and <epic>/<task>, not the epic\'s sources', () =>
+      assert.deepStrictEqual(ez('compadd() { print -rl -- "$@" }; _ws_complete').stdout.trim().split('\n').filter((l) => l !== '--'),
+        ['billing', 'billing/pay-fix', 'checkout-v2', 'checkout-v2/cart', 'checkout-v2/pay-fix', 'search']));
+    wsgNew('cart-old');
+    it('a task\'s exact name wins over a workspace that only starts with it', () =>
+      assert.match(jump('cart --cd'), /pwd=.*\/checkout-v2\/cart$/m));
+    wsgNew('cart');
+    it('a workspace named like a task of an epic wins', () =>
+      assert.match(jump('cart --cd'), /pwd=.*\/ws-epics\/cart$/m));
   }
 
   console.log('\n--promote');

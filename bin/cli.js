@@ -293,8 +293,8 @@ async function cmdNew(args) {
   if (launch && launch.kind === 'claude') {
     // ws starts the agent but doesn't type for it: the skill is the first thing to type there.
     const shellrc = lib('shellrc');
-    // ws doesn't know a task inside an epic yet: the cd line below is the way in.
-    if (!epicWs && (shellrc.loaded() || shellrc.isHooked())) ui.info(t('cli.nextWs', { slug: meta.slug }));
+    const wsName = epicWs ? `${path.basename(epicWs)}/${meta.slug}` : meta.slug;
+    if (shellrc.loaded() || shellrc.isHooked()) ui.info(t('cli.nextWs', { slug: wsName }));
     ui.info(`  ${launch.display}`);
   } else if (launch) {
     ui.info(`  ${launch.display}`);
