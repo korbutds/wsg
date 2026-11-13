@@ -4618,11 +4618,11 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     it('README names refresh, install-skills --uninstall and the advisor guide', () => {
       for (const x of ['`wsg refresh [--dry-run] [--ws SLUG\\|PATH]`', '`wsg install-skills [--uninstall]`', '`wsg guide [setup\\|advisor\\|teach\\|epic]`', '## Advisor', '**Codex.**', 'docs/advisor-guide.md']) assert.ok(readme.includes(x), x);
     });
-    it('the version is 0.4.1, in package.json and its lock', () => {
-      assert.strictEqual(wsg(['--version']).out, '0.4.1\n');
+    it('the version is 0.5.0, in package.json and its lock', () => {
+      assert.strictEqual(wsg(['--version']).out, '0.5.0\n');
       const lock = JSON.parse(fs.readFileSync(path.join(ROOT, 'package-lock.json'), 'utf8'));
-      assert.strictEqual(lock.version, '0.4.1');
-      assert.strictEqual(lock.packages[''].version, '0.4.1');
+      assert.strictEqual(lock.version, '0.5.0');
+      assert.strictEqual(lock.packages[''].version, '0.5.0');
     });
 
     const bare = wsg([]);
@@ -4911,6 +4911,21 @@ wait`;
       assert.strictEqual(sh('init_list "$STREAM" tools').stdout, 'Read\nBash');
       assert.strictEqual(sh('init_list "not json" agents').stdout, '');
       assert.strictEqual(sh('tool_results "$STREAM"').stdout, 'PONG ok [{"type":"text","text":"x"}]');
+    });
+    // The epic step reads the model's reply from the result event, not the whole stream.
+    it('smoke: reply_of reads the result of a stream-json reply', () => {
+      const src = fs.readFileSync(path.join(ROOT, 'test', 'smoke-claude.sh'), 'utf8');
+      const m = /^reply_of\(\) \{[\s\S]*?\n\}$/m.exec(src);
+      assert.ok(m, 'smoke-claude.sh has reply_of()');
+      const stream = [
+        { type: 'system', subtype: 'init', skills: ['wsg-epic-task'] },
+        { type: 'result', result: 'NONE\nRULE-TOKEN-1' },
+      ].map((e) => JSON.stringify(e)).join('\n');
+      const sh = (body) => spawnSync('bash', ['-c', `${m[0]}\n${body}`], { encoding: 'utf8', env: { ...process.env, STREAM: stream } });
+      assert.strictEqual(sh('reply_of "$STREAM"').stdout, 'NONE\nRULE-TOKEN-1');
+      assert.strictEqual(sh('reply_of "not json"').stdout, '');
+      assert.strictEqual(sh(`reply_of $'junk\\n{"type":"result","result":"OK"}'`).stdout, 'OK');
+      assert.strictEqual(sh(`reply_of '{"type":"result","is_error":true}'`).stdout, '');
     });
     const calls = (r) => r.calls.split('\n').filter((l) => l.startsWith('call'));
     const both = runScript('eval-advisor.sh', { EVAL_RUNS: '1' });

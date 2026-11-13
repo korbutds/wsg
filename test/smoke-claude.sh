@@ -22,6 +22,11 @@
 #      session that runs `wsg team` itself, then calls a role it just wrote — picked up live?
 #      Role memory is not checked: it needs a config dir of its own, and a temp CLAUDE_CONFIG_DIR
 #      has no login. The team's agents are project-level, written by wsg team in the temp workspace.
+#   6. An epic and its task (`wsg new --kind epic`, then `wsg new --epic`): `wsg check` passes on
+#      both. Two sessions in the task directory. One with the Skill tool alone: the epic's
+#      wsg-epic-* skills are in the init event's skills but not offered to the model (manual-only),
+#      while a model-invocable control skill added to the epic is; it quotes a marker put into the
+#      epic's pointer rule. The other reads a marker line of ../knowledge.md with the Read tool.
 #
 # The agent is the user-level one: for the run, this checkout's agent is rendered into
 # ${CLAUDE_CONFIG_DIR:-~/.claude}/agents/wsg-advisor.md, as `wsg install-skills` would write it,
@@ -46,6 +51,10 @@
 #   in a workspace whose .claude/agents/ existed at start got "Agent type 'wsg-pm' not found"; hence
 #   `wsg team` asks for a new session whenever it adds an adapter. wsg-reviewer, asked to edit
 #   notes.md with acceptEdits, left it unchanged.
+# Outcome recorded on 2026-11-14 for step 6, with Claude Code 2.1.323 and haiku: all pass. The
+#   init event lists the epic's manual-only skills and the control skill; the model, with the Skill
+#   tool alone, names only the control one and quotes the rule's marker; ../knowledge.md is read
+#   with the Read tool. With --tools "" the model is offered no skill at all, the control included.
 #
 # The temp dir and the session history Claude Code keeps for it are removed at the end.
 
@@ -124,6 +133,15 @@ tool_results() {
         }
       }
       process.stdout.write(out.join("\n").replace(/\n/g, " "));
+    });'
+}
+# The reply of a stream-json run: the result of its result event.
+reply_of() {
+  printf '%s' "$1" | node -e '
+    let s = ""; process.stdin.on("data", (d) => { s += d; }).on("end", () => {
+      const r = s.split("\n").map((l) => { try { return JSON.parse(l); } catch { return null; } })
+        .find((e) => e && e.type === "result");
+      process.stdout.write(r && typeof r.result === "string" ? r.result : "");
     });'
 }
 listed() { printf '%s\n' "$1" | grep -qx "$2" && echo yes || echo no; }
@@ -214,6 +232,42 @@ results="$(tool_results "$out")"
 echo "  info  mid-session: wsg team ran: $ran; wsg-pm answered: $(has "$results" PONG-4b7)"
 echo "  info  tool results: $(snippet "$results")"
 echo "  info  role memory: not checked (a temp CLAUDE_CONFIG_DIR would have no login)"
+
+echo "6. an epic and its task"
+# The epic links the repository with a branch template, so the task gets a worktree from it.
+wsg new seven --kind epic --no-launch >/dev/null
+wsg add "$TMP/repo" --branch-template 'smoke/{slug}' --ws seven >/dev/null
+wsg new seven-a --epic seven --no-launch >/dev/null
+E7="$WS_ROOT/seven"; W7="$E7/seven-a"
+WORKSPACES+=("$W7")
+echo "KNOW-TOKEN-2c8" >> "$E7/knowledge.md"
+for t in seven seven/seven-a; do
+  chk="$(wsg check "$t" 2>&1)" && ok=yes || ok=no
+  report "wsg check $t passes" "$ok"
+  [ "$ok" = yes ] || echo "  info  $(snippet "$(printf '%s\n' "$chk" | grep FAIL)")"
+done
+# A marker in the epic's pointer rule, and a control skill the model may call: written after
+# wsg check, which knows neither. A model that answers NONE without looking fails the control.
+printf '\nSmoke marker: RULE-TOKEN-6f1\n' >> "$E7/.claude/rules/epic-knowledge.md"
+mkdir -p "$E7/.claude/skills/wsg-epic-smoke"
+printf -- '---\nname: wsg-epic-smoke\ndescription: A control skill of the wsg smoke test; it does nothing.\n---\n\nReply SMOKE.\n' > "$E7/.claude/skills/wsg-epic-smoke/SKILL.md"
+# Only the Skill tool: --tools "" hides the skills from the model too. Skill reads no file, so
+# the token in this reply can only come from the loaded rule.
+out="$(ask "$W7" "Without tools, reply with exactly two lines. Line 1: the names of the skills available to you that start with wsg-epic, comma-separated, or NONE. Line 2: the token in your instructions that starts with RULE-TOKEN-, or NO-RULE." --max-turns 1 --tools Skill --output-format stream-json --verbose)"
+skills="$(init_list "$out" skills)"
+all=yes; for x in task close sync smoke; do [ "$(listed "$skills" "wsg-epic-$x")" = yes ] || all=no; done
+report "the epic's wsg-epic-* skills and the control skill are in the init event's skills" "$all"
+report "the session's only tool is Skill" "$([ "$(init_list "$out" tools)" = Skill ] && echo yes || echo no)"
+reply="$(reply_of "$out")"
+report "the model is offered the control skill" "$(has "$reply" wsg-epic-smoke)"
+offered=no; for x in task close sync; do [ "$(has "$reply" "wsg-epic-$x")" = no ] || offered=yes; done
+report "but not the three wsg-epic-* skills (manual-only)" "$([ -n "$reply" ] && [ "$offered" = no ] && echo yes || echo no)"
+report "the epic's rule is in the session's context" "$(has "$reply" RULE-TOKEN-6f1)"
+echo "  info  its reply: $(snippet "$reply")"
+out="$(ask "$W7" "Use the Read tool on ../knowledge.md and reply with its line that starts with KNOW-TOKEN-, or NO-ACCESS." --max-turns 3 --allowedTools Read --output-format stream-json --verbose)"
+reply="$(reply_of "$out")"
+report "the session reads ../knowledge.md with the Read tool" "$([ "$(has "$(tool_results "$out")" KNOW-TOKEN-2c8)" = yes ] && has "$reply" KNOW-TOKEN-2c8 || echo no)"
+echo "  info  its reply: $(snippet "$reply")"
 
 echo
 echo "passed: $pass, failed: $fail"

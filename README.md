@@ -490,7 +490,8 @@ shows you the text before writing it.
 - **Linked directories mid-session.** Whether a running session picks up a directory that
   `wsg add --link`/`--reference` adds to `additionalDirectories` is not verified; `wsg add` asks
   for a restart whenever it changes `settings.json`. `test/smoke-claude.sh` (manual, needs claude)
-  checks this and the setup launch against a real Claude Code.
+  checks this and the other behaviour wsg relies on against a real Claude Code; its header lists
+  the steps.
 - `paths` in rules are untested for a repository attached via a symlink pointing outside.
 - **A team shares one working copy.** Roles work in the same worktree, with no per-role worktree:
   two roles editing one file overwrite each other. The file ownership table in `plan.md` is the
