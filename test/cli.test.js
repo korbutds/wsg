@@ -4346,7 +4346,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       assert.strictEqual(r.status, 0, r.stderr);
     });
     it('the agent and the guide keep the same hard rules', () => {
-      for (const s of ['SKIPPED tracker: no tool available', '"default, reversible"', 'it is not a default: put it under OWNER, the finding in `note:`.', '`--reset-to-base`', 'get, list, search, fetch or find', 'wsg only as `node "<WSG_CLI>"`', '`add … --dry-run`', '`remove … --dry-run`']) {
+      for (const s of ['SKIPPED tracker: no tool available', '"default, reversible"', 'it is not a default: put it under OWNER, the finding in `note:`.', '`--reset-to-base`', 'get, list, search, fetch or find', 'wsg only as `node "<WSG_CLI>"`', '`add … --dry-run`', '`remove … --dry-run`', '`new … --dry-run`']) {
         assert.ok(agentTpl.includes(s), `agent: ${s}`);
         assert.ok(advisorGuide.includes(s), `guide: ${s}`);
       }
@@ -4586,12 +4586,12 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       for (const c of ['git log', 'git show', 'git diff', 'git status', 'git blame', 'git grep', 'git rev-parse', 'git merge-base',
         'git ls-files', 'git for-each-ref', 'git symbolic-ref HEAD', 'git ls-remote', 'git branch --list', 'git branch -v', 'git branch -a',
         'git branch -r', 'git branch --show-current', 'git -C . log', ...['guide advisor', 'check', '--where', 'add x --dry-run',
-          'remove x --dry-run'].map((x) => `node "${cliPath}" ${x}`), 'ls', 'cat a', 'head a', 'tail a', 'wc a', 'grep a b', 'rg a',
+          'remove x --dry-run', 'new x --dry-run'].map((x) => `node "${cliPath}" ${x}`), 'ls', 'cat a', 'head a', 'tail a', 'wc a', 'grep a b', 'rg a',
         'find .', 'pwd']) assert.ok(G.decide({ tool_name: 'Bash', tool_input: { command: c }, cwd: demo }).allow, c);
       // Up to the next item, whatever marks it: "2." in the agent, "-" in the guide.
       const rule = (text) => text.slice(text.indexOf('Bash only to read'), text.indexOf('Other tools, MCP included')).replace(/\s+/g, ' ').replace(/ (-|\d\.) $/, '');
       assert.ok(rule(agentTpl).includes('`git` `log`, `show`, `diff`, `status`, `blame`, `grep`, `rev-parse`, `merge-base`, `ls-files`, `for-each-ref`, `symbolic-ref`, `ls-remote`, `branch --list|-v|-a|-r|--show-current`'), rule(agentTpl));
-      assert.ok(rule(agentTpl).includes('wsg only as `node "<WSG_CLI>"`: `guide`, `check`, `--where`, `add … --dry-run`, `remove … --dry-run`'), rule(agentTpl));
+      assert.ok(rule(agentTpl).includes('wsg only as `node "<WSG_CLI>"`: `guide`, `check`, `--where`, `add … --dry-run`, `remove … --dry-run`, `new … --dry-run`'), rule(agentTpl));
       assert.ok(rule(agentTpl).includes('`ls`, `cat`, `head`, `tail`, `wc`, `grep`, `rg`, `find`, `pwd`'));
       assert.ok(rule(agentTpl).includes('no pipes, redirection, `;`, `&&` or `$`'));
       assert.strictEqual(rule(advisorGuide), rule(agentTpl));
@@ -4616,7 +4616,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     });
     it('README says CLAUDE.md has an advisor block too', () => assert.match(readme, /`CLAUDE\.md` has a block of the same name telling Claude Code to call the subagent/));
     it('README names refresh, install-skills --uninstall and the advisor guide', () => {
-      for (const x of ['`wsg refresh [--dry-run] [--ws SLUG\\|PATH]`', '`wsg install-skills [--uninstall]`', '`wsg guide [setup\\|advisor\\|teach]`', '## Advisor', '**Codex.**', 'docs/advisor-guide.md']) assert.ok(readme.includes(x), x);
+      for (const x of ['`wsg refresh [--dry-run] [--ws SLUG\\|PATH]`', '`wsg install-skills [--uninstall]`', '`wsg guide [setup\\|advisor\\|teach\\|epic]`', '## Advisor', '**Codex.**', 'docs/advisor-guide.md']) assert.ok(readme.includes(x), x);
     });
     it('the version is 0.4.1, in package.json and its lock', () => {
       assert.strictEqual(wsg(['--version']).out, '0.4.1\n');

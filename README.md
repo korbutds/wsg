@@ -105,6 +105,7 @@ pointed at `SETUP.md`. Re-run `/wsg-setup` later to attach another repository or
 ws                     # list workspaces with checkout state
 ws <slug>              # go there and launch the agent (asks which one on first run)
 ws <slug> --claude     # this time with claude, whatever the setting (also --codex)
+ws <epic>/<task>       # the same for a task inside an epic (see Epics)
 ws --agent             # choose the agent again
 wsg check              # check the workspace you are in against the conventions
 ```
@@ -113,14 +114,14 @@ The commands the agent (or you) call:
 
 | Command | What it does |
 |---|---|
-| `wsg new <slug> [--title T] [--kind task\|process] [--skill NAME] [--ticket X] [--no-launch]` | Creates the skeleton and starts the agent; `--no-launch` prints the next step instead. Only the slug is needed, and `--kind process` for a process: the setup dialogue asks for the rest. |
-| `wsg add <path> [--worktree\|--link\|--reference] [--branch B] [--base REF] [--reset-to-base] [--target T] [--verify CMD] [--carry all\|none\|a,b] [--[no-]clone-node-modules] [--note TEXT] [--dry-run] [--ws SLUG\|PATH]` | Attaches one source to the workspace you are in. An existing branch is attached as it is, one only on origin is continued; `--reset-to-base` starts it over (with a `backup/…`). Every check happens before anything is touched; a failure rolls back only this source. `--dry-run` prints the plan as JSON. |
+| `wsg new <slug> [--title T] [--kind task\|process\|epic] [--skill NAME] [--ticket X] [--epic E] [--sources a,b\|none] [--dry-run] [--no-launch]` | Creates the skeleton and starts the agent; `--no-launch` prints the next step instead. Only the slug is needed, and `--kind` for a process or an epic: the setup dialogue asks for the rest. `--epic E` makes a task inside the epic `E`, `--sources` picks the epic's repositories it takes (see [Epics](#epics)); `--dry-run` prints the plan as JSON. |
+| `wsg add <path> [--worktree\|--link\|--reference] [--branch B] [--base REF] [--reset-to-base] [--target T] [--verify CMD] [--carry all\|none\|a,b] [--[no-]clone-node-modules] [--note TEXT] [--branch-template T] [--dry-run] [--ws SLUG\|PATH]` | Attaches one source to the workspace you are in. An existing branch is attached as it is, one only on origin is continued; `--reset-to-base` starts it over (with a `backup/…`). Every check happens before anything is touched; a failure rolls back only this source. `--dry-run` prints the plan as JSON. In an epic, a link with the defaults its tasks reuse; in a task of an epic, `wsg add <name>` takes the epic's source of that name. |
 | `wsg remove <name> [--delete-ignored] [--dry-run] [--ws SLUG\|PATH]` | Detaches a source: a clean worktree (its branch is kept) or the symlink, its rule, and its generated parts. Ignored files that exist nowhere else (made in the worktree, or carried in and changed since) are deleted with the worktree only after `--delete-ignored`; a `node_modules` wsg cloned is not checked, so changes inside it are not protected. The way to fix a source attached with the wrong flags: remove, then add again. |
 | `wsg refresh [--dry-run] [--ws SLUG\|PATH]` | Brings the generated parts up to date with this wsg — e.g. adds the advisor block to a workspace made by 0.2 — and touches nothing else. `--dry-run` prints the files it would change as JSON. |
-| `wsg team <preset> [--without ROLE,...] [--dry-run] [--ws SLUG\|PATH]` | Adds a team of roles (preset `fullstack`): cards and a workflow in `team/`, a Claude Code subagent per role, `/wsg-feature`. Only adds; an existing file is kept. `--dry-run` prints what it would create, keep and update as JSON. See [Team](#team). |
-| `wsg check [path\|slug]` | Checks a workspace against the conventions. |
-| `wsg promote [slug\|path] --skill NAME` | Turns a task into a process. |
-| `wsg guide [setup\|advisor\|teach]` | Prints a guide an agent follows: the setup dialogue, the advisor's procedure, or teaching a team role a practice. |
+| `wsg team <preset> [--without ROLE,...] [--dry-run] [--ws SLUG\|PATH]` | Adds a team of roles (preset `fullstack`): cards and a workflow in `team/`, a Claude Code subagent per role, `/wsg-feature`. Only adds; an existing file is kept. `--dry-run` prints what it would create, keep and update as JSON. Not in an epic: in its tasks. See [Team](#team). |
+| `wsg check [path\|slug]` | Checks a workspace against the conventions. A task of an epic is `<epic>/<task>`. |
+| `wsg promote [slug\|path] --skill NAME` | Turns a task into a process. Not an epic or a task of one. |
+| `wsg guide [setup\|advisor\|teach\|epic]` | Prints a guide an agent follows: the setup dialogue, the advisor's procedure, teaching a team role a practice, or working in an epic. |
 | `wsg install-skills [--uninstall]` | Installs the `wsg-new` and `wsg-teach` skills into `~/.claude/skills` and the `wsg-advisor` agent into `~/.claude/agents` (or under `$CLAUDE_CONFIG_DIR`) and, when Codex is there, `~/.codex/agents` (or `$CODEX_HOME/agents`). Overwrites only files it wrote — they carry a marker — and refuses others with exit 1. `--uninstall` removes only its own files. |
 
 Exit codes: `0` ok, `1` the check found errors or a step failed and was rolled back, `2` invalid
@@ -151,7 +152,7 @@ $WS_ROOT/oauth-refresh/
 └── .learnings/        lessons and failures of this task
 ```
 
-## Two kinds of workspace
+## Kinds of workspace
 
 | | **task** | **process** |
 |---|---|---|
@@ -169,6 +170,72 @@ Create one with `wsg new <slug> --kind process`: the skill is named after the sl
 for another name.
 
 A task that turns out to be repeatable is turned into a process: `wsg promote <slug> --skill <name>`.
+
+A third kind, the **epic**, holds several tasks: see [Epics](#epics).
+
+## Epics
+
+An epic workspace is one tracker epic: what its tasks must know, the epic's repositories with the
+settings its tasks reuse, and the tasks themselves, each an ordinary task workspace in a directory
+of the epic. Use it when several tasks share repositories and decisions, and what one task learns
+should reach the next. A single task needs no epic.
+
+```bash
+wsg new shop --kind epic --ticket ACME-1        # the epic; /wsg-setup attaches its repositories
+cd "$WS_ROOT/shop"
+wsg add ~/projects/api --branch-template 'alice/task/{slug}/{ticket}' --verify "npm test"
+wsg new cart-fix --epic shop --ticket ACME-42   # a task; its api worktree on alice/task/cart-fix/ACME-42
+ws shop/cart-fix                                # work in it (ws cart-fix finds it too)
+```
+
+```
+$WS_ROOT/shop/
+├── CLAUDE.md          a few hundred bytes: it loads in every task below too (see Limitations)
+├── AGENTS.md          the epic's rules, for the epic's own sessions
+├── knowledge.md       what every task must know: decisions, repositories, pitfalls
+├── tasks.md           the tasks in this directory, and other people's from the tracker
+├── decisions.md       the rationale behind the decisions
+├── api -> ~/projects/api  a link, with the defaults its tasks reuse
+├── .claude/
+│   ├── rules/epic-knowledge.md  a pointer to knowledge.md, loaded every session
+│   └── skills/wsg-epic-{task,close,sync}/  manual wrappers over wsg guide epic
+└── cart-fix/          a task: its worktree api/, its own AGENTS.md, notes.md, memory
+```
+
+- **Repositories.** In an epic, a repository is always a link: the epic has no branch of its own.
+  `--branch-template` gives each task a worktree of the repository on its own branch: `{slug}`
+  (the task's directory) and `{ticket}` (its ticket key) are the placeholders, at least one is
+  required, and `--dry-run` shows a sample branch. `--base`, `--carry` and
+  `--[no-]clone-node-modules` become the defaults of that worktree; the task reuses the
+  repository's `--target` and `--verify`. Without a template the repository is linked into each
+  task as is. `--worktree`, `--branch` and `--reset-to-base` are refused. `wsg remove <name>` in the
+  epic drops the link and its defaults; tasks that have the repository keep it.
+- **Tasks.** `wsg new <slug> --epic <epic>` names the epic every time: it is never taken from the
+  current directory. Without `--sources` the task takes the epic's repository with a branch
+  template when there is exactly one, else none; `--sources a,b` or `--sources none` decides.
+  `{ticket}` needs `--ticket`: the key is written once into the task's `.claude/wsg.json`. Every
+  source is checked before anything is made, so one refused refuses the task; `--dry-run` shows
+  the branches first. A task without a git repository reports setup not finished: from the task,
+  `wsg add <name>` takes the epic's source of that name later (a flag given wins, `./<name>` is a
+  path). The epic's `tasks.md` lists the task, and the task's `AGENTS.md` points to
+  `../knowledge.md` and `../tasks.md` and gets the epic's Owner rules when they are filled in.
+- **Knowledge.** `knowledge.md` is the single source of truth, kept within 4 KiB and rewritten
+  rather than appended to. A task never edits the epic's files: what the next task should know
+  goes under `## For the epic` in the task's `notes.md`, dated, with evidence. When the task is
+  done, the agent in the epic session merges it (`/wsg-epic-close <task>`) into `knowledge.md`,
+  `.claude/rules/<repo>.md`, `decisions.md` and `tasks.md`, after your "ok". `/wsg-epic-sync` reads
+  the epic's other tasks from the tracker, with any read tool the agent has, into `tasks.md`;
+  nothing is ever written to the tracker. To start a task, ask in the epic session
+  (`/wsg-epic-task <ticket>`). The procedures are in [docs/epic-guide.md](docs/epic-guide.md)
+  (`wsg guide epic`), so any agent can follow them; the skills only point there.
+- **Check.** `wsg check` in the epic checks `knowledge.md` (a warning over 4 KiB, an error over
+  8 KiB), the pointer rule, the `tasks.md` block, the skills and the tasks inside. In a task
+  (`wsg check shop/cart-fix`) it checks the link to the epic and the epic block of `AGENTS.md`, and
+  its always-on budget counts what loads from the epic: its `CLAUDE.md` and rules without `paths:`.
+- **Not in an epic.** `wsg team` refuses an epic with exit 2 — its agents would load in every task
+  below; run it in a task. `wsg promote` refuses an epic and a task of one.
+- **`ws`** lists each epic with its tasks under it; `ws <epic>/<task>` jumps into one, and so does
+  the task's name alone or a prefix when it is unambiguous.
 
 ## What the setup dialogue asks
 
@@ -210,7 +277,7 @@ seconds instead of a full install.
 `.claude/wsg.json` records the sources and how each is attached. Every `wsg add` re-renders from it
 what the generator owns: the blocks between `<!-- wsg:… -->` markers in `AGENTS.md`, `CLAUDE.md`
 and `README.md` (in `AGENTS.md`, also the one-line advisor rule), `permissions.additionalDirectories` in `.claude/settings.json`, the `repo`
-pointer and `mr-target-branch.txt`. Text outside the markers — what the agent and you write — is
+pointer and `mr-target-branch.txt` (an epic has neither). Text outside the markers — what the agent and you write — is
 never touched, and other keys in `settings.json` are kept. `wsg refresh` re-renders them without
 attaching anything — for a workspace made by an earlier wsg. Details: [docs/conventions.md](docs/conventions.md).
 
@@ -364,6 +431,20 @@ shows you the text before writing it.
   `.worktreeinclude`, and auto-cleanup. `wsg` helps where those fall short: a task spanning several
   repositories, a task knowledge layer, and a limits validator.
 - No command to delete a workspace — for now, three commands by hand.
+- **Epics in Codex are not verified.** Epics were built and tried with Claude Code only. A task
+  carries what it needs from its epic in its own `AGENTS.md`, as plain-text pointers, because
+  Codex is expected to read only the `AGENTS.md` of its directory (not verified); whether Codex reads `../knowledge.md`
+  from a task is not checked. `ws <epic>/<task> --codex` adds `--add-dir` for the task's linked
+  sources, not for the epic directory.
+- **A task session under an epic.** Observed with `claude -p`: a task's session loads the epic's
+  `CLAUDE.md`, rules, skills and agents, but not its `.claude/settings.json` (the task's own
+  apply) and not an `@` import that leaves the task directory — so the task's `AGENTS.md` points to
+  `../knowledge.md` in plain text. An interactive session in a trusted folder was not checked: the
+  epic's `CLAUDE.md` imports its `AGENTS.md` (`@AGENTS.md`), and if Claude Code asks to allow that
+  external import and you agree, every task session also loads the epic's `AGENTS.md`. The task's
+  always-on budget in `wsg check` counts the epic's `CLAUDE.md`, not that import.
+- **An older wsg.** wsg 0.4.x refuses an epic: its state is version 3. A task inside an epic is
+  version 2, and 0.4.x takes it for a plain task. Use one wsg version for an epic and its tasks.
 - **The advisor is not a sandbox.** In Claude Code it has no Write, Edit, NotebookEdit, Agent or
   Monitor tool, and a `PreToolUse` hook in its agent file runs `lib/advisor-guard.js` before every
   tool call: Read, Grep, Glob, WebFetch, WebSearch, ToolSearch and SubagentHandback (how a
@@ -439,6 +520,7 @@ shows you the text before writing it.
 - [docs/workflow.md](docs/workflow.md) — workflow, troubleshooting common failures
 - [docs/setup-guide.md](docs/setup-guide.md) — the setup dialogue the agent follows
 - [docs/advisor-guide.md](docs/advisor-guide.md) — what the advisor checks, in what order, and how it answers
+- [docs/epic-guide.md](docs/epic-guide.md) — starting, closing and syncing the tasks of an epic
 - [docs/teach-guide.md](docs/teach-guide.md) — how `/wsg-teach` writes a practice into a role's memory
 
 Sources for the limits: [Claude Code memory](https://code.claude.com/docs/en/memory),

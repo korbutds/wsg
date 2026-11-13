@@ -59,9 +59,23 @@ a release, a dependency upgrade, a routine migration. Ask instead: what the proc
 tell a single run is finished. Its steps are not asked now — they are worked out with the owner on
 the first run and written into its skill. Its repositories are attached as links.
 
-**An epic workspace** (`.claude/ws-kind` says `epic`) attaches its repositories as links too, with
-the defaults its tasks reuse: follow `wsg guide epic` → Adding a repository for each one
-(`--branch-template` sets the branch every task gets a worktree on).
+**An epic workspace** (`.claude/ws-kind` says `epic`) is one tracker epic; its tasks are made
+inside it later. Ask only for what its `AGENTS.md` has: what the epic delivers and why (`## Why`),
+the epic's ticket (syncing reads the tracker by it; `wsg check` warns while it is `FILL IN`), links
+and Owner rules if the section is there. It has no definition of done, scope, starting state or invariants: each task keeps
+its own. It attaches its repositories as links, with the defaults its tasks reuse: follow
+`wsg guide epic` → Adding a repository for each one instead of section 2 below
+(`--branch-template` sets the branch every task gets a worktree on). Skip section 3: `wsg team`
+refuses an epic, a team belongs in a task. In section 5, the first step of the work is starting a
+task (`wsg guide epic` → Starting a task).
+
+**A task of an epic** (`AGENTS.md` has a `<!-- wsg:epic -->` block) is set up like any task, but
+read `../knowledge.md` first: it may answer questions before you ask them. The ticket and the
+Owner rules may already be there, and the repositories the task took from the epic are in Layout.
+Another repository of the epic is attached by its name from here: `wsg add <name> --dry-run` shows
+the worktree and branch it gets with the epic's defaults (a flag given wins over them), then
+`wsg add <name>` after "ok". A repository the epic doesn't have is attached by its path, as in
+section 2. Never edit the epic's files from here.
 
 ## 2. Sources
 
@@ -183,7 +197,7 @@ Roles left out are not remembered: a later `wsg team fullstack` without `--witho
    "settings.json changed: restart…" — linked directories become readable only in a new session —
    and always after `wsg team` added roles: they are usable only in a new session.
    Worktrees are inside the workspace and need no restart. To restart: `ws <slug>` (if the `ws`
-   function is set up) or `cd <workspace> && claude`.
+   function is set up; `ws <epic>/<task>` for a task of an epic) or `cd <workspace> && claude`.
 5. When no restart is needed, end with one direct question: start the work now? Name the first
    step — the reconnaissance from `notes.md`, then a plan for the implementation (with a team:
    `/wsg-feature`). The work goes on in this session: don't call it "the next session". When a

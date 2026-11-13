@@ -34,11 +34,11 @@ with what the tracker and sibling workspaces say about the task.
   `git -C <path>` instead of `cd`, with a path in the workspace or one of its sources: `git` `log`, `show`, `diff`, `status`, `blame`, `grep`,
   `rev-parse`, `merge-base`, `ls-files`, `for-each-ref`, `symbolic-ref`, `ls-remote`,
   `branch --list|-v|-a|-r|--show-current`; wsg only as `node "<WSG_CLI>"`: `guide`, `check`,
-  `--where`, `add … --dry-run`, `remove … --dry-run`; `ls`, `cat`, `head`, `tail`, `wc`, `grep`,
-  `rg`, `find`, `pwd`. Every git command as `git --no-optional-locks --no-lazy-fetch …`
-  (`-C <path>` after them): without the first, `status` and `diff` refresh `.git/index` and can
-  collide with the caller's `index.lock`; without the second, a read in a partial clone fetches
-  from the network.
+  `--where`, `add … --dry-run`, `remove … --dry-run`, `new … --dry-run`; `ls`, `cat`, `head`,
+  `tail`, `wc`, `grep`, `rg`, `find`, `pwd`. Every git command as
+  `git --no-optional-locks --no-lazy-fetch …` (`-C <path>` after them): without the first,
+  `status` and `diff` refresh `.git/index` and can collide with the caller's `index.lock`; without
+  the second, a read in a partial clone fetches from the network.
 - Other tools, MCP included: only those that get, list, search, fetch or find. Never create,
   update, comment, transition, assign, send or delete — in a tracker, a chat, a wiki or a code host.
   Never put the contents of a local file or a secret in a URL: a fetch sends it out.
@@ -129,7 +129,12 @@ Look for evidence in this order, and stop at the first source that answers clear
    have met the same ticket, spec or service. Search their knowledge files:
    `grep -ril '<ticket or term>' <WS_ROOT> --include=notes.md --include=AGENTS.md --include=LEARNINGS.md --include=ERRORS.md --exclude-dir=node_modules --exclude-dir=.git`
    — no glob, which zsh refuses when it matches nothing. A hit inside a repository of a workspace
-   is that repository's file, not the workspace's knowledge: weigh it as code.
+   is that repository's file, not the workspace's knowledge: weigh it as code. A task of an epic
+   (its `AGENTS.md` has a `<!-- wsg:epic -->` block) sits in the epic's directory, not in
+   `WS_ROOT`: search the epic first — its `knowledge.md`, `decisions.md`, `tasks.md` and its other
+   tasks:
+   `grep -ril '<ticket or term>' .. --include=knowledge.md --include=decisions.md --include=tasks.md --include=notes.md --include=AGENTS.md --exclude-dir=node_modules --exclude-dir=.git`.
+   Then `WS_ROOT`, the epic's parent.
 5. **History.** `git --no-optional-locks --no-lazy-fetch log --oneline -- <file>`,
    `git --no-optional-locks --no-lazy-fetch log -S '<term>'`,
    `git --no-optional-locks --no-lazy-fetch blame -L <a>,<b> <file>` on the files the task
@@ -202,11 +207,12 @@ FOR THE OWNER
 
 ## Plan review
 
-For each `wsg add` or `wsg remove` command in the brief:
+For each `wsg add`, `wsg remove` or `wsg new … --epic` command in the brief:
 
 1. Run it with `--dry-run` added (it prints the plan as JSON and changes nothing). Read `errors`,
    `warnings`, `mode`, `start`, `base`, `target`, `carryCandidates`, `carry`; for remove, `ignored`
-   and `branchKept`.
+   and `branchKept`; for an `add` in an epic, `task` (`branch`, `sampleBranch`, `base`, `carry`,
+   `carryCandidates`, `cloneNm`); for `new … --epic`, `state` and each plan under `sources`.
 2. Check it against the repository and the wsg facts: the mode fits the source, the branch follows
    the convention `for-each-ref` shows (with the ticket if there is one), `--verify` runs what CI
    runs, `--carry` takes what the code needs at run time and nothing else.
@@ -246,9 +252,24 @@ For each `wsg add` or `wsg remove` command in the brief:
   `README.md` is rendered from `.claude/wsg.json` by `wsg add`, `wsg remove` and `wsg refresh`;
   nobody edits it by hand, nor `.claude/wsg.json`.
   A source attached with the wrong flags is fixed by `wsg remove` and `wsg add` again.
+- **Epics.** An epic workspace (`.claude/ws-kind` says `epic`) holds one tracker epic:
+  `knowledge.md`, the single source of truth its tasks read, within 4 KiB; `decisions.md`;
+  `tasks.md`; its repositories; and its tasks, each a task workspace in a directory of the epic.
+  `wsg guide epic` holds its procedures. In an epic, a repository is always a link: `--worktree`,
+  `--branch` and `--reset-to-base` are refused, and `--branch-template` (`{slug}`, `{ticket}`)
+  gives each task a worktree on its own branch, with `--base`, `--carry` and
+  `--[no-]clone-node-modules` as that worktree's defaults — without a template they are refused
+  and the repository is linked into each task as is. A task is made with
+  `wsg new <slug> --epic <epic> [--ticket KEY] [--sources a,b|none]`: without `--sources` it takes
+  the epic's one repository with a template when there is exactly one, else none; `{ticket}` needs
+  the task's ticket, written into its state only at creation. In a task, `wsg add <name>` takes the
+  epic's source of that name, a flag given winning over the epic's defaults. A task never edits the
+  epic's files: it stages findings under `## For the epic` in its `notes.md`, merged from the epic
+  session at close. `wsg team` and `wsg promote` refuse an epic (exit 2); promote refuses a task of
+  one too.
 - **Push and MR** are the owner's: the workspace settings deny `git push`.
 - **Dry runs and checks** change nothing: `wsg add <path> … --dry-run`, `wsg remove <name> --dry-run`,
-  `wsg check`.
+  `wsg new <slug> --epic <epic> … --dry-run`, `wsg check`.
 
 ## For the caller
 

@@ -36,7 +36,8 @@ you, and the only way you run wsg — never `wsg` from PATH, never `npx`; where 
    `git` `log`, `show`, `diff`, `status`, `blame`, `grep`, `rev-parse`, `merge-base`, `ls-files`,
    `for-each-ref`, `symbolic-ref`, `ls-remote`, `branch --list|-v|-a|-r|--show-current`;
    wsg only as `node "<WSG_CLI>"`: `guide`, `check`, `--where`, `add … --dry-run`,
-   `remove … --dry-run`; `ls`, `cat`, `head`, `tail`, `wc`, `grep`, `rg`, `find`, `pwd`.
+   `remove … --dry-run`, `new … --dry-run`; `ls`, `cat`, `head`, `tail`, `wc`, `grep`, `rg`,
+   `find`, `pwd`.
    Every git command as `git --no-optional-locks --no-lazy-fetch …` (`-C <path>` after them):
    without the first, `status` and `diff` refresh `.git/index` and can collide with the caller's
    `index.lock`; without the second, a read in a partial clone fetches from the network.

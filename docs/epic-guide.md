@@ -18,7 +18,8 @@ From the epic session, when the owner asks to start work on a ticket.
 2. Read the ticket with any tracker MCP read tool you have; without one, ask the owner for its
    summary. Pick a slug: kebab-case, not a name the epic uses (`knowledge.md`, `tasks.md`, a
    source's name).
-3. Show the owner the command and wait for "ok":
+3. If the `wsg-advisor` agent is available, send it the command and the dry-run first. Then show
+   the owner the command and wait for "ok":
 
    ```bash
    wsg new <slug> --epic <epic> --ticket <KEY> [--title T] [--sources a,b|none]
@@ -26,15 +27,19 @@ From the epic session, when the owner asks to start work on a ticket.
 
    Without `--sources` the task gets no repository, unless the epic has exactly one with a branch
    template. A source with a template becomes the task's own worktree on the branch it gives
-   (`{ticket}` needs `--ticket`); a branch of that name that exists is attached as it is, one only
-   on origin is continued. A source without one is linked as is. A task without a git repository
-   reports "setup not finished" until one is attached: say so. When the owner wants to see the
-   branches first, run `wsg new <slug> --epic <epic> --dry-run` with the same flags: it prints the
-   plan, nothing made. A source that can't be attached refuses the whole task, nothing made.
+   (`{ticket}` needs `--ticket`: the key is written into the task's state once, at creation, and a
+   task made without it takes such a source only with `wsg add <name> --branch B`, or `--link` to
+   link it as is); a branch of
+   that name that exists is attached as it is, one only on origin is continued. A source without
+   one is linked as is. A task without a git repository reports "setup not finished" until one is
+   attached: say so. When the owner wants to see the branches first, run
+   `wsg new <slug> --epic <epic> --dry-run` with the same flags: it prints the plan, nothing made.
+   A source that can't be attached refuses the whole task, nothing made.
 4. After it runs, the output names the sources the task took; the task's `AGENTS.md` points to
    `../knowledge.md` and `../tasks.md`, and holds the epic's Owner rules when they are filled in
-   here. Tell the owner how to open a session in
-   the task directory; the task is worked on there, not here.
+   here. Tell the owner how to open a session in the task directory — `ws <epic>/<task>` or the
+   `cd … && <agent>` line, as the output says; the task is worked on there, not here. Its first session runs the setup
+   (`wsg guide setup`) for what the epic does not give: why, done, scope, invariants.
 
 ## Working
 

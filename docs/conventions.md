@@ -28,7 +28,7 @@ The kind is recorded in `.claude/ws-kind` (`task`, `process` or `epic`) and dete
 | main artifact | plan, spec, review materials | `.claude/skills/<name>/SKILL.md` | `knowledge.md` |
 | log | `notes.md` → "Current context" | `journal.md` + `runs/<date>-<short-name>.md` | `tasks.md`, `decisions.md` |
 | branch | pinned at creation | new for each run, created by the skill | one per task, in the task |
-| memory | context of one task | accumulates across runs | accumulates across its tasks |
+| memory | context of one task | accumulates across runs | the epic's own sessions; what its tasks learn goes to `knowledge.md` at close |
 | "done" | the task's acceptance criterion | the criterion of a single run | each task's own |
 
 In a process, git sources are attached via **symlink**, not worktree: a process has no permanent
@@ -60,7 +60,9 @@ A task of the epic is made with `wsg new <slug> --epic <epic>`, in `<epic>/<slug
 epic's `tasks.md` lists it. Its `wsg.json` links it to the epic (`"epic": { "slug": … }`) and keeps
 the ticket key; its `AGENTS.md` has a `<!-- wsg:epic -->` block pointing to `../knowledge.md` and
 `../tasks.md`, and the epic's Owner rules section, copied as is when it holds no FILL IN; its
-`notes.md` has `## For the epic`, where it stages what the epic should learn from it.
+`notes.md` has `## For the epic`, where it stages what the epic should learn from it. The epic's
+files are merged from the epic session when the task is closed (`wsg guide epic` → Closing), never
+edited from the task. `wsg team` and `wsg promote` refuse an epic, and promote a task of one too.
 
 A task that turns out to be repeatable is turned into a process: `wsg promote <slug> --skill <name>`. Sources,
 rules and memory stay; a skill stub and a log with the first run are added. There is no reverse
@@ -150,6 +152,7 @@ process skill has its pointer line.
 | Rules of a specific repository | its own `AGENTS.md`, via import | every session |
 | Specifics of working with the repo in this task | `.claude/rules/<repo>.md` with `paths:` | when reading the repo's files |
 | State, code map, open questions | `notes.md` | on demand |
+| What every task of an epic must know | the epic's `knowledge.md` | on demand, through the always-on pointer rule |
 | Multi-step procedures | `.claude/skills/<name>/SKILL.md` | on demand |
 | Lessons and failures | `.learnings/` | on demand |
 
@@ -161,10 +164,12 @@ process skill has its pointer line.
 | `AGENTS.md` | ≤ 16 KiB | 32 KiB for the whole chain | Codex `project_doc_max_bytes`, default 32768 |
 | `.claude/rules/*.md` | ≤ 80 lines | — | loaded by `paths`, but eats context when matched |
 | `.claude-memory/MEMORY.md` | — | 200 lines or 25 KB | only loaded up to this limit, the rest is dropped |
+| `knowledge.md` (epic) | ≤ 4 KiB | 8 KiB | read before the first edit of every task: rewrite, don't append |
 | `@`-import chain | — | 4 hops | Claude Code |
 
 Keep the workspace's total always-on budget (parent CLAUDE.md files + its own files + imports)
-within ~20 KiB. Checked by `wsg check`.
+within ~20 KiB. Checked by `wsg check`. For a task of an epic it counts what Claude Code loads from
+the epic too: its `CLAUDE.md` and its rules without `paths:`.
 
 ## Hard rules
 
@@ -208,6 +213,10 @@ closer to the cwd = higher priority. The workspace isn't a git repository, so Co
 the workspace's `AGENTS.md` — neither your personal rules nor the repositories' rules will be in the
 chain. Everything Codex must know has to be in this file or in explicit pointers like "open X before
 working with Y".
+
+The same is expected for a task of an epic (not verified): the epic's `AGENTS.md` above it is not in the chain. So the
+task's own `AGENTS.md` carries what it needs from the epic — plain-text pointers to `../knowledge.md`
+and `../tasks.md`, and the epic's Owner rules copied at creation. Epics are not verified with Codex.
 
 ## Memory
 

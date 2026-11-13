@@ -877,7 +877,7 @@ try {
     });
     it('README: the commands table has wsg team, guide teach and wsg-teach', () => {
       assert.ok(readme.includes('| `wsg team <preset> [--without ROLE,...] [--dry-run] [--ws SLUG\\|PATH]` |'));
-      assert.ok(readme.includes('`wsg guide [setup\\|advisor\\|teach]`'));
+      assert.ok(readme.includes('`wsg guide [setup\\|advisor\\|teach\\|epic]`'));
       assert.match(readme, /Installs the `wsg-new` and `wsg-teach` skills/);
     });
     it('README limitations: the read-only roles keep Bash and can write through it, and the rest', () => {
