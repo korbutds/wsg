@@ -615,6 +615,45 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       wsg(['refresh', '--ws', ep], { env });
       assert.match(read('tasks.md'), /- `third\/`\n<!-- \/wsg:tasks -->[\s\S]*PROJ-50 — someone else's task\n$/);
     });
+    // The status markers: rendered from each task's state; an open one — stored or absent — as before.
+    {
+      const stateOf = (slug) => path.join(ep, slug, W.STATE_FILE);
+      const saved = Object.fromEntries(['first', 'second', 'third', 'moved'].map((x) => [x, fs.readFileSync(stateOf(x), 'utf8')]));
+      const setStatus = (slug, over) => fs.writeFileSync(stateOf(slug), JSON.stringify({ ...JSON.parse(saved[slug]), ...over }));
+      const block = () => /<!-- wsg:tasks -->\n([\s\S]*?)<!-- \/wsg:tasks -->/.exec(read('tasks.md'))[1];
+      const was = block();
+      setStatus('first', { status: 'open' });
+      const openRf = wsg(['refresh', '--ws', ep], { env });
+      it('status markers: a task with status open renders as one without: refresh changes nothing', () => {
+        assert.strictEqual(openRf.code, 0, openRf.all);
+        assert.match(openRf.out, /up to date/);
+        assert.strictEqual(block(), was);
+      });
+      setStatus('first', { status: 'review' });
+      setStatus('second', { status: 'done', closed: '2026-11-14' });
+      setStatus('third', { status: 'done' });
+      setStatus('moved', { status: 'blocked' });
+      const marked = wsg(['refresh', '--ws', ep], { env });
+      it('status markers: [review], [done date], [done] without a date, an unknown status as is, after the title', () => {
+        assert.strictEqual(marked.code, 0, marked.all);
+        assert.match(marked.out, /Updated: tasks\.md/);
+        assert.strictEqual(block(), [
+          '- `first/` PROJ-42 — First task [review]',
+          '- `moved/` [blocked] (its state names epic `other`: see `wsg check`)',
+          '- `second/` [done 2026-11-14]',
+          '- `third/` [done]', ''].join('\n'));
+      });
+      it('status markers: the text below the block is kept', () => assert.match(read('tasks.md'), /PROJ-50 — someone else's task\n$/));
+      it('status markers: refresh --dry-run of an unchanged epic lists nothing', () => assert.deepStrictEqual(JSON.parse(wsg(['refresh', '--ws', ep, '--dry-run'], { env }).out).files, []));
+      setStatus('second', { status: 'open' });
+      it('status markers: a task reopened loses its marker', () => {
+        wsg(['refresh', '--ws', ep], { env });
+        assert.match(block(), /^- `second\/`$/m);
+      });
+      for (const [slug, body] of Object.entries(saved)) fs.writeFileSync(stateOf(slug), body);
+      wsg(['refresh', '--ws', ep], { env });
+      it('status markers: all open again, the block as it was', () => assert.strictEqual(block(), was));
+    }
 
     const k = path.join(ep, 'knowledge.md');
     const original = read('knowledge.md');
