@@ -3072,6 +3072,66 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     }
   }
 
+  console.log('\nthe extra directories: W.extraDirs and settings.json');
+  {
+    // The helper alone: link paths, references included, in order; never a worktree or the epic.
+    const src = (name, mode, extra = {}) => ({ name, path: `/abs/${name}`, mode, ...extra });
+    const mixed = { version: 2, kind: 'task', sources: [src('a', 'worktree'), src('b', 'link'), src('c', 'link', { reference: true }), src('d', 'worktree'), src('e', 'link')] };
+    it('extraDirs: link and reference paths in their order, no worktree', () =>
+      assert.deepStrictEqual(W.extraDirs(mixed), ['/abs/b', '/abs/c', '/abs/e']));
+    it('extraDirs: no sources, no directories', () => assert.deepStrictEqual(W.extraDirs({ version: 2, kind: 'task', sources: [] }), []));
+    it('extraDirs: only worktrees, no directories', () =>
+      assert.deepStrictEqual(W.extraDirs({ version: 2, kind: 'task', sources: [src('a', 'worktree')] }), []));
+    it('extraDirs: a task of an epic gets its links, not the epic directory', () => {
+      const st = { version: 2, kind: 'task', epic: { slug: 'shop' }, sources: [src('b', 'link', { from: 'epic' }), src('a', 'worktree', { from: 'epic' })] };
+      assert.deepStrictEqual(W.extraDirs(st), ['/abs/b']);
+    });
+    it('extraDirs: an epic gets its links and references', () => {
+      const task = { branch: '', base: '', carry: [], cloneNm: false };
+      const st = { version: 3, kind: 'epic', sources: [src('b', 'link', { task }), src('c', 'link', { reference: true })] };
+      assert.deepStrictEqual(W.extraDirs(st), ['/abs/b', '/abs/c']);
+    });
+
+    // Through the commands: settings.json lists exactly these, and a render changes nothing.
+    const root = path.join(tmp, 'extra-dirs-root');
+    const env = { WS_ROOT: root };
+    const run = (args, opts = {}) => {
+      const r = wsg(args, { env, ...opts });
+      if (r.code !== 0) throw new Error(`${args.join(' ')}: ${r.all}`);
+      return r;
+    };
+    const solo = path.join(root, 'solo');
+    run(['new', 'solo', '--no-launch']);
+    run(['add', api, '--branch', 'extra-dirs/solo', '--ws', solo]);
+    run(['add', web, '--link', '--ws', solo]);
+    run(['add', docs, '--reference', '--ws', solo]);
+    const ep = path.join(root, 'shop');
+    run(['new', 'shop', '--kind', 'epic', '--ticket', 'EPIC-2', '--no-launch']);
+    run(['add', web, '--ws', ep]);
+    run(['add', docs, '--reference', '--ws', ep]);
+    const pay = path.join(ep, 'pay');
+    run(['new', 'pay', '--epic', 'shop', '--ticket', 'ACME-123', '--sources', 'web,docs', '--no-launch']);
+    const settingsOf = (ws) => fs.readFileSync(path.join(ws, '.claude', 'settings.json'), 'utf8');
+    // The whole file, as wsg 0.5 writes it: the directories first, then the rest of the permissions.
+    const expected = (ws, dirs) => `${JSON.stringify({
+      autoMemoryDirectory: path.join(ws, '.claude-memory'),
+      permissions: { additionalDirectories: dirs, deny: ['Bash(git push*)', 'Bash(git -C * push*)', 'Bash(* git push*)'], allow: [`Read(/${root}/**)`] },
+    }, null, 2)}\n`;
+    for (const [name, ws, dirs] of [['a standalone task with a worktree, a link and a reference', solo, [web, docs]],
+      ['an epic with a link and a reference', ep, [web, docs]], ['a task of the epic with its sources', pay, [web, docs]]]) {
+      const state = W.readState(ws);
+      it(`${name}: extraDirs lists the link and reference paths`, () => assert.deepStrictEqual(W.extraDirs(state), dirs));
+      it(`${name}: settings.json byte for byte`, () => assert.strictEqual(settingsOf(ws), expected(ws, dirs)));
+      it(`${name}: a render changes nothing`, () => assert.deepStrictEqual(generate.changedFiles(generate.computeRender(ws, state, null)), []));
+    }
+    it('the task of the epic: its sources are links, the epic directory is not listed', () => {
+      assert.deepStrictEqual(W.readState(pay).sources.map((x) => x.mode), ['link', 'link']);
+      assert.ok(!W.extraDirs(W.readState(pay)).includes(ep));
+    });
+    const wt = path.join(solo, 'api');
+    if (fs.existsSync(path.join(wt, '.git'))) execFileSync('git', ['-C', api, 'worktree', 'remove', '--force', wt]);
+  }
+
   console.log('\nwsg add: writes stay inside the workspace');
   {
     const wsS = path.join(wsRoot, 'safe');
