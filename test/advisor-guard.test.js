@@ -275,6 +275,8 @@ const BYPASS = [
   [bash(`${W} remove x --ws /tmp/ws --dry-run`), true, 'remove with --ws and --dry-run'],
   [bash(`${W} remove x --dry-run --json`), true, 'remove --dry-run --json: a plan, in the envelope'],
   [bash(`${W} add x --dry-run --json`), true, 'add --dry-run --json: a plan, in the envelope'],
+  [bash(`${W} new pay --epic shop --dry-run --json`), true, 'new --dry-run --json: a plan, in the envelope'],
+  [bash(`${W} new pay --epic shop --json`), false, 'new --json without --dry-run creates'],
   [bash(`${W} add x --json`), false, 'add --json without --dry-run attaches'],
   [bash(`${W} add x --note --json --dry-run`), true, '--note takes --json as its value, --dry-run stays'],
   [bash(`${W} remove x --json`), false, 'remove --json without --dry-run removes'],

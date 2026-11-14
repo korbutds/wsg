@@ -4681,6 +4681,257 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     if (fs.existsSync(path.join(wt, '.git'))) execFileSync('git', ['-C', api, 'worktree', 'remove', '--force', wt]);
   }
 
+  console.log('\nwsg new --json');
+  {
+    const root = path.join(tmp, 'new-json-root');
+    const env = { WS_ROOT: root };
+    const run = (args, opts = {}) => wsg(['new', ...args], { env, ...opts, env: { ...env, ...(opts.env || {}) } });
+    const doc = (r) => { try { return JSON.parse(r.out); } catch { return null; } };
+    const VERSION = require(path.join(ROOT, 'package.json')).version;
+    const RESULT_KEYS = ['workspace', 'kind', 'slug', 'title', 'epic', 'ticket', 'ticketText', 'status', 'sources', 'launched'];
+    const SOURCE_KEYS = ['name', 'mode', 'path', 'workspacePath', 'branch', 'base', 'target', 'verify', 'note', 'carry', 'cloneNm', 'from', 'task'];
+    const envelope = (r, what) => {
+      const j = doc(r);
+      assert.ok(j, `${what}: stdout is not one JSON document: ${r.out}`);
+      assert.deepStrictEqual(Object.keys(j), ['schemaVersion', 'wsgVersion', 'ok', 'command', 'dryRun', 'result', 'error', 'warnings'], what);
+      assert.deepStrictEqual([j.schemaVersion, j.wsgVersion, j.command], [1, VERSION, 'new'], what);
+      if (j.error) {
+        assert.deepStrictEqual(Object.keys(j.error), ['code', 'exitCode', 'message', 'details', 'rollback', 'kept'], what);
+        assert.strictEqual(j.error.exitCode, r.code, what);
+      }
+      if (j.result) {
+        assert.deepStrictEqual(Object.keys(j.result), RESULT_KEYS, what);
+        assert.ok(path.isAbsolute(j.result.workspace));
+        for (const x of j.result.sources) assert.deepStrictEqual(Object.keys(x), SOURCE_KEYS, what);
+        assert.strictEqual(j.result.launched, false);
+      }
+      return j;
+    };
+
+    const plain = run(['plain-dry', '--ticket', 'ACME-123', '--dry-run']);
+    it('plain new --dry-run: the plan as before, no envelope', () => {
+      assert.strictEqual(plain.code, 0, plain.all);
+      const p = doc(plain);
+      assert.deepStrictEqual(Object.keys(p), ['workspace', 'state', 'sources', 'errors', 'warnings']);
+      assert.strictEqual(plain.out, `${JSON.stringify(p, null, 2)}\n`);
+    });
+    const dry = run(['first', '--ticket', 'ACME-123', '--title', 'First task', '--dry-run', '--json']);
+    it('new --dry-run --json: the workspace as planned, nothing made', () => {
+      assert.strictEqual(dry.code, 0, dry.all);
+      assert.strictEqual(dry.err, '');
+      const j = envelope(dry, 'dry');
+      assert.deepStrictEqual([j.ok, j.dryRun], [true, true]);
+      assert.deepStrictEqual(j.result, { workspace: path.join(root, 'first'), kind: 'task', slug: 'first', title: 'First task',
+        epic: null, ticket: 'ACME-123', ticketText: 'ACME-123', status: 'open', sources: [], launched: false });
+      assert.ok(!fs.existsSync(path.join(root, 'first')));
+    });
+    // One rule for the ticket: the key parsed from what was given, or null; the text as given.
+    for (const [given, key] of [['fix the login', null], ['https://tracker.example.com/browse/ACME-7', 'ACME-7'], ['ACME-8 login', 'ACME-8']]) {
+      const r = run(['tickets', '--ticket', given, '--dry-run', '--json']);
+      it(`--ticket ${JSON.stringify(given)}: ticket ${key}, ticketText as given`, () => {
+        const { result } = envelope(r, given);
+        assert.deepStrictEqual([result.ticket, result.ticketText], [key, given]);
+      });
+    }
+    const made = run(['first', '--ticket', 'ACME-123', '--json']);
+    it('new --json: exit 0, the workspace made, nothing else on stdout or stderr', () => {
+      assert.strictEqual(made.code, 0, made.all);
+      assert.strictEqual(made.err, '');
+      const j = envelope(made, 'made');
+      assert.deepStrictEqual([j.ok, j.dryRun, j.result.workspace, j.result.status], [true, false, path.join(root, 'first'), 'open']);
+      assert.strictEqual(W.readState(path.join(root, 'first')).status, 'open');
+    });
+    const againDry = run(['first', '--dry-run', '--json']);
+    const again = run(['first', '--json']);
+    it('a slug that exists: exit 2, invalid_input with the reason and the planned workspace', () => {
+      assert.strictEqual(again.code, 2, again.all);
+      const j = envelope(again, 'again');
+      assert.deepStrictEqual([j.error.code, j.error.rollback, j.result.slug], ['invalid_input', 'none', 'first']);
+      assert.match(j.error.details.join('\n'), /exists/);
+    });
+    it('the same document with --dry-run, but for dryRun', () => assert.deepStrictEqual({ ...doc(again), dryRun: true }, envelope(againDry, 'again dry')));
+    for (const [what, args] of [['a bad slug', ['Bad_Slug', '--json']], ['an unknown kind', ['x', '--kind', 'story', '--json']], ['no slug', ['--json']],
+      ['an epic that does not exist', ['x', '--epic', 'nope', '--json']]]) {
+      const r = run(args);
+      it(`${what}: exit 2, invalid_input in the envelope`, () => {
+        assert.strictEqual(r.code, 2, r.all);
+        assert.strictEqual(envelope(r, what).error.code, 'invalid_input');
+        assert.strictEqual(r.err, '');
+      });
+    }
+
+    const ep = path.join(root, 'shop');
+    const epicMade = run(['shop', '--kind', 'epic', '--ticket', 'EPIC-9', '--json']);
+    it('an epic: kind epic, no status', () => {
+      assert.strictEqual(epicMade.code, 0, epicMade.all);
+      const { result } = envelope(epicMade, 'epic');
+      assert.deepStrictEqual([result.kind, result.status, result.epic], ['epic', null, null]);
+    });
+    const added = wsg(['add', api, '--branch-template', 'nj/{slug}', '--ws', ep], { env });
+    it('(the epic gets a source with a branch template)', () => assert.strictEqual(added.code, 0, added.all));
+    const taskDry = run(['pay', '--epic', 'shop', '--ticket', 'ACME-123', '--dry-run', '--json']);
+    it('a task of the epic, dry run: its epic, its ticket key, the source it takes', () => {
+      assert.strictEqual(taskDry.code, 0, taskDry.all);
+      const { result } = envelope(taskDry, 'task dry');
+      assert.deepStrictEqual([result.workspace, result.epic, result.ticket, result.status], [path.join(ep, 'pay'), 'shop', 'ACME-123', 'open']);
+      assert.deepStrictEqual([result.sources.length, result.sources[0].mode, result.sources[0].branch, result.sources[0].from, result.sources[0].workspacePath],
+        [1, 'worktree', 'nj/pay', 'epic', path.join(ep, 'pay', 'api')]);
+    });
+
+    const lockFile = path.join(ep, '.claude', 'wsg.lock');
+    fs.writeFileSync(lockFile, JSON.stringify({ pid: process.pid, time: new Date().toISOString() }));
+    const busy = run(['pay', '--epic', 'shop', '--ticket', 'ACME-123', '--json']);
+    fs.rmSync(lockFile);
+    it('the epic busy: busy, exit 2, no task made', () => {
+      assert.strictEqual(busy.code, 2, busy.all);
+      assert.strictEqual(envelope(busy, 'busy').error.code, 'busy');
+      assert.ok(!fs.existsSync(path.join(ep, 'pay')));
+    });
+
+    const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+    const epicBefore = tree(ep);
+    // git refuses the worktree after the task's skeleton is made: all of it rolled back.
+    const failGit = path.join(tmp, 'new-json-fail-git');
+    fs.mkdirSync(failGit);
+    fs.writeFileSync(path.join(failGit, 'git'),
+      `#!/bin/sh\ncase " $* " in *" worktree add "*) echo "fatal: simulated" >&2; exit 128;; esac\nexec ${JSON.stringify(realGit)} "$@"\n`, { mode: 0o755 });
+    const failed = run(['pay', '--epic', 'shop', '--ticket', 'ACME-123', '--json'], { env: { PATH: `${failGit}:${ENV.PATH}` } });
+    it('a step that fails: step_failed, exit 1, rollback done, the epic as it was', () => {
+      assert.strictEqual(failed.code, 1, failed.all);
+      const j = envelope(failed, 'failed');
+      assert.deepStrictEqual([j.error.code, j.error.rollback, j.error.kept], ['step_failed', 'done', []]);
+      assert.ok(!fs.existsSync(path.join(ep, 'pay')));
+      assert.deepStrictEqual(tree(ep), epicBefore);
+    });
+    // Ctrl+C reaching wsg as git makes the worktree: the task is made, then all of it put back.
+    const intGit = path.join(tmp, 'new-json-int-git');
+    fs.mkdirSync(intGit);
+    fs.writeFileSync(path.join(intGit, 'git'),
+      `#!/bin/sh\ncase " $* " in *" worktree add "*) kill -INT $PPID;; esac\nexec ${JSON.stringify(realGit)} "$@"\n`, { mode: 0o755 });
+    const interrupted = run(['pay', '--epic', 'shop', '--ticket', 'ACME-123', '--json'], { env: { PATH: `${intGit}:${ENV.PATH}` } });
+    it('interrupted: exit 130, interrupted, rollback done, no task, no branch', () => {
+      assert.strictEqual(interrupted.code, 130, interrupted.all);
+      const j = envelope(interrupted, 'interrupted');
+      assert.deepStrictEqual([j.error.code, j.error.rollback, j.error.message], ['interrupted', 'done', 'Cancelled, nothing created.']);
+      assert.ok(!fs.existsSync(path.join(ep, 'pay')));
+      assert.ok(!branches(api).includes('nj/pay'));
+      assert.deepStrictEqual(tree(ep), epicBefore);
+    });
+
+    // In a terminal, as a person runs it: without --json the agent starts, with --json never.
+    const bin = path.join(tmp, 'new-json-agent');
+    fs.mkdirSync(bin);
+    const seen = path.join(tmp, 'new-json-agent.seen');
+    fs.writeFileSync(path.join(bin, 'claude'), `#!/bin/sh\necho started > ${JSON.stringify(seen)}\n`, { mode: 0o755 });
+    const ttyJs = path.join(tmp, 'new-json-tty.js');
+    fs.writeFileSync(ttyJs, 'process.stdin.isTTY = true; process.stdout.isTTY = true;\n');
+    const ttyEnv = { WSG_NO_LAUNCH: '', WSG_AGENT: path.join(bin, 'claude'), NODE_OPTIONS: `-r ${ttyJs}` };
+    const inTerm = run(['in-term'], { env: ttyEnv });
+    it('(in a terminal without --json the agent is started)', () => {
+      assert.strictEqual(inTerm.code, 0, inTerm.all);
+      assert.ok(fs.existsSync(seen), inTerm.all);
+    });
+    fs.rmSync(seen, { force: true });
+    const inTermJson = run(['in-term-json', '--json'], { env: ttyEnv });
+    it('with --json, in the same terminal: never started, launched false', () => {
+      assert.strictEqual(inTermJson.code, 0, inTermJson.all);
+      assert.ok(!fs.existsSync(seen));
+      assert.strictEqual(envelope(inTermJson, 'tty json').result.launched, false);
+    });
+
+    // An epic whose tasks.md block is broken: refused in the plan, by the dry run too, the same way.
+    const ep2 = path.join(root, 'shop2');
+    run(['shop2', '--kind', 'epic', '--no-launch']);
+    wsg(['add', web, '--branch-template', 'nj2/{ticket}', '--ws', ep2], { env });
+    fs.writeFileSync(path.join(ep2, 'tasks.md'), '# Tasks\n\n<!-- wsg:tasks -->\n- `x/`\n');
+    const brokenPlain = run(['kid', '--epic', 'shop2', '--dry-run']);
+    const brokenDry = run(['kid', '--epic', 'shop2', '--dry-run', '--json']);
+    const brokenReal = run(['kid', '--epic', 'shop2', '--json']);
+    it('a broken tasks.md block: the plain dry run refuses it too, exit 2', () => {
+      assert.strictEqual(brokenPlain.code, 2, brokenPlain.all);
+      assert.match(doc(brokenPlain).errors.join('\n'), /tasks\.md/);
+    });
+    it('dry run and real run: the same refusal, but for dryRun; nothing made', () => {
+      assert.strictEqual(brokenReal.code, 2, brokenReal.all);
+      const j = envelope(brokenReal, 'broken real');
+      assert.strictEqual(j.error.code, 'invalid_input');
+      assert.match(j.error.message, /tasks\.md/);
+      assert.deepStrictEqual({ ...j, dryRun: true }, envelope(brokenDry, 'broken dry'));
+      assert.ok(!fs.existsSync(path.join(ep2, 'kid')));
+    });
+    it('its warning (the source left for want of a ticket) is said once', () =>
+      assert.deepStrictEqual(envelope(brokenReal, 'broken real').warnings.filter((w) => /ticket/.test(w)).length, 1));
+
+    // An epic without tasks.md: the dry run's plan says so, plain and --json; the real run says it once.
+    const ep3 = path.join(root, 'shop3');
+    run(['shop3', '--kind', 'epic', '--no-launch']);
+    fs.rmSync(path.join(ep3, 'tasks.md'));
+    const noTasksPlain = run(['kid', '--epic', 'shop3', '--dry-run']);
+    const noTasksDry = run(['kid', '--epic', 'shop3', '--dry-run', '--json']);
+    const noTasksReal = run(['kid', '--epic', 'shop3', '--json']);
+    it('no tasks.md: the dry run warns, plain and --json', () => {
+      assert.strictEqual(noTasksPlain.code, 0, noTasksPlain.all);
+      assert.ok(doc(noTasksPlain).warnings.some((w) => /tasks\.md/.test(w)), noTasksPlain.out);
+      assert.strictEqual(envelope(noTasksDry, 'no tasks dry').warnings.filter((w) => /tasks\.md/.test(w)).length, 1);
+    });
+    it('the real run: made, the warning once', () => {
+      assert.strictEqual(noTasksReal.code, 0, noTasksReal.all);
+      assert.strictEqual(envelope(noTasksReal, 'no tasks real').warnings.filter((w) => /tasks\.md/.test(w)).length, 1);
+    });
+
+    // A file kept by one undo step and removed with the workspace by the next is not kept.
+    const madeDir = path.join(tmp, 'new-json-made');
+    const otherDir = path.join(tmp, 'new-json-other');
+    fs.mkdirSync(otherDir);
+    const keptErr = await (async () => {
+      const err = process.stderr.write;
+      process.stderr.write = () => true;
+      try {
+        await generate.guarded((txn) => {
+          fs.mkdirSync(madeDir);
+          txn.add(() => fs.rmSync(madeDir, { recursive: true, force: true }));
+          const jm = generate.journal();
+          const jo = generate.journal();
+          generate.writeOwned(madeDir, 'AGENTS.md', 'by the run\n', jm);
+          generate.writeOwned(otherDir, 'tasks.md', 'by the run\n', jo);
+          txn.add(() => generate.restore(otherDir, jo));
+          txn.add(() => generate.restore(madeDir, jm));
+          fs.writeFileSync(path.join(madeDir, 'AGENTS.md'), 'edited meanwhile\n');
+          fs.writeFileSync(path.join(otherDir, 'tasks.md'), 'edited meanwhile\n');
+          throw new Error('after the edits');
+        }, 'rolling back');
+        return null;
+      } catch (e) { return e; } finally { process.stderr.write = err; }
+    })();
+    it('kept: only what is still there after the rollback', () => {
+      assert.ok(!fs.existsSync(madeDir));
+      assert.deepStrictEqual([keptErr.rollback, keptErr.kept, keptErr.keptAbs], ['done', ['tasks.md'], [path.join(otherDir, 'tasks.md')]]);
+    });
+
+    // Kept paths, absolute from the directory each is in.
+    const keptDir = path.join(tmp, 'new-json-kept');
+    fs.mkdirSync(keptDir);
+    const jr = generate.journal();
+    generate.writeOwned(keptDir, 'notes.md', 'by the run\n', jr);
+    fs.writeFileSync(path.join(keptDir, 'notes.md'), 'edited meanwhile\n');
+    const restored = (() => { const err = process.stderr.write; process.stderr.write = () => true; try { return generate.restore(keptDir, jr); } finally { process.stderr.write = err; } })();
+    it('restore gives the kept paths absolute too', () => assert.deepStrictEqual([restored.kept, restored.keptAbs], [['notes.md'], [path.join(keptDir, 'notes.md')]]));
+    const Jl = require(path.join(ROOT, 'lib', 'json.js'));
+    it('the envelope takes the absolute ones, not a guess from one directory', () =>
+      assert.deepStrictEqual(Jl.rollbackOf({ rollback: 'done', kept: ['tasks.md'], keptAbs: ['/ws/shop/tasks.md'] }, '/ws/shop/pay').kept, ['/ws/shop/tasks.md']));
+
+    const okTask = run(['pay', '--epic', 'shop', '--ticket', 'ACME-123', '--json']);
+    it('a task of the epic: made, its source as attached', () => {
+      assert.strictEqual(okTask.code, 0, okTask.all);
+      const { result } = envelope(okTask, 'task');
+      assert.deepStrictEqual([result.sources[0].name, result.sources[0].mode, result.sources[0].branch], ['api', 'worktree', 'nj/pay']);
+      assert.strictEqual(git(path.join(ep, 'pay', 'api'), ['branch', '--show-current']), 'nj/pay');
+    });
+    const wt = path.join(ep, 'pay', 'api');
+    if (fs.existsSync(path.join(wt, '.git'))) execFileSync('git', ['-C', api, 'worktree', 'remove', '--force', wt]);
+    try { git(api, ['branch', '-D', 'nj/pay']); } catch { /* gone */ }
+  }
+
   console.log('\nwsg promote');
   {
     wsg(['new', 'to-promote', '--no-launch']);

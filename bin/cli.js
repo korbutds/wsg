@@ -191,6 +191,36 @@ function targetWs(given) {
   return W.find(process.cwd());
 }
 
+// A source as --json gives it (add, new): a spec, a plan, or a state entry — whatever is known.
+// Every key always there; null for what is not; paths absolute. ws: the workspace it is in; plan:
+// the source's plan, for the clone flag of one refused before its spec was made.
+function sourceResult(ws, x, plan = x) {
+  const name = x.name || null;
+  const nmClone = plan && plan.nodeModules && typeof plan.nodeModules.clone === 'boolean' ? plan.nodeModules.clone : null;
+  const task = x.task && typeof x.task === 'object' && !Array.isArray(x.task) ? x.task : null;
+  return {
+    name,
+    mode: x.reference || x.mode === 'reference' ? 'reference' : x.mode || null,
+    path: x.path || null,
+    workspacePath: name && ws ? path.join(ws, name) : null,
+    branch: x.branch || null,
+    base: x.base || null,
+    target: x.target && x.target !== '—' ? x.target : null,
+    verify: x.verify || null,
+    note: x.note || null,
+    carry: Array.isArray(x.carry) ? x.carry : [],
+    cloneNm: typeof x.cloneNm === 'boolean' ? x.cloneNm : nmClone,
+    from: x.from || null,
+    // An epic's defaults for its tasks, always these four keys; base null: the default.
+    task: task && {
+      branch: typeof task.branch === 'string' ? task.branch : null,
+      base: typeof task.base === 'string' && task.base ? task.base : null,
+      carry: Array.isArray(task.carry) ? task.carry : [],
+      cloneNm: typeof task.cloneNm === 'boolean' ? task.cloneNm : nmClone,
+    },
+  };
+}
+
 async function cmdNew(args) {
   const { flags, pos } = parse(args, FLAGS.new, 1);
   if (!pos[0]) invalid(t('cli.newSlug'));
@@ -247,14 +277,18 @@ async function cmdNew(args) {
     personalRules: !!(cfg.WSG_GLOBAL_MEMORY && fs.existsSync(cfg.WSG_GLOBAL_MEMORY)),
   };
   const generate = lib('generate');
+  const json = J.active();
   const errors = [];
   let planned = null;
   try {
     planned = W.assertSafe(meta, cfg);
   } catch (e) {
-    if (!dryRun) invalid(e.message);
+    // Under --json a refusal is the same document with --dry-run and without: collected, as there.
+    if (!dryRun && !json) invalid(e.message);
     errors.push(e.message);
   }
+  const target = planned || (epicWs ? path.join(epicWs, meta.slug) : path.join(cfg.WS_ROOT, meta.slug));
+  currentWs = epicWs || target;
   // The epic's sources the task takes, every one resolved before anything is made: one refused
   // refuses the task, with nothing touched.
   const taken = { specs: [], plans: [], warnings: [], notes: [] };
@@ -271,7 +305,14 @@ async function cmdNew(args) {
     // The task is not made yet: its real path is the epic's, and its name.
     const home = path.join(fs.realpathSync.native(epicWs), meta.slug);
     for (const name of names) {
-      const res = S.fromEpic(name, epic, vars, {}, { ws: planned, state, home });
+      let res;
+      try {
+        res = S.fromEpic(name, epic, vars, {}, { ws: planned, state, home });
+      } catch (e) {
+        // Ctrl+C while git was asked about the source: only read so far, nothing changed.
+        if (e && e.name === 'Interrupted') throw Object.assign(e, { rollback: 'none' });
+        throw e;
+      }
       taken.plans.push(res.plan);
       errors.push(...res.errors.map((e) => `${name}: ${e}`));
       taken.warnings.push(...res.warnings.map((w) => `${name}: ${w}`));
@@ -281,11 +322,37 @@ async function cmdNew(args) {
         state.sources.push(res.spec);
       }
     }
+    // What createInEpic reads from the epic before it makes anything — its Owner rules, the tasks
+    // block of tasks.md — checked here, in the plan: a dry run refuses what the real run would. Its
+    // warnings go into a dry run's plan; a real run gets them from createInEpic, once.
+    try {
+      generate.epicOwnerRules(epicWs, dryRun ? { warn: (w) => taken.warnings.push(w) } : {});
+      const tasks = generate.renderTasks(epicWs, epic);
+      if (dryRun) taken.warnings.push(...tasks.warnings);
+    } catch (e) {
+      errors.push(e.message);
+    }
   }
+  // The result --json gives: the workspace as planned or made, its sources as resolved or attached.
+  const result = (sources = errors.length ? taken.plans : taken.specs) => ({
+    workspace: target,
+    kind,
+    slug: meta.slug,
+    title: meta.title,
+    epic: epic ? epic.slug : null,
+    // The ticket key parsed from what was given, as a task of an epic keeps it; the text as given.
+    ticket: generate.ticketKey(meta) || null,
+    ticketText: (flags['--ticket'] || '').trim() || null,
+    status: kind === 'epic' ? null : 'open',
+    sources: sources.map((x) => sourceResult(target, x)),
+    launched: false,
+  });
+  if (json && errors.length) return J.fail('invalid_input', errors[0], { details: errors, result: result(), warnings: taken.warnings });
+  if (dryRun && json) return J.succeed(result(), { warnings: taken.warnings });
   if (dryRun) {
     const state = { ...generate.skeletonState({ ...meta, ...(epic ? { epic: { slug: epic.slug }, ticketKey: generate.ticketKey(meta) } : {}) }), sources: taken.specs };
     process.stdout.write(`${JSON.stringify({
-      workspace: planned || (epicWs ? path.join(epicWs, meta.slug) : path.join(cfg.WS_ROOT, meta.slug)),
+      workspace: target,
       state,
       sources: taken.plans,
       errors,
@@ -306,7 +373,18 @@ async function cmdNew(args) {
     ws = await generate.create({ ...meta, ...(epic ? { sources: taken.specs } : {}) }, cfg);
   } catch (e) {
     // The epic's files that can't be read or rendered: refused before anything was made.
-    if (e && e.invalid) invalid(e.message);
+    if (e && e.invalid) {
+      // The plan's warnings went out through ui already: not again.
+      if (json) return J.fail('invalid_input', e.message, { details: [e.message], result: result(), rollback: 'none' });
+      invalid(e.message);
+    }
+    // Rolled back as far as it went; kept paths absolute, each from the directory it is in (the
+    // task's files, the epic's tasks.md). The message as without --json.
+    if (json && e && e.name === 'Interrupted') {
+      const said = e.rollbackFailed || (e.kept && e.kept.length) ? cancelled(e) : t('cli.cancelled');
+      return J.fail('interrupted', said, J.rollbackOf(e, target));
+    }
+    if (json && e && e.rollback) return J.fail('step_failed', String(e.message), J.rollbackOf(e, target));
     // tasks.md edited during the run is kept: "nothing created" would not be the whole truth.
     if (e && e.name === 'Interrupted' && (e.rollbackFailed || (e.kept && e.kept.length))) {
       process.stderr.write(`\n${cancelled(e)}\n`);
@@ -316,6 +394,8 @@ async function cmdNew(args) {
   }
   // Not held through the agent's session: its setup runs wsg add, and the epic must stay usable.
   release();
+  // Under --json no agent is started: stdout is the envelope, and the caller starts it.
+  if (json) return J.succeed(result(W.readState(ws).sources));
   ui.head(t(epicWs && taken.specs.length ? 'cli.createdWithSources' : 'cli.created', { ws }));
   if (epicWs) {
     ui.info(t('cli.epicTaskNext', { epic: path.basename(epicWs) }));
@@ -465,40 +545,14 @@ async function cmdAdd(args) {
 
   const json = J.active();
   // The result --json gives, plan or done: every key always there, the paths absolute. The source
-  // as it would be attached, or — refused — as far as it was worked out. done: what the add itself
-  // reported ({ settingsChanged, backupBranch }); without it the result is a plan, and says how the
-  // worktree would start.
+  // as it would be attached, or — refused — as far as it was worked out.
+  // done: what the add itself reported ({ settingsChanged, backupBranch }); without it the result
+  // is a plan, and says how the worktree would start.
   const result = (done = null) => {
-    const x = res.spec || res.plan || {};
-    const name = x.name || null;
-    const mode = x.reference || x.mode === 'reference' ? 'reference' : x.mode || null;
     const p = res.plan || {};
-    // The source's own clone flag, or the plan's when it was refused before the spec.
-    const nmClone = p.nodeModules && typeof p.nodeModules.clone === 'boolean' ? p.nodeModules.clone : null;
-    const task = x.task && typeof x.task === 'object' && !Array.isArray(x.task) ? x.task : null;
     return {
       workspace: ws,
-      source: {
-        name,
-        mode,
-        path: x.path || null,
-        workspacePath: name ? path.join(ws, name) : null,
-        branch: x.branch || null,
-        base: x.base || null,
-        target: x.target && x.target !== '—' ? x.target : null,
-        verify: x.verify || null,
-        note: x.note || null,
-        carry: Array.isArray(x.carry) ? x.carry : [],
-        cloneNm: typeof x.cloneNm === 'boolean' ? x.cloneNm : nmClone,
-        from: x.from || null,
-        // An epic's defaults for its tasks, always these four keys; base null: the default.
-        task: task && {
-          branch: typeof task.branch === 'string' ? task.branch : null,
-          base: typeof task.base === 'string' && task.base ? task.base : null,
-          carry: Array.isArray(task.carry) ? task.carry : [],
-          cloneNm: typeof task.cloneNm === 'boolean' ? task.cloneNm : nmClone,
-        },
-      },
+      source: sourceResult(ws, res.spec || p, p),
       files: res.errors.length ? [] : planned.files.map((f) => path.join(ws, f)),
       settingsChanged: done ? done.settingsChanged : planned.settingsChanged,
       backupBranch: (done && done.backupBranch) || null,
