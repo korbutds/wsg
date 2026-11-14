@@ -42,7 +42,8 @@ function flagsSeen(args, spec) {
   // An unknown command or a global flag has no flag table: any --json counts, and it is no dry run.
   const command = known(argv[0]) ? ALIASES[argv[0]] || argv[0] : null;
   const seen = command ? flagsSeen(argv.slice(1), FLAGS[command]) : new Set(argv);
-  if (seen.has('--json')) J.start({ command, dryRun: !!command && seen.has('--dry-run') });
+  // A dry run only for a command that has one: `check --dry-run` is refused as the flag it is.
+  if (seen.has('--json')) J.start({ command, dryRun: !!command && hasOwn(FLAGS[command], '--dry-run') && seen.has('--dry-run') });
 }
 
 // jsonCode: the envelope's error code; by default the one the exit code stands for. rollback: what
@@ -801,7 +802,35 @@ function cmdCheck(args) {
     ws = found ? found.ws : process.cwd();
   }
   if (!fs.existsSync(ws)) invalid(t('cli.noWorkspace', { ws }));
-  return lib('check').run(ws, cfg);
+  if (!J.active()) return lib('check').run(ws, cfg);
+  // The report as the lines check prints, caught by ui: a head opens a section, ok/warn/fail are its
+  // items, and so are the dim notes, as "info". A line before the first head would go to the
+  // section with an empty title the list starts with; check opens with a head, so that section
+  // stays empty. Sections with nothing in them (that one, the closing "Total") are left out:
+  // summary has the counts. check's warnings are items, never the envelope's warnings. The checks
+  // themselves run as without --json.
+  const ui = lib('ui');
+  const sections = [{ title: '', items: [] }];
+  const summary = { fails: 0, warns: 0 };
+  const LEVEL = { ok: 'ok', warn: 'warn', fail: 'fail', dim: 'info', info: 'info' };
+  ui.sink((level, text) => {
+    if (level === 'head') {
+      sections.push({ title: String(text), items: [] });
+      return;
+    }
+    if (level === 'warn') summary.warns++;
+    if (level === 'fail') summary.fails++;
+    sections[sections.length - 1].items.push({ level: LEVEL[level] || 'info', text: String(text).trim() });
+  });
+  try {
+    lib('check').run(ws, cfg);
+  } catch (e) {
+    // Exit 1, as without --json (a file given for the workspace: ENOTDIR). check only reads.
+    return J.fail('internal', String((e && e.message) || e), { rollback: 'none' });
+  }
+  const result = { workspace: path.resolve(ws), kind: lib('check').wsKind(path.resolve(ws)), summary, sections: sections.filter((x) => x.items.length) };
+  const fails = result.sections.flatMap((x) => x.items.filter((it) => it.level === 'fail').map((it) => it.text));
+  return summary.fails ? J.fail('check_failed', t('cli.checkFailed', summary), { result, details: fails }) : J.succeed(result);
 }
 
 async function cmdPromote(args) {

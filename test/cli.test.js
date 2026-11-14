@@ -109,6 +109,18 @@ const failure = async (fn) => {
 // What check looks the agent and its config up in: the fake claude and this run's config dirs,
 // never the machine's own.
 const CHECK_ENV = { HOME: home, PATH: fakeBin, CLAUDE_CONFIG_DIR: claudeDir, CODEX_HOME: path.join(tmp, 'codex-config') };
+// The plain report as wsg check --json describes it: a section's title after a blank line, its
+// items as ui prints them, then the total. Equal to the plain output: nothing was lost or added.
+const fromJson = (j) => {
+  const mark = { ok: '  OK   ', warn: '  WARN ', fail: '  FAIL ', info: '  ' };
+  const out = [];
+  for (const sec of j.result.sections) {
+    out.push('', sec.title);
+    for (const it of sec.items) out.push(`${mark[it.level]}${it.text}`);
+  }
+  out.push('', `Total: ${j.result.summary.fails} errors, ${j.result.summary.warns} warnings`);
+  return `${out.join('\n')}\n`;
+};
 const report = (dir, cfg) => {
   const lines = [];
   const log = console.log;
@@ -4193,7 +4205,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       assert.strictEqual(outside.code, 2, outside.all);
       assert.strictEqual(envelope(outside, 'outside').error.code, 'invalid_input');
     });
-    for (const args of [['--help', '--json'], ['help', 'remove', '--json'], ['guide', '--json'], ['refresh', '--json'], ['check', '--json']]) {
+    for (const args of [['--help', '--json'], ['help', 'remove', '--json'], ['guide', '--json'], ['refresh', '--json'], ['promote', '--json']]) {
       const r = wsg(args, { cwd: wsJ });
       it(`wsg ${args.join(' ')}: a command without --json refuses it, in the envelope`, () => {
         assert.strictEqual(r.code, 2, r.all);
@@ -4930,6 +4942,100 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     const wt = path.join(ep, 'pay', 'api');
     if (fs.existsSync(path.join(wt, '.git'))) execFileSync('git', ['-C', api, 'worktree', 'remove', '--force', wt]);
     try { git(api, ['branch', '-D', 'nj/pay']); } catch { /* gone */ }
+  }
+
+  console.log('\nwsg check --json');
+  {
+    const root = path.join(tmp, 'check-json-root');
+    const env = { WS_ROOT: root };
+    const VERSION = require(path.join(ROOT, 'package.json')).version;
+    const check2 = (args) => [wsg(['check', ...args], { env }), wsg(['check', ...args, '--json'], { env })];
+    const envelope = (r, what) => {
+      let j = null;
+      try { j = JSON.parse(r.out); } catch { /* below */ }
+      assert.ok(j, `${what}: stdout is not one JSON document: ${r.out}`);
+      assert.deepStrictEqual(Object.keys(j), ['schemaVersion', 'wsgVersion', 'ok', 'command', 'dryRun', 'result', 'error', 'warnings'], what);
+      assert.deepStrictEqual([j.schemaVersion, j.wsgVersion, j.command, j.dryRun], [1, VERSION, 'check', false], what);
+      if (j.error) assert.strictEqual(j.error.exitCode, r.code, what);
+      if (j.result) {
+        assert.deepStrictEqual(Object.keys(j.result), ['workspace', 'kind', 'summary', 'sections'], what);
+        assert.deepStrictEqual(Object.keys(j.result.summary), ['fails', 'warns'], what);
+        for (const sec of j.result.sections) {
+          assert.deepStrictEqual(Object.keys(sec), ['title', 'items'], what);
+          assert.ok(sec.items.length, `${what}: an empty section ${sec.title}`);
+          for (const it of sec.items) assert.ok(['ok', 'warn', 'fail', 'info'].includes(it.level), JSON.stringify(it));
+        }
+        const count = (level) => j.result.sections.reduce((n, sec) => n + sec.items.filter((it) => it.level === level).length, 0);
+        assert.deepStrictEqual(j.result.summary, { fails: count('fail'), warns: count('warn') }, what);
+      }
+      return j;
+    };
+    wsg(['new', 'fresh', '--no-launch'], { env });
+    wsg(['new', 'shop', '--kind', 'epic', '--ticket', 'EPIC-4', '--no-launch'], { env });
+    wsg(['new', 'pay', '--epic', 'shop', '--ticket', 'ACME-123', '--no-launch'], { env });
+    const legacy = path.join(root, 'legacy');
+    fs.mkdirSync(path.join(legacy, '.claude'), { recursive: true });
+    fs.writeFileSync(path.join(legacy, '.claude', 'ws-kind'), 'task\n');
+    fs.writeFileSync(path.join(legacy, 'AGENTS.md'), '# old\n');
+    const broken = path.join(root, 'broken');
+    wsg(['new', 'broken', '--no-launch'], { env });
+    fs.writeFileSync(path.join(broken, W.STATE_FILE), '{');
+
+    for (const [what, dir, kind, ok] of [['a fresh task', path.join(root, 'fresh'), 'task', true], ['an epic', path.join(root, 'shop'), 'epic', true],
+      ['a task of the epic', path.join(root, 'shop', 'pay'), 'task', true], ['a 0.1 workspace', legacy, 'task', false],
+      ['a workspace whose state does not read', broken, 'task', false]]) {
+      const [plainR, jsonR] = check2([dir]);
+      it(`${what}: the same exit code as the plain check`, () => assert.strictEqual(jsonR.code, plainR.code, jsonR.all));
+      it(`${what}: the envelope describes the plain report line for line`, () => {
+        const j = envelope(jsonR, what);
+        assert.strictEqual(fromJson(j), plainR.out);
+        assert.deepStrictEqual([j.result.workspace, j.result.kind], [dir, kind]);
+      });
+      it(`${what}: ${ok ? 'ok, no error' : 'errors found: ok false, check_failed, exit 1'}`, () => {
+        const j = envelope(jsonR, what);
+        if (ok) assert.deepStrictEqual([jsonR.code, j.ok, j.error, j.result.summary.fails], [0, true, null, 0]);
+        else {
+          assert.deepStrictEqual([jsonR.code, j.ok, j.error.code, j.error.rollback], [1, false, 'check_failed', 'none']);
+          assert.ok(j.result.summary.fails > 0);
+          assert.match(j.error.message, new RegExp(`${j.result.summary.fails} errors`));
+          const failTexts = j.result.sections.flatMap((sec) => sec.items.filter((it) => it.level === 'fail').map((it) => it.text));
+          assert.deepStrictEqual(j.error.details, failTexts);
+        }
+        assert.deepStrictEqual(j.warnings, []);
+        assert.strictEqual(jsonR.err, '');
+      });
+    }
+    it('a broken state is a fail item, with its reason', () => {
+      const j = envelope(check2([broken])[1], 'broken');
+      assert.ok(j.result.sections.some((sec) => sec.items.some((it) => it.level === 'fail' && /wsg\.json — invalid JSON/.test(it.text))));
+    });
+    const fromInside = wsg(['check', '--json'], { env, cwd: path.join(root, 'fresh', '.claude') });
+    it('from inside the workspace, as the plain check', () => assert.strictEqual(envelope(fromInside, 'inside').result.workspace, path.join(root, 'fresh')));
+    const aliased = wsg(['--check', path.join(root, 'fresh'), '--json'], { env });
+    it('the old --check spelling takes --json too', () => assert.strictEqual(envelope(aliased, 'alias').command, 'check'));
+    const nowhere = wsg(['check', path.join(root, 'nope'), '--json'], { env });
+    it('no such workspace: exit 2, invalid_input', () => {
+      assert.strictEqual(nowhere.code, 2, nowhere.all);
+      assert.strictEqual(envelope(nowhere, 'nowhere').error.code, 'invalid_input');
+    });
+    const aFile = path.join(root, 'a-file');
+    fs.writeFileSync(aFile, 'not a workspace\n');
+    const [filePlain, fileJson] = check2([aFile]);
+    it('a file for the workspace: exit 1 as the plain check, internal, rollback none', () => {
+      assert.strictEqual(filePlain.code, 1, filePlain.all);
+      assert.strictEqual(fileJson.code, 1, fileJson.all);
+      const j = envelope(fileJson, 'a file');
+      assert.deepStrictEqual([j.error.code, j.error.rollback, j.result], ['internal', 'none', null]);
+      assert.match(j.error.message, /ENOTDIR/);
+    });
+    const noDry = wsg(['check', '--dry-run', '--json'], { env });
+    it('check has no --dry-run: refused, and the envelope says no dry run', () => {
+      assert.strictEqual(noDry.code, 2, noDry.all);
+      const j = envelope(noDry, 'no dry');
+      assert.deepStrictEqual([j.dryRun, j.error.code], [false, 'invalid_input']);
+    });
+    const extra = wsg(['check', 'a', 'b', '--json'], { env });
+    it('a second path: exit 2, invalid_input', () => assert.strictEqual(envelope(extra, 'extra').error.code, 'invalid_input'));
   }
 
   console.log('\nwsg promote');
@@ -6206,6 +6312,12 @@ wait`;
         it(`0.1.4 ${name}: the same exit code`, () => assert.strictEqual(now.code, was.code));
         const added = wsg(['add', docs, '--reference', '--ws', dir]);
         it(`0.1.4 ${name}: wsg add refuses it`, () => assert.strictEqual(added.code, 2));
+        const plainCheck = wsg(['check', dir]);
+        const jsonCheck = wsg(['check', dir, '--json']);
+        it(`0.1.4 ${name}: check --json describes the same report, with the same exit code`, () => {
+          assert.strictEqual(jsonCheck.code, plainCheck.code, jsonCheck.all);
+          assert.strictEqual(fromJson(JSON.parse(jsonCheck.out)), plainCheck.out);
+        });
       }
       for (const d of fs.readdirSync(oldCfg.WS_ROOT)) {
         const wt = path.join(oldCfg.WS_ROOT, d, 'api');
