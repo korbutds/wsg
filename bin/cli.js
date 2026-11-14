@@ -815,6 +815,139 @@ function cmdList(args) {
   return 0;
 }
 
+// `wsg status <task>` prints a task's or a process's status; `wsg status <task> <status>` sets it,
+// and `wsg close <task>` is `wsg status <task> done`: one implementation, one result. The task is
+// always named — a task may be called review — and is a slug, `<epic>/<task>` or a path.
+async function cmdStatus(args) {
+  const { flags, pos } = parse(args, FLAGS.status, 2);
+  return statusCommand(pos[0], pos[1], flags, 'cli.statusTask');
+}
+
+async function cmdClose(args) {
+  const { flags, pos } = parse(args, FLAGS.close, 1);
+  return statusCommand(pos[0], 'done', flags, 'cli.closeTask');
+}
+
+// value: the status to set, undefined to read it. needTask: the message for a task not named.
+async function statusCommand(given, value, flags, needTask) {
+  if (!given) invalid(t(needTask));
+  const W = lib('workspace');
+  if (value !== undefined && !W.STATUSES.includes(value)) invalid(t('cli.badStatus', { value, list: W.STATUSES.join(', ') }));
+  const found = targetWs(given);
+  if (found.legacy) invalid(t('cli.legacyWorkspace', { ws: found.ws }));
+  // As it is on disk: a symlink to a task (or a path with .. or a trailing /) is the task it leads
+  // to — its name, its epic, the line it has in tasks.md, its locks — read and set alike.
+  const ws = fs.realpathSync(found.ws);
+  currentWs = ws;
+  // The path the result gives: as wsg list builds it — .. and a trailing / resolved, a symlink above
+  // the task (WS_ROOT behind one) kept, so a path taken from list matches it back. Only a task
+  // directory that is itself a symlink is given as the task it leads to.
+  const asGiven = path.resolve(found.ws);
+  const shownWs = fs.lstatSync(asGiven).isSymbolicLink() ? ws : asGiven;
+  const readState = () => {
+    let st;
+    try {
+      st = W.readState(ws);
+    } catch (e) {
+      return invalid(e.message);
+    }
+    if (st.kind === 'epic') invalid(t('cli.statusEpic', { ws }));
+    return st;
+  };
+  let state = readState();
+  const setting = value !== undefined;
+  const dryRun = !!flags['--dry-run'];
+  // Held from the plan to the last write, the epic's first, then the task's — the order of add — and
+  // the state read again under them. A dry run and a read change nothing and take no lock.
+  // A task whose directory above is not an epic is refused as a dry run refuses it, before any lock:
+  // a lock file is never made in a directory that is not a workspace.
+  const releases = [];
+  if (setting && !dryRun) {
+    if (state.epic) {
+      try {
+        W.epicState(W.epicOf(ws, state));
+      } catch (e) {
+        invalid(e.message);
+      }
+      releases.push(lock(W.epicOf(ws, state)));
+    }
+    releases.push(lock(ws));
+    state = readState();
+  }
+  // Let go as soon as the writes are done, the task's first: a Ctrl+C after them has nothing to undo.
+  const release = () => { while (releases.length) releases.pop()(); };
+  const generate = lib('generate');
+  const ui = lib('ui');
+  let plan;
+  try {
+    plan = generate.planStatus(ws, state, value, { cwd: process.cwd() });
+  } catch (e) {
+    // Ctrl+C while git was asked about a worktree: only read so far, nothing changed.
+    if (e && e.name === 'Interrupted') {
+      release();
+      if (J.active()) return J.fail('interrupted', t('cli.statusCancelled'), { rollback: 'none' });
+      process.stderr.write(`\n${t('cli.statusCancelled')}\n`);
+      return 130;
+    }
+    throw e;
+  }
+  const json = J.active();
+  // The result --json gives, read, planned or done: every key always there, the paths absolute.
+  const result = (done = null) => ({
+    workspace: shownWs,
+    task: path.basename(ws),
+    epic: state.epic ? state.epic.slug : null,
+    status: plan.status,
+    previous: plan.previous,
+    closed: plan.closed,
+    changed: plan.changed,
+    forEpicPending: plan.forEpicPending,
+    sources: plan.sources,
+    tasksMdUpdated: done ? done.tasksMdUpdated : plan.tasksMdUpdated,
+  });
+  // A refused plan: the same document with --dry-run and without.
+  if (json && plan.errors.length) return J.fail('invalid_input', plan.errors[0], { details: plan.errors, result: result(), warnings: plan.warnings });
+  if (!setting || (dryRun && json)) {
+    if (json) return J.succeed(result(), { warnings: plan.warnings });
+    // The status alone on stdout, for a script; a warning about it on stderr.
+    process.stdout.write(`${plan.status}${plan.closed ? ` ${plan.closed}` : ''}\n`);
+    for (const w of plan.warnings) process.stderr.write(`wsg: ${w}\n`);
+    return 0;
+  }
+  if (dryRun) {
+    process.stdout.write(`${JSON.stringify({ ...result(), errors: plan.errors, warnings: plan.warnings }, null, 2)}\n`);
+    return plan.errors.length ? INVALID : 0;
+  }
+  if (plan.errors.length) {
+    for (const e of plan.errors) process.stderr.write(`wsg: ${e}\n`);
+    return INVALID;
+  }
+  if (!json) for (const w of plan.warnings) ui.warn(w);
+  if (!plan.changed) {
+    if (json) return J.succeed(result(), { warnings: plan.warnings });
+    ui.ok(t('cli.statusSame', { task: path.basename(ws), status: plan.status }));
+    return 0;
+  }
+  let done;
+  try {
+    done = await generate.applyStatus(ws, plan);
+  } catch (e) {
+    if (e && e.name === 'Interrupted') {
+      if (json) return J.fail('interrupted', cancelled(e), { ...J.rollbackOf(e, ws), warnings: plan.warnings });
+      process.stderr.write(`${cancelled(e)}\n`);
+      return 130;
+    }
+    // A write that failed: both files put back as far as it went (guarded() in lib/generate.js).
+    if (json && e && e.rollback) return J.fail('step_failed', String(e.message), { ...J.rollbackOf(e, ws), warnings: plan.warnings });
+    throw e;
+  }
+  release();
+  if (json) return J.succeed(result(done), { warnings: plan.warnings });
+  ui.head(t('cli.statusSet', { task: path.basename(ws), previous: plan.previous, status: plan.status }));
+  if (done.tasksMdUpdated) ui.info(t('cli.statusTasksMd', { file: path.join(plan.epicWs, 'tasks.md') }));
+  return 0;
+}
+
 async function cmdPromote(args) {
   const { flags, pos } = parse(args, FLAGS.promote, 1);
   if (!flags['--skill']) invalid(t('cli.promoteSkill'));
@@ -878,6 +1011,8 @@ const COMMANDS = {
   team: cmdTeam,
   check: cmdCheck,
   list: cmdList,
+  status: cmdStatus,
+  close: cmdClose,
   promote: cmdPromote,
   'install-skills': cmdInstallSkills,
   // The 0.1 spellings, kept for one release.
