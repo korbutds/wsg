@@ -14,13 +14,45 @@ const { t } = i18n;
 // 2 invalid input — rejected before anything was touched.
 const INVALID = 2;
 
-function die(msg, code = 1) {
+const argv = process.argv.slice(2);
+
+// --json is read from argv before anything can refuse: a flag error, a broken config, a refusal
+// deep in a command is then an envelope on stdout too (lib/json.js), and ui prints nothing there.
+const J = require(path.join(ROOT, 'lib', 'json.js'));
+const { FLAGS, GLOBAL } = require(path.join(ROOT, 'lib', 'flags.js'));
+const ALIASES = { '--check': 'check', '--promote': 'promote' };
+const hasOwn = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+const known = (c) => hasOwn(FLAGS, ALIASES[c] || c);
+// `wsg --version --json` gives the version in the envelope.
+const takesJson = (c) => c === '--version' || c === '-v' || (known(c) && hasOwn(FLAGS[ALIASES[c] || c], '--json'));
+// The flags of a command as its parse will read them, in one pass: not the value of the flag before
+// it (`--note --json` is a note), not after `--`. Flags it doesn't know count: parse refuses them.
+function flagsSeen(args, spec) {
+  const out = new Set();
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === '--') break;
+    if (!a.startsWith('-') || a === '-' || a.includes('=')) continue;
+    if (hasOwn(spec, a) && spec[a] === 'value') i++;
+    else out.add(a);
+  }
+  return out;
+}
+{
+  // An unknown command or a global flag has no flag table: any --json counts, and it is no dry run.
+  const command = known(argv[0]) ? ALIASES[argv[0]] || argv[0] : null;
+  const seen = command ? flagsSeen(argv.slice(1), FLAGS[command]) : new Set(argv);
+  if (seen.has('--json')) J.start({ command, dryRun: !!command && seen.has('--dry-run') });
+}
+
+// jsonCode: the envelope's error code; by default the one the exit code stands for. rollback: what
+// the envelope says was changed — "none" by default: die is called before anything is touched.
+function die(msg, code = 1, jsonCode = code === INVALID ? 'invalid_input' : 'internal', rollback = 'none') {
+  if (J.active()) process.exit(J.fail(jsonCode, msg, { rollback }));
   process.stderr.write(`wsg: ${msg}\n`);
   process.exit(code);
 }
 const invalid = (msg) => die(msg, INVALID);
-
-const argv = process.argv.slice(2);
 
 // The config goes first: it may set the UI language. A broken config must not break --help or
 // the shell-init line in .zshrc, so its error is only reported by the commands that need it.
@@ -38,6 +70,21 @@ try {
 const cmd = argv[0];
 const rest = argv.slice(1);
 
+// `wsg --version --json`, in either order, and nothing else: the version in the envelope.
+const VERSION_FLAGS = ['--version', '-v'];
+if (J.active() && (VERSION_FLAGS.includes(cmd) || (cmd === '--json' && VERSION_FLAGS.includes(rest[0])))) {
+  const others = argv.filter((a) => a !== '--json');
+  const extra = others.find((a, i) => i > 0 || !VERSION_FLAGS.includes(a));
+  if (extra !== undefined) invalid(t('cli.extraArg', { arg: extra }));
+  process.exit(J.succeed({ version: pkg.version }));
+}
+
+// A command that has no --json, help and the global flags included: refused as the flag it is, in
+// the envelope. An unknown command is reported as one further down.
+if (J.active() && !takesJson(cmd) && (known(cmd) || GLOBAL.includes(cmd) || cmd === 'help')) {
+  invalid(t('cli.unknownArg', { arg: '--json' }));
+}
+
 if (cmd === undefined || cmd === '--help' || cmd === '-h' || (cmd === 'help' && rest.length === 0)) {
   process.stdout.write(t('cli.usage'));
   process.exit(0);
@@ -54,9 +101,6 @@ if (cmd === '--where') {
 // A command's options: `wsg help <command>`, or `wsg <command> --help` as its only argument — only
 // then, so `--note --help` stays a value. Every command in lib/flags.js has a help.<command> text.
 {
-  const { FLAGS: COMMAND_FLAGS } = require(path.join(ROOT, 'lib', 'flags.js'));
-  const ALIASES = { '--check': 'check', '--promote': 'promote' };
-  const known = (c) => Object.prototype.hasOwnProperty.call(COMMAND_FLAGS, ALIASES[c] || c);
   const asked = rest.length === 1 && (rest[0] === '--help' || rest[0] === '-h') && known(cmd);
   if (cmd === 'help' || asked) {
     const topic = cmd === 'help' ? rest[0] : cmd;
@@ -108,11 +152,14 @@ const cancelled = (e) => (e.rollbackFailed ? t('cli.cancelledIncomplete')
 function parse(args, spec, maxPositional) {
   const r = lib('flags').parse(args, spec, maxPositional);
   if (r.error) invalid(t(r.error, { arg: r.arg }));
+  if (J.active() && hasOwn(spec, '--dry-run')) J.setDryRun(r.flags['--dry-run']);
   return r;
 }
 
 const lib = (name) => require(path.join(ROOT, 'lib', `${name}.js`));
-const { FLAGS } = lib('flags');
+// The workspace the command acts on, once known: the envelope gives the rollback's kept paths
+// absolute against it.
+let currentWs = null;
 
 // add, remove and promote change wsg.json: one at a time per workspace (lib/lock.js).
 // opts: as acquire takes them.
@@ -121,6 +168,7 @@ function lock(ws, opts) {
   try {
     return lib('lock').acquire(ws, opts);
   } catch (e) {
+    if (e.busy) die(e.message, INVALID, 'busy');
     if (e.invalid) invalid(e.message);
     throw e;
   }
@@ -449,6 +497,7 @@ async function cmdRemove(args) {
   if (!found) invalid(t('cli.notInWorkspace'));
   if (found.legacy) invalid(t('cli.legacyWorkspace', { ws: found.ws }));
   const { ws } = found;
+  currentWs = ws;
   const generate = lib('generate');
   const ui = lib('ui');
   if (!flags['--dry-run']) lock(ws);
@@ -456,10 +505,26 @@ async function cmdRemove(args) {
   try {
     plan = generate.planRemove(ws, pos[0], { deleteIgnored: !!flags['--delete-ignored'] });
   } catch (e) {
-    if (e && e.name === 'Interrupted') throw e; // Ctrl+C while git listed the worktree: exit 130
+    // Ctrl+C while git listed the worktree: exit 130. Only read so far, nothing changed.
+    if (e && e.name === 'Interrupted') throw Object.assign(e, { rollback: 'none' });
     invalid(e.message);
   }
   const r = plan.source;
+  const json = J.active();
+  // The result --json gives, plan or done: every key always there, the paths absolute.
+  const result = (branch = plan.branch) => ({
+    workspace: ws,
+    name: r ? r.name : pos[0],
+    path: r ? r.path : null,
+    mode: r ? (r.reference ? 'reference' : r.mode) : null,
+    branchKept: branch || null,
+    ignored: r ? plan.ignored.map((f) => path.join(ws, r.name, f)) : [],
+    files: plan.errors.length ? [] : plan.files.map((f) => path.join(ws, f)),
+    settingsChanged: plan.settingsChanged,
+  });
+  // A refused plan: the same document with --dry-run and without.
+  if (json && plan.errors.length) return J.fail('invalid_input', plan.errors[0], { details: plan.errors, result: result(), warnings: plan.warnings });
+  if (flags['--dry-run'] && json) return J.succeed(result(), { warnings: plan.warnings });
   if (flags['--dry-run']) {
     process.stdout.write(`${JSON.stringify({
       workspace: ws,
@@ -481,18 +546,23 @@ async function cmdRemove(args) {
   guardPlatform();
   try {
     const { branch } = await generate.remove(ws, r.name, cfg, { deleteIgnored: !!flags['--delete-ignored'], ignored: plan.ignored });
+    if (json) return J.succeed(result(branch));
     ui.head(t('cli.removed', { name: r.name }));
     if (branch) ui.info(t('cli.branchKept', { branch, path: r.path }));
   } catch (e) {
     // Files that appeared after the plan: refused before anything changed.
     if (e && e.invalid) {
+      if (json) return J.fail('invalid_input', e.message, { details: [e.message], result: result(), warnings: plan.warnings });
       process.stderr.write(`wsg: ${e.message}\n`);
       return INVALID;
     }
     if (e && e.name === 'Interrupted') {
+      if (json) return J.fail('interrupted', cancelled(e), J.rollbackOf(e, ws));
       process.stderr.write(`${cancelled(e)}\n`);
       return 130;
     }
+    // A step that failed: rolled back as far as it went (guarded() in lib/generate.js).
+    if (json && e && e.rollback) return J.fail('step_failed', String(e.message), J.rollbackOf(e, ws));
     throw e;
   }
   ui.info(t('cli.addNext'));
@@ -703,9 +773,12 @@ const COMMANDS = {
     process.stderr.write('', done);
   } catch (e) {
     if (e && e.name === 'Interrupted') {
+      if (J.active()) process.exit(J.fail('interrupted', t('cli.cancelled'), J.rollbackOf(e, currentWs)));
       process.stderr.write(`\n${t('cli.cancelled')}\n`);
       process.exit(130);
     }
-    die(String((e && e.message) || e));
+    // A step that failed inside guarded(): rolled back, or as far as it went.
+    if (J.active() && e && e.rollback) process.exit(J.fail('step_failed', String(e.message), J.rollbackOf(e, currentWs)));
+    die(String((e && e.message) || e), 1, 'internal', 'unknown');
   }
 })();

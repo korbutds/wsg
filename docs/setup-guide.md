@@ -132,6 +132,8 @@ the owner names:
    and keeps the branch; `wsg remove <name> --dry-run` shows what it would do. Ignored files that
    exist nowhere else (a `.env` made later or a carried one edited since, an installed
    `node_modules`) are listed too: move out what is needed, then `wsg remove <name> --delete-ignored`.
+   A script or an app adds `--json`: `wsg remove <name> --json` prints one JSON document, the
+   outcome or the error with its code, and nothing else on stdout.
    A `node_modules` wsg cloned is not checked: changes made inside it are deleted with the worktree.
    Not seen either: a tracked file marked `skip-worktree` or `assume-unchanged` and edited in the
    worktree — it is deleted with it. If a removal fails after the worktree is gone, the rollback

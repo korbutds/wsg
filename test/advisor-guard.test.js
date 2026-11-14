@@ -273,6 +273,10 @@ const BYPASS = [
   [bash(`${W} add x --note "a b" --dry-run`), true, '--note takes its value, --dry-run stays'],
   [bash(`${W} add x --dry-run --reset-to-base`), true, 'a dry run of a reset changes nothing'],
   [bash(`${W} remove x --ws /tmp/ws --dry-run`), true, 'remove with --ws and --dry-run'],
+  [bash(`${W} remove x --dry-run --json`), true, 'remove --dry-run --json: a plan, in the envelope'],
+  [bash(`${W} remove x --json`), false, 'remove --json without --dry-run removes'],
+  [bash(`${W} remove x --json --ws /tmp/ws`), false, 'remove --json --ws without --dry-run'],
+  [bash(`${W} remove x --json=1 --dry-run`), false, '--json takes no value'],
   [bash(`${W} add [-][-] --dry-run`), false, 'a glob could become --'],
   // wsg new: only a dry run, read as the CLI reads it.
   [bash(`${W} new pay --epic shop`), false, 'new without --dry-run'],

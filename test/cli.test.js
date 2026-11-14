@@ -4046,6 +4046,413 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       assert.match(fs.readFileSync(path.join(ROOT, 'docs', 'setup-guide.md'), 'utf8'), /`wsg remove <name>`/));
   }
 
+  console.log('\nwsg remove --json');
+  {
+    const J = require(path.join(ROOT, 'lib', 'json.js'));
+    const wsJ = path.join(wsRoot, 'rm-json');
+    wsg(['new', 'rm-json', '--no-launch']);
+    for (const args of [[api, '--branch', 'task/rm-json'], [web, '--link'], [docs, '--reference']]) {
+      const r = wsg(['add', ...args], { cwd: wsJ });
+      if (r.code !== 0) throw new Error(r.all);
+    }
+    const rm = (args, opts = {}) => wsg(['remove', ...args], { cwd: wsJ, ...opts });
+    // stdout is one JSON document and nothing else: JSON.parse of all of it, or null.
+    const doc = (r) => { try { return JSON.parse(r.out); } catch { return null; } };
+    const KEYS = ['schemaVersion', 'wsgVersion', 'ok', 'command', 'dryRun', 'result', 'error', 'warnings'];
+    const ERROR_KEYS = ['code', 'exitCode', 'message', 'details', 'rollback', 'kept'];
+    const VERSION = require(path.join(ROOT, 'package.json')).version;
+    const RESULT_KEYS = ['workspace', 'name', 'path', 'mode', 'branchKept', 'ignored', 'files', 'settingsChanged'];
+    const envelope = (r, what) => {
+      const j = doc(r);
+      assert.ok(j, `${what}: stdout is not one JSON document: ${r.out}`);
+      assert.deepStrictEqual(Object.keys(j), KEYS, what);
+      assert.strictEqual(j.schemaVersion, 1);
+      assert.strictEqual(j.wsgVersion, VERSION);
+      if (j.error) {
+        assert.deepStrictEqual(Object.keys(j.error), ERROR_KEYS, what);
+        assert.strictEqual(j.error.exitCode, r.code, what);
+      }
+      if (j.result && j.command === 'remove') assert.deepStrictEqual(Object.keys(j.result), RESULT_KEYS, what);
+      assert.ok(Array.isArray(j.warnings), what);
+      return j;
+    };
+    const before = tree(wsJ);
+
+    const plain = rm(['api', '--dry-run']);
+    // Byte for byte as wsg 0.5 prints it: the keys, their order, the relative files, the indent.
+    const PLAIN_FILES = ['api', '.claude/rules/api.md', 'AGENTS.md', 'CLAUDE.md', 'README.md', '.claude/wsg.json', 'repo'];
+    it('plain --dry-run: the same plan as before, byte for byte, no envelope', () => {
+      assert.strictEqual(plain.code, 0, plain.all);
+      assert.strictEqual(plain.out, `${JSON.stringify({ workspace: wsJ, name: 'api', path: api, mode: 'worktree', branchKept: 'task/rm-json',
+        files: PLAIN_FILES, settingsChanged: false, errors: [], warnings: [] }, null, 2)}\n`);
+    });
+    const dry = rm(['api', '--dry-run', '--json']);
+    it('--dry-run --json: the plan in the envelope, exit 0, nothing on stderr', () => {
+      assert.strictEqual(dry.code, 0, dry.all);
+      assert.strictEqual(dry.err, '');
+      const j = envelope(dry, 'dry');
+      assert.deepStrictEqual([j.ok, j.command, j.dryRun, j.error], [true, 'remove', true, null]);
+      const p = doc(plain);
+      assert.deepStrictEqual(j.result, { workspace: wsJ, name: 'api', path: api, mode: 'worktree', branchKept: 'task/rm-json',
+        ignored: [], files: p.files.map((f) => path.join(wsJ, f)), settingsChanged: p.settingsChanged });
+    });
+    it('--json --dry-run in either order', () => assert.deepStrictEqual(doc(rm(['--json', 'api', '--dry-run'])), doc(dry)));
+    it('--dry-run --json touches nothing', () => assert.deepStrictEqual(tree(wsJ), before));
+
+    fs.writeFileSync(path.join(wsJ, 'api', 'new.txt'), 'new\n');
+    const dirtyDry = rm(['api', '--dry-run', '--json']);
+    it('a refused plan: ok false, exit 2, invalid_input with the reasons, the plan still there', () => {
+      assert.strictEqual(dirtyDry.code, 2, dirtyDry.all);
+      const j = envelope(dirtyDry, 'dirty dry');
+      assert.strictEqual(j.ok, false);
+      assert.strictEqual(j.error.code, 'invalid_input');
+      assert.match(j.error.details.join('\n'), /new\.txt/);
+      assert.strictEqual(j.result.name, 'api');
+      assert.deepStrictEqual(j.result.files, []);
+    });
+    fs.writeFileSync(path.join(wsJ, 'api', 'local.pem'), 'made here\n');
+    const ignoredDry = rm(['api', '--dry-run', '--json']);
+    fs.rmSync(path.join(wsJ, 'api', 'local.pem'));
+    it('ignored files in the result: absolute paths inside the worktree', () => {
+      assert.strictEqual(ignoredDry.code, 2, ignoredDry.all);
+      assert.deepStrictEqual(envelope(ignoredDry, 'ignored').result.ignored, [path.join(wsJ, 'api', 'local.pem')]);
+    });
+    const dirty = rm(['api', '--json']);
+    it('a refused removal: the same document as the refused plan, but for dryRun; nothing touched', () => {
+      assert.strictEqual(dirty.code, 2, dirty.all);
+      const j = envelope(dirty, 'dirty');
+      assert.deepStrictEqual([j.ok, j.dryRun, j.error.code, j.error.rollback], [false, false, 'invalid_input', 'none']);
+      assert.match(j.error.message, /new\.txt/);
+      assert.strictEqual(dirty.err, '');
+      assert.deepStrictEqual({ ...j, dryRun: true }, doc(dirtyDry));
+      assert.deepStrictEqual(tree(wsJ), before);
+    });
+    fs.rmSync(path.join(wsJ, 'api', 'new.txt'));
+
+    for (const [what, args, re] of [
+      ['an unknown flag', ['api', '--bogus', '--json'], /unknown argument: --bogus/],
+      ['a flag without its value', ['api', '--json', '--ws'], /--ws/],
+      ['a second name', ['api', 'web', '--json'], /web/],
+      ['no name', ['--json'], /name/],
+      ['an unknown source', ['nope', '--json'], /no source nope/],
+    ]) {
+      const r = rm(args);
+      it(`${what}: exit 2, invalid_input in the envelope, stderr empty`, () => {
+        assert.strictEqual(r.code, 2, r.all);
+        const j = envelope(r, what);
+        assert.deepStrictEqual([j.ok, j.command, j.error.code], [false, 'remove', 'invalid_input']);
+        assert.match(j.error.message, re);
+        assert.strictEqual(r.err, '');
+      });
+    }
+    // --json counts only as a flag of the command: not as the value of the flag before it, not after --.
+    const noteRepo = makeRepo('note-json');
+    const noted = wsg(['add', noteRepo, '--link', '--note', '--json', '--dry-run'], { cwd: wsJ });
+    it('add --note --json --dry-run: --json is the note, the plain plan as in 0.5', () => {
+      assert.strictEqual(noted.code, 0, noted.all);
+      const p = doc(noted);
+      assert.ok(p && !('schemaVersion' in p), noted.out);
+      assert.strictEqual(p.sources ? p.sources[0].note : p.note, '--json', noted.out);
+    });
+    const wsValue = rm(['api', '--ws', '--json']);
+    it('remove --ws --json: --json is the workspace, a plain refusal', () => {
+      assert.strictEqual(wsValue.code, 2, wsValue.all);
+      assert.strictEqual(wsValue.out, '');
+      assert.match(wsValue.err, /--json/);
+    });
+    const afterDashes = rm(['--', '--json']);
+    it('remove -- --json: --json is the name, a plain refusal', () => {
+      assert.strictEqual(afterDashes.code, 2, afterDashes.all);
+      assert.strictEqual(afterDashes.out, '');
+      assert.match(afterDashes.err, /no source --json/);
+    });
+    for (const args of [['--version', '--json'], ['-v', '--json'], ['--json', '--version'], ['--json', '-v']]) {
+      const r = wsg(args);
+      it(`wsg ${args.join(' ')}: the version in the envelope, exit 0`, () => {
+        assert.strictEqual(r.code, 0, r.all);
+        const j = envelope(r, args.join(' '));
+        assert.deepStrictEqual([j.ok, j.command, j.dryRun, j.result], [true, null, false, { version: VERSION }]);
+      });
+    }
+    for (const [args, extra] of [[['-v', '--dry-run', '--json'], '--dry-run'], [['--version', '--json', 'extra'], 'extra'], [['--json', '--version', '-v'], '-v']]) {
+      const r = wsg(args);
+      it(`wsg ${args.join(' ')}: anything else with the version is refused, no dry run`, () => {
+        assert.strictEqual(r.code, 2, r.all);
+        const j = envelope(r, args.join(' '));
+        assert.deepStrictEqual([j.dryRun, j.error.code], [false, 'invalid_input']);
+        assert.match(j.error.message, new RegExp(extra));
+      });
+    }
+    const swallowed = rm(['api', '--json', '--ws', '--dry-run']);
+    it('--ws taking "--dry-run" as its value: not a dry run in the envelope', () => {
+      assert.strictEqual(swallowed.code, 2, swallowed.all);
+      assert.strictEqual(envelope(swallowed, 'swallowed').dryRun, false);
+    });
+    const outside = wsg(['remove', 'api', '--json']);
+    it('outside a workspace: invalid_input', () => {
+      assert.strictEqual(outside.code, 2, outside.all);
+      assert.strictEqual(envelope(outside, 'outside').error.code, 'invalid_input');
+    });
+    for (const args of [['--help', '--json'], ['help', 'remove', '--json'], ['guide', '--json'], ['add', 'x', '--json'], ['check', '--json']]) {
+      const r = wsg(args, { cwd: wsJ });
+      it(`wsg ${args.join(' ')}: a command without --json refuses it, in the envelope`, () => {
+        assert.strictEqual(r.code, 2, r.all);
+        assert.match(envelope(r, args.join(' ')).error.message, /unknown argument: --json/);
+      });
+    }
+    const unknownCmd = wsg(['bogus', '--json']);
+    it('an unknown command under --json: the envelope, command null', () => {
+      assert.strictEqual(unknownCmd.code, 2, unknownCmd.all);
+      const j = envelope(unknownCmd, 'bogus');
+      assert.strictEqual(j.command, null);
+      assert.match(j.error.message, /unknown command: bogus/);
+    });
+    const brokenCfg = path.join(tmp, 'broken-config-json');
+    fs.writeFileSync(brokenCfg, 'WS_ROOT=/x\n', { mode: 0o000 });
+    const broken = rm(['api', '--json'], { env: { WSG_CONFIG: brokenCfg } });
+    it('a broken config: exit 1 as before, the error in the envelope', () => {
+      assert.strictEqual(broken.code, 1, broken.all);
+      const j = envelope(broken, 'broken config');
+      assert.strictEqual(j.error.code, 'internal');
+      assert.match(j.error.message, /cannot read settings/);
+    });
+
+    // Another command holds the lock: busy, exit 2 as before; without --json the message as before.
+    const lockFile = path.join(wsJ, '.claude', 'wsg.lock');
+    fs.writeFileSync(lockFile, JSON.stringify({ pid: process.pid, time: new Date().toISOString() }));
+    const busyJ = rm(['docs', '--json']);
+    const busyPlain = rm(['docs']);
+    fs.rmSync(lockFile);
+    it('a busy workspace: busy, exit 2, nothing removed', () => {
+      assert.strictEqual(busyJ.code, 2, busyJ.all);
+      const j = envelope(busyJ, 'busy');
+      assert.strictEqual(j.error.code, 'busy');
+      assert.match(j.error.message, /another wsg command is running/);
+      assert.deepStrictEqual(W.readState(wsJ).sources.map((x) => x.name), ['api', 'web', 'docs']);
+    });
+    it('without --json: exit 2, the message on stderr, stdout empty', () => {
+      assert.strictEqual(busyPlain.code, 2, busyPlain.all);
+      assert.match(busyPlain.err, /another wsg command is running/);
+      assert.strictEqual(busyPlain.out, '');
+    });
+
+    // git refuses the removal (a locked worktree): the step fails and is rolled back.
+    git(api, ['worktree', 'lock', path.join(wsJ, 'api')]);
+    const failed = rm(['api', '--json']);
+    git(api, ['worktree', 'unlock', path.join(wsJ, 'api')]);
+    it('a step that fails: step_failed, exit 1, rolled back, the workspace as it was', () => {
+      assert.strictEqual(failed.code, 1, failed.all);
+      const j = envelope(failed, 'failed');
+      assert.deepStrictEqual([j.error.code, j.error.rollback, j.error.kept], ['step_failed', 'done', []]);
+      assert.deepStrictEqual(tree(wsJ), before);
+    });
+    it('the rollback is reported on stderr, as diagnostics', () => assert.match(failed.err, /\S/));
+
+    // Ctrl+C that stops git while it lists the worktree.
+    const intGit = path.join(tmp, 'int-git-json');
+    fs.mkdirSync(intGit);
+    const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+    fs.writeFileSync(path.join(intGit, 'git'),
+      `#!/bin/sh\ncase " $* " in *" --ignored "*) kill -INT $$; sleep 2;; esac\nexec ${JSON.stringify(realGit)} "$@"\n`, { mode: 0o755 });
+    const interrupted = rm(['api', '--json'], { env: { PATH: `${intGit}:${ENV.PATH}` } });
+    it('interrupted: exit 130, interrupted in the envelope, nothing touched', () => {
+      assert.strictEqual(interrupted.code, 130, interrupted.all);
+      const j = envelope(interrupted, 'interrupted');
+      assert.deepStrictEqual([j.error.code, j.error.rollback], ['interrupted', 'none']);
+      assert.deepStrictEqual(tree(wsJ), before);
+    });
+
+    // Ctrl+C reaching wsg while git lists the worktree: the removal finishes, then guarded() puts it
+    // all back, since the user asked to cancel.
+    const parentGit = path.join(tmp, 'int-parent-git-json');
+    fs.mkdirSync(parentGit);
+    fs.writeFileSync(path.join(parentGit, 'git'),
+      `#!/bin/sh\ncase " $* " in *" --ignored "*) kill -INT $PPID;; esac\nexec ${JSON.stringify(realGit)} "$@"\n`, { mode: 0o755 });
+    const inGuarded = rm(['api', '--json'], { env: { PATH: `${parentGit}:${ENV.PATH}` } });
+    it('interrupted inside the rollback\'s reach: exit 130, rollback done, the worktree back', () => {
+      assert.strictEqual(inGuarded.code, 130, inGuarded.all);
+      const j = envelope(inGuarded, 'in guarded');
+      assert.deepStrictEqual([j.error.code, j.error.rollback, j.error.kept], ['interrupted', 'done', []]);
+      assert.deepStrictEqual(W.readState(wsJ).sources.map((x) => x.name), ['api', 'web', 'docs']);
+      assert.strictEqual(git(path.join(wsJ, 'api'), ['branch', '--show-current']), 'task/rm-json');
+      assert.ok(!fs.existsSync(lockFile));
+    });
+
+    // SIGTERM to the whole group while the dry run plans: was an empty stdout and exit 143.
+    const termGit = path.join(tmp, 'term-git-json');
+    fs.mkdirSync(termGit);
+    fs.writeFileSync(path.join(termGit, 'git'),
+      `#!/bin/sh\ncase " $* " in *" --ignored "*) kill -TERM 0; sleep 2;; esac\nexec ${JSON.stringify(realGit)} "$@"\n`, { mode: 0o755 });
+    const termed = spawnSync(process.execPath, [CLI, 'remove', 'api', '--dry-run', '--json'],
+      { cwd: wsJ, encoding: 'utf8', detached: true, env: { ...ENV, PATH: `${termGit}:${ENV.PATH}` } });
+    it('SIGTERM to the group during a dry run under --json: exit 130, interrupted, rollback none', () => {
+      assert.strictEqual(termed.status, 130, `${termed.status} ${termed.signal} ${termed.stdout}${termed.stderr}`);
+      const j = JSON.parse(termed.stdout);
+      assert.deepStrictEqual([j.dryRun, j.error.code, j.error.rollback], [true, 'interrupted', 'none']);
+    });
+
+    // git can't add the worktree back while a later step's failure is rolled back: incomplete, said
+    // so in the envelope and in the plain report alike, not "as it was".
+    const readdGit = path.join(tmp, 'readd-git-json');
+    fs.mkdirSync(readdGit);
+    fs.writeFileSync(path.join(readdGit, 'git'),
+      `#!/bin/sh\ncase " $* " in *" worktree add "*) echo "fatal: simulated" >&2; exit 128;; esac\nexec ${JSON.stringify(realGit)} "$@"\n`, { mode: 0o755 });
+    const rulesDir = path.join(wsJ, '.claude', 'rules');
+    const failReadd = (args) => {
+      fs.chmodSync(rulesDir, 0o555);
+      try { return rm(args, { env: { PATH: `${readdGit}:${ENV.PATH}` } }); } finally {
+        fs.chmodSync(rulesDir, 0o755);
+        git(api, ['worktree', 'prune']);
+        git(api, ['worktree', 'add', path.join(wsJ, 'api'), 'task/rm-json']);
+      }
+    };
+    const readdJ = failReadd(['api', '--json']);
+    const readdPlain = failReadd(['api']);
+    it('the worktree not added back: step_failed, rollback incomplete', () => {
+      assert.strictEqual(readdJ.code, 1, readdJ.all);
+      assert.deepStrictEqual([envelope(readdJ, 'readd').error.code, envelope(readdJ, 'readd').error.rollback], ['step_failed', 'incomplete']);
+      assert.match(readdJ.err, /Failed to put worktree api back on task\/rm-json: fatal: simulated/);
+    });
+    it('and plain: exit 1, the rollback said to be incomplete', () => {
+      assert.strictEqual(readdPlain.code, 1, readdPlain.all);
+      assert.match(readdPlain.err, /Failed to put worktree api back on task\/rm-json/);
+      assert.match(readdPlain.err, /Rollback finished with an error/);
+      assert.doesNotMatch(readdPlain.err, /Rollback complete/);
+    });
+
+    const okRef = rm(['docs', '--json']);
+    it('a removal: exit 0, ok, the result; nothing else on stdout, nothing on stderr', () => {
+      assert.strictEqual(okRef.code, 0, okRef.all);
+      assert.strictEqual(okRef.err, '');
+      const j = envelope(okRef, 'docs');
+      assert.deepStrictEqual([j.ok, j.dryRun, j.error], [true, false, null]);
+      assert.deepStrictEqual([j.result.name, j.result.mode, j.result.path, j.result.branchKept], ['docs', 'reference', docs, null]);
+      assert.ok(j.result.files.includes(path.join(wsJ, '.claude', 'wsg.json')), j.result.files.join(' '));
+      assert.ok(j.result.files.every((f) => path.isAbsolute(f)), j.result.files.join(' '));
+      assert.strictEqual(j.result.settingsChanged, true);
+      assert.deepStrictEqual(W.readState(wsJ).sources.map((x) => x.name), ['api', 'web']);
+    });
+    // A warning wsg prints from inside a step (a stale lock taken over) lands in warnings.
+    const dead = spawnSync(process.execPath, ['-e', '']).pid;
+    fs.writeFileSync(lockFile, JSON.stringify({ pid: dead, time: '2026-01-01T00:00:00.000Z' }));
+    const past = new Date(Date.now() - 60000);
+    fs.utimesSync(lockFile, past, past);
+    const okLink = rm(['web', '--json']);
+    it('a warning from inside the command is collected into warnings, not printed', () => {
+      assert.strictEqual(okLink.code, 0, okLink.all);
+      const j = envelope(okLink, 'web');
+      assert.strictEqual(j.result.mode, 'link');
+      assert.ok(j.warnings.some((w) => /stale lock/.test(w)), JSON.stringify(j.warnings));
+      assert.doesNotMatch(okLink.out, /WARN/);
+    });
+    const okWt = rm(['api', '--json']);
+    it('a worktree: the branch it keeps', () => {
+      assert.strictEqual(okWt.code, 0, okWt.all);
+      const j = envelope(okWt, 'api');
+      assert.deepStrictEqual([j.result.mode, j.result.branchKept], ['worktree', 'task/rm-json']);
+      assert.deepStrictEqual(W.readState(wsJ).sources, []);
+    });
+
+    it('the codes and their exit codes', () => assert.deepStrictEqual(J.CODES,
+      { invalid_input: 2, busy: 2, step_failed: 1, check_failed: 1, interrupted: 130, internal: 1 }));
+    it('an unknown code is a bug, not an envelope', () => assert.throws(() => J.fail('nope', 'x'), /unknown error code/));
+    it('an unknown rollback is a bug too', () => assert.throws(() => J.fail('internal', 'x', { rollback: 'partly' }), /unknown rollback/));
+
+    // What guarded() says about its rollback, and how the envelope gives it.
+    const guardedErr = async (job) => {
+      try { await quietAsync(() => generate.guarded(job, 'rolling back')); return null; } catch (e) { return e; }
+    };
+    const none = await guardedErr(() => { throw new Error('before any step'); });
+    const done = await guardedErr((txn) => { txn.add(() => ({ kept: ['AGENTS.md'] })); throw new Error('after a step'); });
+    const incomplete = await guardedErr((txn) => { txn.add(() => { throw new Error('undo failed'); }); throw new Error('after a step'); });
+    it('guarded(): a failure before any step is rollback none', () => assert.strictEqual(none.rollback, 'none'));
+    it('guarded(): a rolled back step is rollback done, its kept paths absolute in the envelope', () => {
+      assert.strictEqual(done.rollback, 'done');
+      assert.deepStrictEqual(J.rollbackOf(done, '/ws/t'), { rollback: 'done', kept: ['/ws/t/AGENTS.md'] });
+    });
+    it('guarded(): a rollback step that fails is rollback incomplete', () => {
+      assert.strictEqual(incomplete.rollback, 'incomplete');
+      assert.deepStrictEqual(J.rollbackOf(incomplete, '/ws/t'), { rollback: 'incomplete', kept: [] });
+    });
+    it('an error that says nothing about a rollback is rollback unknown', () =>
+      assert.deepStrictEqual(J.rollbackOf(new Error('x'), '/ws/t'), { rollback: 'unknown', kept: [] }));
+    it('an internal error is rollback unknown by default, a refusal none', () => {
+      const node = (script) => spawnSync(process.execPath, ['-e', script], { cwd: tmp, encoding: 'utf8', env: ENV });
+      const out = node(`const J = require(${JSON.stringify(path.join(ROOT, 'lib', 'json.js'))}); J.start(); J.fail('internal', 'x');`);
+      assert.strictEqual(JSON.parse(out.stdout).error.rollback, 'unknown');
+      const refused = node(`const J = require(${JSON.stringify(path.join(ROOT, 'lib', 'json.js'))}); J.start(); J.fail('busy', 'x');`);
+      assert.strictEqual(JSON.parse(refused.stdout).error.rollback, 'none');
+    });
+    // A WS_ROOT that wsg new made is taken back off by the rollback, with the workspace in it.
+    const freshRoot = path.join(tmp, 'fresh-root', 'deeper');
+    const madeErr = await guardedErr((txn) => {
+      generate.createSkeleton({ kind: 'task', slug: 'gone', title: 'Gone', ticket: '', ticketUrl: '', personalRules: false }, { ...cfg, WS_ROOT: freshRoot }, txn);
+      throw new Error('after the skeleton');
+    });
+    it('a failed wsg new removes the WS_ROOT it made, rollback done', () => {
+      assert.strictEqual(madeErr && madeErr.rollback, 'done', String(madeErr));
+      assert.ok(!fs.existsSync(path.join(tmp, 'fresh-root')));
+    });
+
+    // In a process of its own: J.start takes over ui and the crash handlers.
+    const node = (script) => spawnSync(process.execPath, ['-e', script], { cwd: tmp, encoding: 'utf8', env: ENV });
+    const jsonLib = JSON.stringify(path.join(ROOT, 'lib', 'json.js'));
+    const launchLib = JSON.stringify(path.join(ROOT, 'lib', 'launch.js'));
+    const tty = '{ env: {}, stdin: { isTTY: true }, stdout: { isTTY: true } }';
+    const launchOn = node(`const L = require(${launchLib}); process.stderr.write(String(L.shouldLaunch(${tty})));`);
+    const launchJson = node(`require(${jsonLib}).start(); const L = require(${launchLib}); process.stderr.write(String(L.shouldLaunch(${tty})));`);
+    it('under --json the agent is never launched, by default', () => {
+      assert.strictEqual(launchOn.stderr, 'true');
+      assert.strictEqual(launchJson.stderr, 'false');
+    });
+    const twice = node(`const J = require(${jsonLib}); J.start(); J.succeed({ a: 1 }); process.stderr.write(String(J.fail('internal', 'late')));`);
+    it('an error after the envelope is out: no second document, the exit code of the first', () => {
+      assert.strictEqual(twice.stderr, '0');
+      assert.deepStrictEqual(JSON.parse(twice.stdout).result, { a: 1 });
+    });
+    const crashed = node(`require(${jsonLib}).start(); setTimeout(() => { throw new Error('boom'); }, 0);`);
+    it('a crash under --json: internal in the envelope, exit 1, the stack on stderr', () => {
+      assert.strictEqual(crashed.status, 1, crashed.stdout + crashed.stderr);
+      const j = JSON.parse(crashed.stdout);
+      assert.deepStrictEqual([j.ok, j.error.code, j.error.message, j.error.rollback], [false, 'internal', 'boom', 'unknown']);
+      assert.match(crashed.stderr, /Error: boom/);
+    });
+    const rejected = node(`require(${jsonLib}).start(); Promise.reject(new Error('lost'));`);
+    it('an unhandled rejection under --json: internal in the envelope', () => {
+      assert.strictEqual(rejected.status, 1, rejected.stdout + rejected.stderr);
+      assert.strictEqual(JSON.parse(rejected.stdout).error.message, 'lost');
+    });
+    // Ctrl+C with the lock held outside guarded(): the lock's own handler, in the envelope.
+    const sigWs = path.join(tmp, 'sig-json-ws');
+    fs.mkdirSync(path.join(sigWs, '.claude'), { recursive: true });
+    const sig = node(`require(${jsonLib}).start({ command: 'remove' });
+      require(${JSON.stringify(path.join(ROOT, 'lib', 'lock.js'))}).acquire(${JSON.stringify(sigWs)});
+      process.kill(process.pid, 'SIGINT');
+      setTimeout(() => process.exit(0), 2000);`);
+    it('Ctrl+C with the lock held, under --json: exit 130, interrupted, rollback none, the lock released', () => {
+      assert.strictEqual(sig.status, 130, sig.stdout + sig.stderr);
+      const j = JSON.parse(sig.stdout);
+      assert.deepStrictEqual([j.command, j.error.code, j.error.rollback], ['remove', 'interrupted', 'none']);
+      assert.ok(!fs.existsSync(path.join(sigWs, '.claude', 'wsg.lock')));
+    });
+    // A stop signal where neither the lock nor a rollback listens: the envelope, exit 130.
+    const bare = node(`require(${jsonLib}).start({ command: 'remove', dryRun: true });
+      process.kill(process.pid, 'SIGTERM');
+      setTimeout(() => process.exit(0), 2000);`);
+    it('SIGTERM with nothing changed, under --json: exit 130, interrupted, rollback none', () => {
+      assert.strictEqual(bare.status, 130, bare.stdout + bare.stderr);
+      assert.deepStrictEqual([JSON.parse(bare.stdout).error.code, JSON.parse(bare.stdout).error.rollback], ['interrupted', 'none']);
+    });
+    // A document over the pipe's 64 KiB, read slowly: it arrives whole, then the process exits.
+    const big = spawnSync('sh', ['-c', `"$0" -e "$1" | (sleep 1; cat)`, process.execPath,
+      `process.stdout.on('error', () => {}); const J = require(${jsonLib}); J.start(); process.exit(J.fail('internal', 'x'.repeat(300000)));`],
+    { cwd: tmp, encoding: 'utf8', env: ENV, maxBuffer: 1 << 24 });
+    it('an envelope over 64 KiB through a slow pipe arrives whole', () => {
+      assert.ok(big.stdout.length > 300000, String(big.stdout.length));
+      assert.strictEqual(JSON.parse(big.stdout).error.message.length, 300000);
+    });
+  }
+
   console.log('\nwsg promote');
   {
     wsg(['new', 'to-promote', '--no-launch']);
