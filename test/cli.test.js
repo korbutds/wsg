@@ -208,6 +208,47 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       assert.match(read({ ...epicState, sources: [{ ...epicState.sources[0], reference: true }] }), /source api: "task" belongs only to an epic source that is not a reference/));
     it('"task" on a source without a name names it by number', () =>
       assert.match(read({ ...childState, sources: [{ path: '/x' }, { task }] }), /source #2: "task"/));
+    // A task's or a process's status; a state without one reads as open.
+    const proc = { version: 2, kind: 'process', skillName: 'p', title: 'P', created: '2026-10-28', personalRules: false, sources: [] };
+    for (const status of W.STATUSES) {
+      it(`status ${status} on a task reads`, () => assert.strictEqual(read({ ...childState, status }), ''));
+    }
+    it('status on a process reads', () => assert.strictEqual(read({ ...proc, status: 'review' }), ''));
+    it('done with the date it was closed reads', () => assert.strictEqual(read({ ...childState, status: 'done', closed: '2026-11-14' }), ''));
+    it('done without a date reads', () => assert.strictEqual(read({ ...childState, status: 'done' }), ''));
+    for (const st of [childState, { ...proc, status: 'review' }, { ...childState, status: 'done', closed: '2026-11-14' }, { ...childState, status: 'done' }, epicState]) {
+      it(`statusProblem: none for ${JSON.stringify([st.kind, st.status, st.closed])}`, () => assert.strictEqual(W.statusProblem(st), null));
+    }
+    // A value this wsg doesn't know is soft: the state reads, statusProblem says what is wrong.
+    const soft = [
+      ['an unknown status', { ...childState, status: 'blocked' }, /"status" "blocked" is not one of open, review, done/],
+      ['a status in another case', { ...childState, status: 'Open' }, /"status" "Open" is not one of/],
+      ['an empty status', { ...childState, status: '' }, /"status" "" is not one of/],
+      ['a null status', { ...childState, status: null }, /"status" null is not one of/],
+      ['a number for a status', { ...childState, status: 1 }, /"status" 1 is not one of/],
+      ['status on an epic', { ...epicState, status: 'open' }, /"status" and "closed" belong only to a task or a process, not to an epic/],
+      ['closed on an epic', { ...epicState, closed: '2026-11-14' }, /"status" and "closed" belong only to a task or a process/],
+      ...[['with review', { status: 'review' }], ['with open', { status: 'open' }], ['without a status', {}]].map(([what, extra]) =>
+        [`closed ${what}`, { ...childState, ...extra, closed: '2026-11-14' }, /"closed" goes only with "status": "done", as a date YYYY-MM-DD/]),
+      ...['14.11.2026', '2026-11-14T10:00:00Z', '2026-02-30', '2026-13-01', '', null, 20261114].map((closed) =>
+        [`closed as ${JSON.stringify(closed)}`, { ...childState, status: 'done', closed }, /"closed" goes only with "status": "done"/]),
+    ];
+    for (const [what, st, re] of soft) {
+      it(`${what}: the state reads, statusProblem warns`, () => {
+        assert.strictEqual(read(st), '');
+        assert.match(W.statusProblem(st), re);
+      });
+    }
+    it('statusOf: an absent status is open, a stored one is itself, known or not; an epic has none', () => {
+      assert.strictEqual(W.statusOf(childState), 'open');
+      assert.strictEqual(W.statusOf({ ...proc }), 'open');
+      assert.strictEqual(W.statusOf({ ...childState, status: 'review' }), 'review');
+      assert.strictEqual(W.statusOf({ ...childState, status: 'done', closed: '2026-11-14' }), 'done');
+      assert.strictEqual(W.statusOf({ ...childState, status: 'blocked' }), 'blocked');
+      for (const status of ['', null, 1]) assert.strictEqual(W.statusOf({ ...childState, status }), 'open', String(status));
+      assert.strictEqual(W.statusOf(epicState), null);
+      assert.strictEqual(W.statusOf({ ...epicState, status: 'done' }), null);
+    });
     it('stateProblem is the same check without a file', () => {
       assert.strictEqual(W.stateProblem(epicState), '');
       assert.match(W.stateProblem({ ...epicState, version: 2 }), /expected version 3/);
@@ -300,6 +341,10 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       assert.deepStrictEqual(state.sources, []);
       assert.strictEqual(state.title, 'Demo task');
       assert.ok(!('ticket' in state) && !('problem' in state));
+    });
+    it('wsg.json: the task starts open, with no closed date', () => {
+      assert.strictEqual(state.status, 'open');
+      assert.ok(!('closed' in state));
     });
     const skill = fs.readFileSync(path.join(demo, '.claude/skills/wsg-setup/SKILL.md'), 'utf8');
     it('the setup skill: frontmatter first, manual-only, wsg calls allowed', () => {
@@ -394,6 +439,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       assert.strictEqual(state.kind, 'epic');
       assert.deepStrictEqual(state.sources, []);
       assert.ok(!('ticket' in state));
+      assert.ok(!('status' in state) && !('closed' in state));
     });
     it('ws-kind says epic', () => assert.strictEqual(read('.claude/ws-kind'), 'epic\n'));
     const claude = read('CLAUDE.md');
@@ -782,6 +828,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       assert.strictEqual(state.ticket, 'PROJ-42');
       assert.deepStrictEqual(state.sources, []);
     });
+    it('wsg.json: the task of the epic starts open', () => assert.strictEqual(state.status, 'open'));
     it('the state reads, and the epic finds it as its task', () => {
       assert.strictEqual(W.stateProblem(state), '');
       assert.deepStrictEqual(W.childrenOf(ep).map((c) => path.basename(c.ws)), ['pay-fix']);
@@ -1209,6 +1256,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     it('new --dry-run: the task\'s state, its sources from the epic', () => {
       assert.deepStrictEqual(dp.state.epic, { slug: 'shop' });
       assert.strictEqual(dp.state.ticket, 'PROJ-42');
+      assert.strictEqual(dp.state.status, 'open');
       assert.deepStrictEqual(dp.state.sources.map((s) => [s.name, s.mode, s.branch, s.from]), [
         ['src-api', 'worktree', 'alice/task/pay/PROJ-42', 'epic'], ['src-lib', 'link', '', 'epic'], ['src-docs', 'link', '', 'epic']]);
       assert.strictEqual(W.stateProblem(dp.state), '');
@@ -1226,6 +1274,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       assert.strictEqual(p.workspace, path.join(root, 'plain-dry'));
       assert.deepStrictEqual(p.state.sources, []);
       assert.ok(!('epic' in p.state) && !('ticket' in p.state));
+      assert.strictEqual(p.state.status, 'open');
     });
     it('new --dry-run of a task that exists: exit 2, the error in the plan', () => {
       const r = wsg(['new', 'shop', '--dry-run'], { env });
@@ -2934,6 +2983,93 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       assert.strictEqual(fs.readFileSync(path.join(legacy, 'AGENTS.md'), 'utf8'), '# old\n');
     });
     it('the usage names it', () => assert.match(wsg(['--help']).out, /wsg refresh \[--dry-run\] \[--ws SLUG\|PATH\]/));
+  }
+
+  console.log('\nthe status in the state survives the other commands');
+  {
+    const stateOf = (ws) => JSON.parse(fs.readFileSync(path.join(ws, W.STATE_FILE), 'utf8'));
+    const setState = (ws, edit) => {
+      const st = stateOf(ws);
+      edit(st);
+      fs.writeFileSync(path.join(ws, W.STATE_FILE), W.stateJson(st));
+    };
+    const done = (ws) => setState(ws, (st) => { st.status = 'done'; st.closed = '2026-11-14'; });
+
+    const wsS = path.join(wsRoot, 'status-kept');
+    wsg(['new', 'status-kept', '--no-launch']);
+    done(wsS);
+    const added = wsg(['add', web, '--link'], { cwd: wsS });
+    it('wsg add on a done task: exit 0, status and closed kept', () => {
+      assert.strictEqual(added.code, 0, added.all);
+      const st = stateOf(wsS);
+      assert.deepStrictEqual([st.status, st.closed, st.sources.map((x) => x.name)], ['done', '2026-11-14', ['web']]);
+    });
+    setState(wsS, (st) => { st.status = 'review'; delete st.closed; });
+    const before = fs.readFileSync(path.join(wsS, W.STATE_FILE), 'utf8');
+    const refreshed = wsg(['refresh'], { cwd: wsS });
+    it('wsg refresh on a task in review: exit 0, the state byte for byte', () => {
+      assert.strictEqual(refreshed.code, 0, refreshed.all);
+      assert.strictEqual(fs.readFileSync(path.join(wsS, W.STATE_FILE), 'utf8'), before);
+    });
+
+    // A state from wsg 0.5 or older has no status: it reads as open and is not rewritten with one.
+    setState(wsS, (st) => { delete st.status; });
+    const noStatus = fs.readFileSync(path.join(wsS, W.STATE_FILE), 'utf8');
+    const r0 = wsg(['refresh'], { cwd: wsS });
+    it('a state without a status: refresh adds none, and it reads as open', () => {
+      assert.strictEqual(r0.code, 0, r0.all);
+      assert.match(r0.out, /up to date/);
+      assert.strictEqual(fs.readFileSync(path.join(wsS, W.STATE_FILE), 'utf8'), noStatus);
+      assert.strictEqual(W.statusOf(W.readState(wsS)), 'open');
+    });
+
+    // A status this wsg doesn't know: the workspace still works, wsg check says so.
+    setState(wsS, (st) => { st.status = 'blocked'; });
+    const ck = wsg(['check'], { cwd: wsS });
+    it('an unknown status: wsg check warns, exit 0', () => {
+      assert.strictEqual(ck.code, 0, ck.all);
+      assert.match(ck.out, /WARN .*\.claude\/wsg\.json: "status" "blocked" is not one of open, review, done/);
+    });
+    it('and wsg refresh still runs on it, keeping it', () => {
+      assert.strictEqual(wsg(['refresh'], { cwd: wsS }).code, 0);
+      assert.strictEqual(stateOf(wsS).status, 'blocked');
+    });
+    const stEpic = path.join(wsRoot, 'status-epic');
+    wsg(['new', 'status-epic', '--kind', 'epic', '--ticket', 'EPIC-3', '--no-launch']);
+    wsg(['new', 'odd', '--epic', 'status-epic', '--ticket', 'ACME-123', '--no-launch']);
+    setState(path.join(stEpic, 'odd'), (st) => { st.status = 'blocked'; });
+    it('a task with an unknown status stays a task of its epic', () => {
+      assert.deepStrictEqual(W.childrenOf(stEpic).map((c) => path.basename(c.ws)), ['odd']);
+      assert.strictEqual(wsg(['refresh', '--ws', stEpic]).code, 0);
+      assert.match(fs.readFileSync(path.join(stEpic, 'tasks.md'), 'utf8'), /`odd\/` ACME-123/);
+    });
+    fs.rmSync(stEpic, { recursive: true, force: true });
+    setState(wsS, (st) => { st.status = 'open'; });
+
+    // The published wsg before this key: its add and refresh keep it, so no state version bump.
+    const old = path.join(tmp, 'v041');
+    fs.mkdirSync(old);
+    const archive = spawnSync('sh', ['-c', `git -C "$1" archive v0.4.1 bin lib templates package.json | tar -x -C "$2"`, 'sh', ROOT, old], { encoding: 'utf8' });
+    if (archive.status !== 0 || !fs.existsSync(path.join(old, 'bin', 'cli.js'))) {
+      console.log('  skip  0.4.1 is not in this checkout\'s history');
+    } else {
+      const oldWsg = (args) => {
+        const r = spawnSync(process.execPath, [path.join(old, 'bin', 'cli.js'), ...args], { cwd: tmp, encoding: 'utf8', env: ENV });
+        return { code: r.status, all: r.stdout + r.stderr };
+      };
+      const wsO = path.join(wsRoot, 'status-old');
+      wsg(['new', 'status-old', '--no-launch']);
+      done(wsO);
+      const oa = oldWsg(['add', web, '--link', '--ws', wsO]);
+      const or = oldWsg(['refresh', '--ws', wsO]);
+      it('wsg 0.4.1 add and refresh on a done task: exit 0, status and closed kept', () => {
+        assert.strictEqual(oa.code, 0, oa.all);
+        assert.strictEqual(or.code, 0, or.all);
+        const st = stateOf(wsO);
+        assert.deepStrictEqual([st.status, st.closed, st.sources.map((x) => x.name)], ['done', '2026-11-14', ['web']]);
+        assert.strictEqual(W.stateProblem(st), '');
+      });
+    }
   }
 
   console.log('\nwsg add: writes stay inside the workspace');

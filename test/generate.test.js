@@ -108,6 +108,7 @@ process.on('exit', () => {
     it(`created ${f}`, () => assert.ok(fs.existsSync(path.join(ws, f))));
   }
   it('kind recorded as task', () => assert.strictEqual(fs.readFileSync(path.join(ws, '.claude/ws-kind'), 'utf8').trim(), 'task'));
+  it('the state starts open', () => assert.strictEqual(JSON.parse(fs.readFileSync(path.join(ws, '.claude/wsg.json'), 'utf8')).status, 'open'));
   it('worktree is on the right branch', () =>
     assert.strictEqual(execFileSync('git', ['-C', path.join(ws, 'api'), 'branch', '--show-current'], { encoding: 'utf8' }).trim(), 'alice/task/oauth/PROJ-412'));
   it('untracked file copied', () => assert.ok(fs.existsSync(path.join(ws, 'api', '.env'))));
@@ -757,6 +758,7 @@ process.on('exit', () => {
       const st = JSON.parse(fs.readFileSync(path.join(pm, '.claude/wsg.json'), 'utf8'));
       assert.strictEqual(st.kind, 'process');
       assert.strictEqual(st.skillName, 'weekly-release');
+      assert.strictEqual(st.status, 'open');
     });
     it('promote: skill and journal created', () => {
       assert.ok(fs.existsSync(path.join(pm, '.claude/skills/weekly-release/SKILL.md')));
