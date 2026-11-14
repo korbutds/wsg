@@ -392,6 +392,7 @@ async function cmdAdd(args) {
   if (!found) invalid(t('cli.notInWorkspace'));
   if (found.legacy) invalid(t('cli.legacyWorkspace', { ws: found.ws }));
   const { ws } = found;
+  currentWs = ws;
   const W = lib('workspace');
   const S = lib('source');
   const generate = lib('generate');
@@ -440,9 +441,16 @@ async function cmdAdd(args) {
     note: flags['--note'],
     branchTemplate: flags['--branch-template'],
   };
-  const res = derived
-    ? S.fromEpic(pos[0], derived.epic, { slug: state.slug, ticket: state.ticket || '', made: true }, opts, { ws, state })
-    : S.resolve(pos[0], opts, { ws, state });
+  let res;
+  try {
+    res = derived
+      ? S.fromEpic(pos[0], derived.epic, { slug: state.slug, ticket: state.ticket || '', made: true }, opts, { ws, state })
+      : S.resolve(pos[0], opts, { ws, state });
+  } catch (e) {
+    // Ctrl+C while git was asked about the source: only read so far, nothing changed.
+    if (e && e.name === 'Interrupted') throw Object.assign(e, { rollback: 'none' });
+    throw e;
+  }
   // What the generated files would become is worked out before anything changes: a settings.json
   // that doesn't parse, or a half-deleted marker pair, refuses the add here.
   let planned = { files: [], settingsChanged: false, warnings: [] };
@@ -454,6 +462,61 @@ async function cmdAdd(args) {
     }
   }
   const warnings = [...res.warnings, ...planned.warnings];
+
+  const json = J.active();
+  // The result --json gives, plan or done: every key always there, the paths absolute. The source
+  // as it would be attached, or — refused — as far as it was worked out. done: what the add itself
+  // reported ({ settingsChanged, backupBranch }); without it the result is a plan, and says how the
+  // worktree would start.
+  const result = (done = null) => {
+    const x = res.spec || res.plan || {};
+    const name = x.name || null;
+    const mode = x.reference || x.mode === 'reference' ? 'reference' : x.mode || null;
+    const p = res.plan || {};
+    // The source's own clone flag, or the plan's when it was refused before the spec.
+    const nmClone = p.nodeModules && typeof p.nodeModules.clone === 'boolean' ? p.nodeModules.clone : null;
+    const task = x.task && typeof x.task === 'object' && !Array.isArray(x.task) ? x.task : null;
+    return {
+      workspace: ws,
+      source: {
+        name,
+        mode,
+        path: x.path || null,
+        workspacePath: name ? path.join(ws, name) : null,
+        branch: x.branch || null,
+        base: x.base || null,
+        target: x.target && x.target !== '—' ? x.target : null,
+        verify: x.verify || null,
+        note: x.note || null,
+        carry: Array.isArray(x.carry) ? x.carry : [],
+        cloneNm: typeof x.cloneNm === 'boolean' ? x.cloneNm : nmClone,
+        from: x.from || null,
+        // An epic's defaults for its tasks, always these four keys; base null: the default.
+        task: task && {
+          branch: typeof task.branch === 'string' ? task.branch : null,
+          base: typeof task.base === 'string' && task.base ? task.base : null,
+          carry: Array.isArray(task.carry) ? task.carry : [],
+          cloneNm: typeof task.cloneNm === 'boolean' ? task.cloneNm : nmClone,
+        },
+      },
+      files: res.errors.length ? [] : planned.files.map((f) => path.join(ws, f)),
+      settingsChanged: done ? done.settingsChanged : planned.settingsChanged,
+      backupBranch: (done && done.backupBranch) || null,
+      // What the plain add says about the source before it starts: attached as is, continuing origin/….
+      notes: res.notes || [],
+      plan: done ? null : {
+        start: p.start || null,
+        branchExists: typeof p.branchExists === 'boolean' ? p.branchExists : null,
+        remoteBranch: p.remoteBranch || null,
+        // An epic's source has its candidates in the defaults for its tasks.
+        carryCandidates: Array.isArray(p.carryCandidates) ? p.carryCandidates
+          : p.task && Array.isArray(p.task.carryCandidates) ? p.task.carryCandidates : [],
+      },
+    };
+  };
+  // A refused plan: the same document with --dry-run and without.
+  if (json && res.errors.length) return J.fail('invalid_input', res.errors[0], { details: res.errors, result: result(), warnings });
+  if (flags['--dry-run'] && json) return J.succeed(result(), { warnings });
 
   if (flags['--dry-run']) {
     const plan = {
@@ -475,14 +538,20 @@ async function cmdAdd(args) {
   for (const n of res.notes) ui.info(`  ${n}`);
   guardPlatform();
   try {
-    const { settingsChanged } = await generate.add(ws, res.spec, cfg);
+    const added = await generate.add(ws, res.spec, cfg);
+    const { settingsChanged } = added;
+    if (json) return J.succeed(result(added));
     ui.head(t('cli.added', { name: res.spec.name }));
     if (settingsChanged) ui.info(t('cli.restart', { path: res.spec.path }));
   } catch (e) {
     if (e && e.name === 'Interrupted') {
+      if (json) return J.fail('interrupted', cancelled(e), J.rollbackOf(e, ws));
       process.stderr.write(`${cancelled(e)}\n`);
       return 130;
     }
+    // A step that failed, the last checks inside it included: exit 1 as without --json, rolled back
+    // as far as it went (guarded() in lib/generate.js; "none" when it failed before the first step).
+    if (json && e && e.rollback) return J.fail('step_failed', String(e.message), J.rollbackOf(e, ws));
     throw e;
   }
   ui.head(t('cli.done'));

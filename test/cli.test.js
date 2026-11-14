@@ -4193,7 +4193,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       assert.strictEqual(outside.code, 2, outside.all);
       assert.strictEqual(envelope(outside, 'outside').error.code, 'invalid_input');
     });
-    for (const args of [['--help', '--json'], ['help', 'remove', '--json'], ['guide', '--json'], ['add', 'x', '--json'], ['check', '--json']]) {
+    for (const args of [['--help', '--json'], ['help', 'remove', '--json'], ['guide', '--json'], ['refresh', '--json'], ['check', '--json']]) {
       const r = wsg(args, { cwd: wsJ });
       it(`wsg ${args.join(' ')}: a command without --json refuses it, in the envelope`, () => {
         assert.strictEqual(r.code, 2, r.all);
@@ -4451,6 +4451,234 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       assert.ok(big.stdout.length > 300000, String(big.stdout.length));
       assert.strictEqual(JSON.parse(big.stdout).error.message.length, 300000);
     });
+  }
+
+  console.log('\nwsg add --json');
+  {
+    const wsA = path.join(wsRoot, 'add-json');
+    wsg(['new', 'add-json', '--no-launch']);
+    const add = (args, opts = {}) => wsg(['add', ...args], { cwd: wsA, ...opts });
+    const doc = (r) => { try { return JSON.parse(r.out); } catch { return null; } };
+    const VERSION = require(path.join(ROOT, 'package.json')).version;
+    const SOURCE_KEYS = ['name', 'mode', 'path', 'workspacePath', 'branch', 'base', 'target', 'verify', 'note', 'carry', 'cloneNm', 'from', 'task'];
+    const envelope = (r, what) => {
+      const j = doc(r);
+      assert.ok(j, `${what}: stdout is not one JSON document: ${r.out}`);
+      assert.deepStrictEqual(Object.keys(j), ['schemaVersion', 'wsgVersion', 'ok', 'command', 'dryRun', 'result', 'error', 'warnings'], what);
+      assert.deepStrictEqual([j.schemaVersion, j.wsgVersion, j.command], [1, VERSION, 'add'], what);
+      if (j.error) {
+        assert.deepStrictEqual(Object.keys(j.error), ['code', 'exitCode', 'message', 'details', 'rollback', 'kept'], what);
+        assert.strictEqual(j.error.exitCode, r.code, what);
+      }
+      if (j.result) {
+        assert.deepStrictEqual(Object.keys(j.result), ['workspace', 'source', 'files', 'settingsChanged', 'backupBranch', 'notes', 'plan'], what);
+        assert.deepStrictEqual(Object.keys(j.result.source), SOURCE_KEYS, what);
+        if (j.result.source.task) assert.deepStrictEqual(Object.keys(j.result.source.task), ['branch', 'base', 'carry', 'cloneNm'], what);
+        if (j.result.plan) assert.deepStrictEqual(Object.keys(j.result.plan), ['start', 'branchExists', 'remoteBranch', 'carryCandidates'], what);
+        assert.ok(Array.isArray(j.result.notes), what);
+        assert.ok(j.result.files.every((f) => path.isAbsolute(f)), j.result.files.join(' '));
+      }
+      return j;
+    };
+    const before = tree(wsA);
+
+    const plainLink = add([web, '--link', '--dry-run']);
+    it('plain add --dry-run: the plan as before, no envelope', () => {
+      assert.strictEqual(plainLink.code, 0, plainLink.all);
+      const p = doc(plainLink);
+      assert.ok(!('schemaVersion' in p));
+      assert.strictEqual(plainLink.out, `${JSON.stringify(p, null, 2)}\n`);
+      assert.deepStrictEqual(Object.keys(p).slice(0, 2), ['workspace', 'path']);
+      assert.deepStrictEqual(Object.keys(p).slice(-4), ['files', 'settingsChanged', 'errors', 'warnings']);
+    });
+    const dryLink = add([web, '--link', '--dry-run', '--json']);
+    it('add --link --dry-run --json: the plan in the envelope, the paths absolute', () => {
+      assert.strictEqual(dryLink.code, 0, dryLink.all);
+      assert.strictEqual(dryLink.err, '');
+      const j = envelope(dryLink, 'dry link');
+      assert.deepStrictEqual([j.ok, j.dryRun, j.error], [true, true, null]);
+      assert.deepStrictEqual(j.result.source, { name: 'web', mode: 'link', path: web, workspacePath: path.join(wsA, 'web'),
+        branch: null, base: null, target: 'main', verify: null, note: null, carry: [], cloneNm: false, from: null, task: null });
+      assert.deepStrictEqual(j.result.files, doc(plainLink).files.map((f) => path.join(wsA, f)));
+      assert.strictEqual(j.result.settingsChanged, true);
+    });
+    const dryWt = add([api, '--branch', 'task/add-json', '--carry', '.env', '--verify', 'npm test', '--dry-run', '--json']);
+    it('a worktree: its branch, base, carry and verify', () => {
+      assert.strictEqual(dryWt.code, 0, dryWt.all);
+      const { source } = envelope(dryWt, 'dry worktree').result;
+      assert.deepStrictEqual([source.mode, source.branch, source.carry, source.verify, source.target], ['worktree', 'task/add-json', ['.env'], 'npm test', 'main']);
+      assert.ok(source.base, JSON.stringify(source));
+    });
+    it('a dry run says how the worktree would start, and no backup', () => {
+      const { plan, backupBranch } = envelope(dryWt, 'dry worktree').result;
+      assert.deepStrictEqual([plan.start, plan.branchExists, backupBranch], ['new', false, null]);
+      assert.ok(plan.carryCandidates.includes('.env'), JSON.stringify(plan));
+    });
+    const dryRef = add([docs, '--reference', '--dry-run', '--json']);
+    it('a reference: mode reference, no target', () => {
+      assert.strictEqual(dryRef.code, 0, dryRef.all);
+      const { source } = envelope(dryRef, 'dry reference').result;
+      assert.deepStrictEqual([source.mode, source.target, source.path], ['reference', null, docs]);
+    });
+    it('the dry runs touched nothing', () => assert.deepStrictEqual(tree(wsA), before));
+
+    const missing = path.join(tmp, 'no-such-repo');
+    const refusedDry = add([missing, '--dry-run', '--json']);
+    const refused = add([missing, '--json']);
+    it('a refused plan: exit 2, invalid_input with the reasons, the plan so far', () => {
+      assert.strictEqual(refusedDry.code, 2, refusedDry.all);
+      const j = envelope(refusedDry, 'refused dry');
+      assert.deepStrictEqual([j.ok, j.error.code, j.error.rollback], [false, 'invalid_input', 'none']);
+      assert.ok(j.error.details.length >= 1);
+      assert.deepStrictEqual(j.result.files, []);
+    });
+    it('without --dry-run: the same document but for dryRun, nothing touched', () => {
+      assert.strictEqual(refused.code, 2, refused.all);
+      assert.deepStrictEqual({ ...envelope(refused, 'refused'), dryRun: true }, doc(refusedDry));
+      assert.strictEqual(refused.err, '');
+      assert.deepStrictEqual(tree(wsA), before);
+    });
+    for (const [what, args, re] of [
+      ['two modes', [web, '--link', '--worktree', '--json'], /./],
+      ['an unknown flag', [web, '--bogus', '--json'], /unknown argument: --bogus/],
+      ['no path', ['--json'], /./],
+    ]) {
+      const r = add(args);
+      it(`${what}: exit 2, invalid_input in the envelope`, () => {
+        assert.strictEqual(r.code, 2, r.all);
+        const j = envelope(r, what);
+        assert.deepStrictEqual([j.error.code, j.result], ['invalid_input', null]);
+        assert.match(j.error.message, re);
+        assert.strictEqual(r.err, '');
+      });
+    }
+
+    const lockFile = path.join(wsA, '.claude', 'wsg.lock');
+    fs.writeFileSync(lockFile, JSON.stringify({ pid: process.pid, time: new Date().toISOString() }));
+    const busy = add([web, '--link', '--json']);
+    fs.rmSync(lockFile);
+    it('a busy workspace: busy, exit 2, nothing attached', () => {
+      assert.strictEqual(busy.code, 2, busy.all);
+      assert.strictEqual(envelope(busy, 'busy').error.code, 'busy');
+      assert.deepStrictEqual(W.readState(wsA).sources, []);
+    });
+
+    // Ctrl+C while git lists the files the source could carry: refused before anything changed.
+    const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+    const intGit = path.join(tmp, 'add-json-int-git');
+    fs.mkdirSync(intGit);
+    fs.writeFileSync(path.join(intGit, 'git'),
+      `#!/bin/sh\ncase "$*" in *" ls-files "*) kill -INT 0; sleep 2;; esac\nexec ${JSON.stringify(realGit)} "$@"\n`, { mode: 0o755 });
+    const interrupted = spawnSync(process.execPath, [CLI, 'add', api, '--branch', 'task/add-json-int', '--json'],
+      { cwd: wsA, encoding: 'utf8', detached: true, env: { ...ENV, PATH: `${intGit}:${ENV.PATH}` } });
+    it('interrupted while resolving: exit 130, interrupted, rollback none, nothing left', () => {
+      assert.strictEqual(interrupted.status, 130, `${interrupted.status} ${interrupted.signal} ${interrupted.stdout}${interrupted.stderr}`);
+      const j = JSON.parse(interrupted.stdout);
+      assert.deepStrictEqual([j.error.code, j.error.rollback], ['interrupted', 'none']);
+      assert.deepStrictEqual(tree(wsA), before);
+      assert.ok(!branches(api).includes('task/add-json-int'));
+    });
+
+    // A step that fails after the worktree is made (its rule can't be written): rolled back.
+    const rulesDir = path.join(wsA, '.claude', 'rules');
+    fs.chmodSync(rulesDir, 0o555);
+    let failed;
+    try { failed = add([api, '--branch', 'task/add-json-fail', '--json']); } finally { fs.chmodSync(rulesDir, 0o755); }
+    it('a step that fails: step_failed, exit 1, rollback done, the workspace and branches as they were', () => {
+      assert.strictEqual(failed.code, 1, failed.all);
+      const j = envelope(failed, 'failed');
+      assert.deepStrictEqual([j.error.code, j.error.rollback, j.error.kept], ['step_failed', 'done', []]);
+      assert.deepStrictEqual(tree(wsA), before);
+      assert.ok(!branches(api).includes('task/add-json-fail'));
+    });
+    // The same, and git can't delete the branch it made: the rollback is incomplete, said so.
+    const noDelete = path.join(tmp, 'add-json-nodelete-git');
+    fs.mkdirSync(noDelete);
+    fs.writeFileSync(path.join(noDelete, 'git'),
+      `#!/bin/sh\ncase " $* " in *" branch -D "*) echo "fatal: simulated" >&2; exit 128;; esac\nexec ${JSON.stringify(realGit)} "$@"\n`, { mode: 0o755 });
+    fs.chmodSync(rulesDir, 0o555);
+    let half;
+    try { half = add([api, '--branch', 'task/add-json-half', '--json'], { env: { PATH: `${noDelete}:${ENV.PATH}` } }); } finally { fs.chmodSync(rulesDir, 0o755); }
+    it('a branch the rollback could not delete: step_failed, rollback incomplete', () => {
+      assert.strictEqual(half.code, 1, half.all);
+      assert.deepStrictEqual([envelope(half, 'half').error.code, envelope(half, 'half').error.rollback], ['step_failed', 'incomplete']);
+      assert.ok(branches(api).includes('task/add-json-half'));
+    });
+    git(api, ['branch', '-D', 'task/add-json-half']);
+
+    const okLink = add([web, '--link', '--json']);
+    it('an add: exit 0, ok, the source and the files; nothing else on stdout', () => {
+      assert.strictEqual(okLink.code, 0, okLink.all);
+      const j = envelope(okLink, 'link');
+      assert.deepStrictEqual([j.ok, j.dryRun, j.error, j.result.source.name, j.result.settingsChanged], [true, false, null, 'web', true]);
+      assert.ok(j.result.files.includes(path.join(wsA, '.claude', 'wsg.json')), j.result.files.join(' '));
+      assert.deepStrictEqual(W.readState(wsA).sources.map((x) => x.name), ['web']);
+      assert.doesNotMatch(okLink.out, /Attached|Done/);
+    });
+    const okWt = add([api, '--branch', 'task/add-json', '--json']);
+    it('a worktree: on its branch, in the result', () => {
+      assert.strictEqual(okWt.code, 0, okWt.all);
+      const { source } = envelope(okWt, 'worktree').result;
+      assert.deepStrictEqual([source.mode, source.branch, source.workspacePath], ['worktree', 'task/add-json', path.join(wsA, 'api')]);
+      assert.strictEqual(git(path.join(wsA, 'api'), ['branch', '--show-current']), 'task/add-json');
+    });
+    // A dry run stopped the same way is no plan with nothing to carry: it is interrupted too.
+    const interruptedDry = spawnSync(process.execPath, [CLI, 'add', api, '--branch', 'task/add-json-int', '--dry-run', '--json'],
+      { cwd: wsA, encoding: 'utf8', detached: true, env: { ...ENV, PATH: `${intGit}:${ENV.PATH}` } });
+    it('a dry run interrupted while git lists the candidates: interrupted, not ok with carry []', () => {
+      assert.strictEqual(interruptedDry.status, 130, `${interruptedDry.status} ${interruptedDry.signal} ${interruptedDry.stdout}${interruptedDry.stderr}`);
+      const j = JSON.parse(interruptedDry.stdout);
+      assert.deepStrictEqual([j.ok, j.dryRun, j.error.code, j.error.rollback], [false, true, 'interrupted', 'none']);
+    });
+
+    // --reset-to-base: the backup branch it made, by name.
+    const wsReset = path.join(wsRoot, 'add-json-reset');
+    wsg(['new', 'add-json-reset', '--no-launch']);
+    git(api, ['branch', 'task/add-json-reset', 'main']);
+    const resetDry = wsg(['add', api, '--branch', 'task/add-json-reset', '--reset-to-base', '--base', 'main', '--dry-run', '--json'], { cwd: wsReset });
+    const reset = wsg(['add', api, '--branch', 'task/add-json-reset', '--reset-to-base', '--base', 'main', '--json'], { cwd: wsReset });
+    it('--reset-to-base, dry run: start reset, no backup yet', () => {
+      assert.strictEqual(resetDry.code, 0, resetDry.all);
+      const { plan, backupBranch } = envelope(resetDry, 'reset dry').result;
+      assert.deepStrictEqual([plan.start, plan.branchExists, backupBranch], ['reset', true, null]);
+    });
+    it('--reset-to-base: the backup branch in the result, and in the repository', () => {
+      assert.strictEqual(reset.code, 0, reset.all);
+      const { backupBranch, plan } = envelope(reset, 'reset').result;
+      assert.match(backupBranch, /^backup\/task-add-json-reset-\d{14}$/);
+      assert.ok(branches(api).includes(backupBranch));
+      assert.strictEqual(plan, null);
+    });
+    {
+      const rwt = path.join(wsReset, 'api');
+      if (fs.existsSync(path.join(rwt, '.git'))) execFileSync('git', ['-C', api, 'worktree', 'remove', '--force', rwt]);
+      for (const b of branches(api).filter((x) => x.startsWith('backup/task-add-json-reset') || x === 'task/add-json-reset')) git(api, ['branch', '-D', b]);
+    }
+
+    // An epic: the defaults its tasks get, always as four keys, refused or not.
+    const wsEpic = path.join(wsRoot, 'add-json-epic');
+    wsg(['new', 'add-json-epic', '--kind', 'epic', '--no-launch']);
+    const epicDry = wsg(['add', api, '--branch-template', 'aj/{slug}', '--carry', '.env', '--dry-run', '--json'], { cwd: wsEpic });
+    it('an epic source: its task defaults, base null for the default', () => {
+      assert.strictEqual(epicDry.code, 0, epicDry.all);
+      const { task } = envelope(epicDry, 'epic dry').result.source;
+      assert.deepStrictEqual(task, { branch: 'aj/{slug}', base: null, carry: ['.env'], cloneNm: false });
+    });
+    it('an epic source: the carry candidates in the plan, from its task defaults', () => {
+      const { plan } = envelope(epicDry, 'epic dry').result;
+      assert.ok(plan.carryCandidates.includes('.env'), JSON.stringify(plan));
+    });
+    const epicBad = wsg(['add', api, '--branch-template', 'no-vars', '--dry-run', '--json'], { cwd: wsEpic });
+    it('a refused template: invalid_input, the task defaults still four keys', () => {
+      assert.strictEqual(epicBad.code, 2, epicBad.all);
+      const j = envelope(epicBad, 'epic bad');
+      assert.strictEqual(j.error.code, 'invalid_input');
+      assert.deepStrictEqual(Object.keys(j.result.source.task), ['branch', 'base', 'carry', 'cloneNm']);
+      assert.deepStrictEqual([j.result.source.task.branch, typeof j.result.source.task.cloneNm], ['no-vars', 'boolean']);
+    });
+
+    const wt = path.join(wsA, 'api');
+    if (fs.existsSync(path.join(wt, '.git'))) execFileSync('git', ['-C', api, 'worktree', 'remove', '--force', wt]);
   }
 
   console.log('\nwsg promote');
