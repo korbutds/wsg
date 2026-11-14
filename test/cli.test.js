@@ -261,6 +261,30 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       assert.strictEqual(W.statusOf(epicState), null);
       assert.strictEqual(W.statusOf({ ...epicState, status: 'done' }), null);
     });
+    it('statusMarker: nothing for open, [review], [done date] or [done], a plain unknown word as is, anything else [?]', () => {
+      assert.deepStrictEqual([undefined, null, 'open', 'review', 'blocked', 'a b', 'x]', '[x'].map((st) => W.statusMarker(st, null)),
+        ['', '', '', '[review]', '[blocked]', '[?]', '[?]', '[?]']);
+      assert.deepStrictEqual([W.statusMarker('done', '2026-11-14'), W.statusMarker('done', null), W.statusMarker('done', '2026-02-30')],
+        ['[done 2026-11-14]', '[done]', '[done]']);
+    });
+    // An entry in For the epic: a non-blank line of the section outside an HTML comment.
+    for (const [what, text, want] of [
+      ['no section', '# Notes\n\n## Notes\n\n- x\n', false],
+      ['only the template\'s comment', '## For the epic\n\n<!-- one\ntwo -->\n\n## Notes\n\n- x\n', false],
+      ['an entry', '## For the epic\n\n<!-- hint -->\n- 2026-11-14: a fact (a.ts:1)\n\n## Notes\n', true],
+      ['text after a comment on its line', '## For the epic\n<!-- hint --> a fact\n## Notes\n', true],
+      ['a ### heading is an entry', '## For the epic\n### 2026-11-14\n## Notes\n', true],
+      ['the section at the end, empty', '## Notes\n- x\n## For the epic\n\n', false],
+      ['an unclosed comment hides the rest', '## For the epic\n<!-- open\n- x\n', false],
+      ['CRLF', '## For the epic\r\n\r\n- x\r\n## Notes\r\n', true],
+    ]) {
+      it(`forEpicEntries: ${what} -> ${want}`, () => assert.strictEqual(W.forEpicEntries(text), want));
+    }
+    it('forEpicPending: null outside an epic task, false without notes.md', () => {
+      assert.strictEqual(W.forEpicPending(tmp, proc), null);
+      assert.strictEqual(W.forEpicPending(tmp, epicState), null);
+      assert.strictEqual(W.forEpicPending(path.join(tmp, 'no-such-dir'), childState), false);
+    });
     it('stateProblem is the same check without a file', () => {
       assert.strictEqual(W.stateProblem(epicState), '');
       assert.match(W.stateProblem({ ...epicState, version: 2 }), /expected version 3/);
@@ -5036,6 +5060,221 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     });
     const extra = wsg(['check', 'a', 'b', '--json'], { env });
     it('a second path: exit 2, invalid_input', () => assert.strictEqual(envelope(extra, 'extra').error.code, 'invalid_input'));
+  }
+
+  console.log('\nwsg list');
+  {
+    const root = path.join(tmp, 'list-root');
+    const env = { WS_ROOT: root };
+    const VERSION = require(path.join(ROOT, 'package.json')).version;
+    const ENTRY_KEYS = ['slug', 'kind', 'path', 'title', 'ticket', 'status', 'closed', 'forEpicPending', 'created', 'epic', 'legacy',
+      'problems', 'extraDirs', 'sources', 'tasks'];
+    const listJson = (extra = {}) => {
+      const r = wsg(['list', '--json'], { env: { ...env, ...extra } });
+      let j = null;
+      try { j = JSON.parse(r.out); } catch { /* below */ }
+      assert.ok(j, `stdout is not one JSON document: ${r.all}`);
+      return { r, j };
+    };
+    const empty = wsg(['list'], { env });
+    it('no WS_ROOT yet: exit 0, says there are none', () => {
+      assert.strictEqual(empty.code, 0, empty.all);
+      assert.match(empty.out, /No workspaces in .*list-root yet/);
+    });
+    it('no WS_ROOT yet, --json: an empty list', () => assert.deepStrictEqual(listJson().j.result.workspaces, []));
+
+    const listApi = makeRepo('list-api');
+    const listDocs = path.join(tmp, 'list-docs');
+    fs.mkdirSync(listDocs);
+    const run = (args, opts = {}) => {
+      const r = wsg(args, { env, ...opts });
+      if (r.code !== 0) throw new Error(`${args.join(' ')}: ${r.all}`);
+      return r;
+    };
+    run(['new', 'shop', '--kind', 'epic', '--title', 'Shop epic', '--no-launch']);
+    run(['add', listApi, '--branch-template', 'acme/{slug}', '--ws', 'shop']);
+    run(['add', listDocs, '--reference', '--ws', 'shop']);
+    run(['new', 'pay', '--epic', 'shop', '--ticket', 'ACME-7', '--title', 'Pay flow', '--no-launch']);
+    run(['new', 'refund', '--epic', 'shop', '--sources', 'none', '--no-launch']);
+    run(['new', 'fresh', '--no-launch']);
+    run(['new', 'release', '--kind', 'process', '--no-launch']);
+    run(['add', listDocs, '--reference', '--ws', 'fresh']);
+    const shop = path.join(root, 'shop');
+    const pay = path.join(shop, 'pay');
+    const refund = path.join(shop, 'refund');
+    // refund in review, pay done with an entry for the epic still in its notes.
+    const setState = (ws, over) => {
+      const st = JSON.parse(fs.readFileSync(path.join(ws, W.STATE_FILE), 'utf8'));
+      fs.writeFileSync(path.join(ws, W.STATE_FILE), W.stateJson({ ...st, ...over }));
+    };
+    setState(refund, { status: 'review' });
+    setState(pay, { status: 'done', closed: '2026-11-10' });
+    fs.writeFileSync(path.join(pay, 'notes.md'), fs.readFileSync(path.join(pay, 'notes.md'), 'utf8')
+      .replace(/(## For the epic\n\n<!--[\s\S]*?-->\n)/, '$1\n- 2026-11-10: the API caches refunds (api/cache.ts:12)\n'));
+    // A process with a status from a later wsg: listed, the problem said.
+    setState(path.join(root, 'release'), { status: 'blocked' });
+    // 0.1 workspaces: ws-kind, and the oldest — CLAUDE.md in a directory that is not a repository.
+    fs.mkdirSync(path.join(root, 'old', '.claude'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'old', '.claude', 'ws-kind'), 'process\n');
+    fs.mkdirSync(path.join(root, 'oldest'));
+    fs.writeFileSync(path.join(root, 'oldest', 'CLAUDE.md'), '# old\n');
+    // Not workspaces: a checkout with CLAUDE.md, a symlink to a workspace, a hidden directory, a file.
+    const checkout = path.join(root, 'checkout');
+    fs.mkdirSync(path.join(checkout, '.git'), { recursive: true });
+    fs.writeFileSync(path.join(checkout, 'CLAUDE.md'), '# repo\n');
+    fs.symlinkSync(path.join(root, 'fresh'), path.join(root, 'alias'));
+    fs.mkdirSync(path.join(root, '.hidden', '.claude'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.hidden', W.STATE_FILE), fs.readFileSync(path.join(root, 'fresh', W.STATE_FILE)));
+    fs.writeFileSync(path.join(root, 'notes.txt'), 'x\n');
+    // A broken state, at the top and in the epic.
+    run(['new', 'broken', '--no-launch']);
+    fs.writeFileSync(path.join(root, 'broken', W.STATE_FILE), '{');
+    run(['new', 'cracked', '--epic', 'shop', '--sources', 'none', '--no-launch']);
+    fs.writeFileSync(path.join(shop, 'cracked', W.STATE_FILE), '{"kind": "task"}');
+
+    // A git that leaves a mark: list must never run it.
+    const gitBin = path.join(tmp, 'list-git-bin');
+    const gitMark = path.join(tmp, 'list-git-ran');
+    fs.mkdirSync(gitBin);
+    fs.writeFileSync(path.join(gitBin, 'git'), `#!/bin/sh\ntouch ${JSON.stringify(gitMark)}\nexit 1\n`, { mode: 0o755 });
+    const before = tree(root);
+    const { r, j } = listJson({ PATH: gitBin });
+    const plain = wsg(['list'], { env: { ...env, PATH: gitBin } });
+    it('--json: exit 0, the envelope, nothing on stderr', () => {
+      assert.strictEqual(r.code, 0, r.all);
+      assert.strictEqual(r.err, '');
+      assert.deepStrictEqual(Object.keys(j), ['schemaVersion', 'wsgVersion', 'ok', 'command', 'dryRun', 'result', 'error', 'warnings']);
+      assert.deepStrictEqual([j.schemaVersion, j.wsgVersion, j.ok, j.command, j.dryRun, j.error, j.warnings], [1, VERSION, true, 'list', false, null, []]);
+      assert.deepStrictEqual(Object.keys(j.result), ['wsgVersion', 'wsRoot', 'workspaces']);
+      assert.deepStrictEqual([j.result.wsgVersion, j.result.wsRoot], [VERSION, root]);
+    });
+    it('no git is run, nothing is written', () => {
+      assert.ok(!fs.existsSync(gitMark));
+      assert.strictEqual(plain.code, 0, plain.all);
+      assert.deepStrictEqual(tree(root), before);
+    });
+    const all = [];
+    const walk = (ws) => { for (const w of ws) { all.push(w); walk(w.tasks); } };
+    walk(j.result.workspaces);
+    const by = (p) => all.find((w) => w.path === p);
+    it('every entry has every key, in order', () => {
+      for (const w of all) assert.deepStrictEqual(Object.keys(w), ENTRY_KEYS, w.path);
+    });
+    it('the roots, sorted; not the checkout, the symlink, the hidden directory or the file', () => {
+      assert.deepStrictEqual(j.result.workspaces.map((w) => w.slug), ['broken', 'fresh', 'old', 'oldest', 'release', 'shop']);
+    });
+    it('the epic: its tasks nested, sorted, the broken one included', () => {
+      const e = by(shop);
+      assert.deepStrictEqual([e.kind, e.title, e.status, e.closed, e.forEpicPending, e.epic, e.legacy, e.problems], ['epic', 'Shop epic', null, null, null, null, false, []]);
+      assert.deepStrictEqual(e.tasks.map((w) => w.slug), ['cracked', 'pay', 'refund']);
+      assert.deepStrictEqual(e.extraDirs, [listApi, listDocs]);
+      assert.deepStrictEqual(e.sources.map((s) => [s.name, s.mode, s.path, s.workspacePath]),
+        [['list-api', 'link', listApi, path.join(shop, 'list-api')], ['list-docs', 'reference', listDocs, path.join(shop, 'list-docs')]]);
+      assert.deepStrictEqual(e.sources[0].task, { branch: 'acme/{slug}', base: null, carry: ['.env', 'local.pem'], cloneNm: false });
+    });
+    it('a task of the epic: ticket, status done with its date, a worktree from the epic, the epic directory first', () => {
+      const t1 = by(pay);
+      assert.deepStrictEqual([t1.kind, t1.title, t1.ticket, t1.status, t1.closed, t1.epic, t1.problems, t1.tasks], ['task', 'Pay flow', 'ACME-7', 'done', '2026-11-10', 'shop', [], []]);
+      assert.match(t1.created, /^\d{4}-\d{2}-\d{2}$/);
+      assert.deepStrictEqual(t1.extraDirs, [shop]);
+      assert.deepStrictEqual(t1.sources.map((s) => [s.name, s.mode, s.branch, s.from, s.workspacePath]), [['list-api', 'worktree', 'acme/pay', 'epic', path.join(pay, 'list-api')]]);
+    });
+    it('forEpicPending: true with an entry in For the epic, false with only the template\'s comment', () => {
+      assert.strictEqual(by(pay).forEpicPending, true);
+      assert.strictEqual(by(refund).forEpicPending, false);
+      assert.strictEqual(by(refund).status, 'review');
+      assert.strictEqual(by(refund).closed, null);
+    });
+    it('a standalone task: status open, a reference in extraDirs, forEpicPending null', () => {
+      const f = by(path.join(root, 'fresh'));
+      assert.deepStrictEqual([f.kind, f.status, f.forEpicPending, f.epic, f.extraDirs], ['task', 'open', null, null, [listDocs]]);
+      assert.deepStrictEqual(f.sources.map((s) => s.mode), ['reference']);
+    });
+    it('a process with an unknown status: kept as it is, the problem said', () => {
+      const p = by(path.join(root, 'release'));
+      assert.deepStrictEqual([p.kind, p.status], ['process', 'blocked']);
+      assert.strictEqual(p.problems.length, 1);
+      assert.match(p.problems[0], /"blocked" is not one of open, review, done/);
+    });
+    it('0.1 workspaces: legacy, the kind ws-kind gives, the rest empty', () => {
+      const o = by(path.join(root, 'old'));
+      assert.deepStrictEqual([o.kind, o.legacy, o.status, o.title, o.problems, o.sources], ['process', true, null, null, [], []]);
+      assert.deepStrictEqual([by(path.join(root, 'oldest')).kind, by(path.join(root, 'oldest')).legacy], ['task', true]);
+    });
+    it('a state that does not read: kind null, its problem, still listed (at the top and in the epic)', () => {
+      for (const p of [path.join(root, 'broken'), path.join(shop, 'cracked')]) {
+        const b = by(p);
+        assert.deepStrictEqual([b.kind, b.status, b.legacy, b.sources, b.extraDirs], [null, null, false, [], []], p);
+        assert.strictEqual(b.problems.length, 1, p);
+        assert.match(b.problems[0], /wsg\.json/, p);
+      }
+    });
+    it('the plain tree: a line per workspace, the tasks indented, markers and problems', () => {
+      const lines = plain.out.split('\n');
+      assert.ok(lines.includes('shop (epic) — Shop epic'), plain.out);
+      assert.ok(lines.includes('  pay [done 2026-11-10] ACME-7 — Pay flow (For the epic in notes.md not merged yet)'), plain.out);
+      assert.ok(lines.includes('  refund [review]'), plain.out);
+      assert.ok(lines.includes('fresh'), plain.out);
+      assert.ok(lines.includes('release (process) [blocked]'), plain.out);
+      assert.ok(lines.includes('old (wsg 0.1: no .claude/wsg.json)'), plain.out);
+      assert.ok(lines.includes('broken (its state does not read: see wsg check)'), plain.out);
+      assert.ok(lines.some((l) => l.startsWith('  ! ') && /wsg\.json/.test(l)), plain.out);
+      assert.ok(lines.some((l) => l.startsWith('    ! ') && /wsg\.json/.test(l)), plain.out);
+      assert.strictEqual(plain.err, '');
+    });
+    const ru = wsg(['list'], { env: { ...env, WSG_LANG: 'ru' } });
+    it('the plain tree in Russian', () => assert.ok(ru.out.split('\n').includes('old (wsg 0.1: нет .claude/wsg.json)'), ru.out));
+    it('a task of the epic whose state names another epic: listed with the problem', () => {
+      setState(refund, { epic: { slug: 'other' } });
+      try {
+        const x = listJson().j.result.workspaces.find((w) => w.slug === 'shop').tasks.find((w) => w.slug === 'refund');
+        assert.deepStrictEqual(x.epic, 'other');
+        assert.match(x.problems.join('\n'), /names epic other/);
+      } finally { setState(refund, { epic: { slug: 'shop' } }); }
+    });
+    it('a source entry that is not a source: the workspace listed, the entry left out, the problem said', () => {
+      const f = path.join(root, 'fresh');
+      const was = fs.readFileSync(path.join(f, W.STATE_FILE), 'utf8');
+      try {
+        setState(f, { sources: [null, ...JSON.parse(was).sources, 'x'] });
+        const r2 = wsg(['list', '--json'], { env });
+        assert.strictEqual(r2.code, 0, r2.all);
+        const x = JSON.parse(r2.out).result.workspaces.find((w) => w.slug === 'fresh');
+        assert.deepStrictEqual([x.kind, x.sources.map((s) => s.mode), x.extraDirs], ['task', ['reference'], [listDocs]]);
+        assert.deepStrictEqual(x.problems, ['source #1 is not a source: null — left out; fix .claude/wsg.json by hand',
+          'source #3 is not a source: "x" — left out; fix .claude/wsg.json by hand']);
+        const p2 = wsg(['list'], { env });
+        assert.strictEqual(p2.code, 0, p2.all);
+        assert.match(p2.out, /^ {2}! source #1 is not a source: null/m);
+      } finally { fs.writeFileSync(path.join(f, W.STATE_FILE), was); }
+    });
+    it('a task at the top whose state names an epic: a problem, no epic directory in extraDirs', () => {
+      const f = path.join(root, 'fresh');
+      const was = fs.readFileSync(path.join(f, W.STATE_FILE), 'utf8');
+      try {
+        setState(f, { epic: { slug: 'shop' } });
+        const x = listJson().j.result.workspaces.find((w) => w.slug === 'fresh');
+        assert.deepStrictEqual([x.epic, x.extraDirs, x.forEpicPending], ['shop', [listDocs], false]);
+        assert.deepStrictEqual(x.problems, ['its state names epic shop, but it is not inside an epic: see wsg check']);
+      } finally { fs.writeFileSync(path.join(f, W.STATE_FILE), was); }
+    });
+    for (const [args, what] of [[['list', 'x'], 'path'], [['list', '--dry-run'], '--dry-run'], [['list', '--ws', 'x'], '--ws']]) {
+      const bad = wsg(args, { env });
+      it(`list takes no ${what}: exit 2`, () => assert.strictEqual(bad.code, 2, bad.all));
+      const badJ = wsg([...args, '--json'], { env });
+      it(`list takes no ${what}, --json: invalid_input in the envelope`, () => {
+        assert.strictEqual(badJ.code, 2, badJ.all);
+        const e = JSON.parse(badJ.out);
+        assert.deepStrictEqual([e.ok, e.command, e.error.code, e.result], [false, 'list', 'invalid_input', null]);
+      });
+    }
+    const brokenCfg = path.join(tmp, 'list-broken-config');
+    fs.writeFileSync(brokenCfg, 'WS_ROOT=/x\n', { mode: 0o000 });
+    const noCfg = wsg(['list', '--json'], { env: { ...env, WSG_CONFIG: brokenCfg } });
+    it('a broken config, --json: the envelope, exit 1', () => {
+      assert.strictEqual(noCfg.code, 1, noCfg.all);
+      assert.deepStrictEqual([JSON.parse(noCfg.out).command, JSON.parse(noCfg.out).error.code], ['list', 'internal']);
+    });
   }
 
   console.log('\nwsg promote');

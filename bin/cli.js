@@ -184,43 +184,14 @@ function targetWs(given) {
     if (!fs.existsSync(ws)) invalid(t('cli.noWorkspace', { ws }));
     if (W.hasState(ws)) return { ws, legacy: false };
     // 0.1 marks: ws-kind, or — older still — a CLAUDE.md in a directory that is not a repository.
-    const old = fs.existsSync(path.join(ws, '.claude', 'ws-kind'))
-      || (fs.existsSync(path.join(ws, 'CLAUDE.md')) && !fs.existsSync(path.join(ws, '.git')));
-    if (!old) invalid(t('cli.notWorkspace', { ws }));
+    if (!W.isLegacy(ws)) invalid(t('cli.notWorkspace', { ws }));
     return { ws, legacy: true };
   }
   return W.find(process.cwd());
 }
 
-// A source as --json gives it (add, new): a spec, a plan, or a state entry — whatever is known.
-// Every key always there; null for what is not; paths absolute. ws: the workspace it is in; plan:
-// the source's plan, for the clone flag of one refused before its spec was made.
-function sourceResult(ws, x, plan = x) {
-  const name = x.name || null;
-  const nmClone = plan && plan.nodeModules && typeof plan.nodeModules.clone === 'boolean' ? plan.nodeModules.clone : null;
-  const task = x.task && typeof x.task === 'object' && !Array.isArray(x.task) ? x.task : null;
-  return {
-    name,
-    mode: x.reference || x.mode === 'reference' ? 'reference' : x.mode || null,
-    path: x.path || null,
-    workspacePath: name && ws ? path.join(ws, name) : null,
-    branch: x.branch || null,
-    base: x.base || null,
-    target: x.target && x.target !== '—' ? x.target : null,
-    verify: x.verify || null,
-    note: x.note || null,
-    carry: Array.isArray(x.carry) ? x.carry : [],
-    cloneNm: typeof x.cloneNm === 'boolean' ? x.cloneNm : nmClone,
-    from: x.from || null,
-    // An epic's defaults for its tasks, always these four keys; base null: the default.
-    task: task && {
-      branch: typeof task.branch === 'string' ? task.branch : null,
-      base: typeof task.base === 'string' && task.base ? task.base : null,
-      carry: Array.isArray(task.carry) ? task.carry : [],
-      cloneNm: typeof task.cloneNm === 'boolean' ? task.cloneNm : nmClone,
-    },
-  };
-}
+// A source as --json gives it (add, new, list): lib/json.js.
+const { sourceResult } = J;
 
 async function cmdNew(args) {
   const { flags, pos } = parse(args, FLAGS.new, 1);
@@ -833,6 +804,17 @@ function cmdCheck(args) {
   return summary.fails ? J.fail('check_failed', t('cli.checkFailed', summary), { result, details: fails }) : J.succeed(result);
 }
 
+// Every workspace under WS_ROOT, an epic's tasks under it: a tree, or with --json the same as data.
+// Only reads, and runs no git (lib/list.js).
+function cmdList(args) {
+  parse(args, FLAGS.list, 0);
+  const L = lib('list');
+  const workspaces = L.collect(cfg.WS_ROOT);
+  if (J.active()) return J.succeed({ wsgVersion: pkg.version, wsRoot: cfg.WS_ROOT, workspaces });
+  process.stdout.write(L.render(workspaces, cfg.WS_ROOT));
+  return 0;
+}
+
 async function cmdPromote(args) {
   const { flags, pos } = parse(args, FLAGS.promote, 1);
   if (!flags['--skill']) invalid(t('cli.promoteSkill'));
@@ -895,6 +877,7 @@ const COMMANDS = {
   refresh: cmdRefresh,
   team: cmdTeam,
   check: cmdCheck,
+  list: cmdList,
   promote: cmdPromote,
   'install-skills': cmdInstallSkills,
   // The 0.1 spellings, kept for one release.
