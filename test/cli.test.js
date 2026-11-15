@@ -1100,7 +1100,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     it('tasks.md is as it was', () => assert.strictEqual(fs.readFileSync(path.join(ep, 'tasks.md'), 'utf8'), tasksBefore));
   }
 
-  console.log('\nwsg new --epic: Owner rules from the epic');
+  console.log('\nwsg new --epic: the epic\'s Owner rules, rendered');
   {
     const root = path.join(tmp, 'epic-rules-root');
     const memory = path.join(tmp, 'epic-owner-rules.md');
@@ -1110,18 +1110,32 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     // No --ticket: the epic's AGENTS.md has Ticket: FILL IN outside its Owner rules.
     wsg(['new', 'rules-epic', '--kind', 'epic', '--no-launch'], { env });
     const epicAgents = path.join(ep, 'AGENTS.md');
-    const childAgents = (slug) => fs.readFileSync(path.join(ep, slug, 'AGENTS.md'), 'utf8');
+    const childFile = (slug) => path.join(ep, slug, 'AGENTS.md');
+    const childAgents = (slug) => fs.readFileSync(childFile(slug), 'utf8');
+    // The task's own section: the heading at the start of a line, not the block's mention of it.
+    const ownSection = (a) => (a.includes('\n## Owner rules') ? a.slice(a.indexOf('\n## Owner rules') + 1, a.indexOf('## Code map')) : '');
+    const rulesBlock = (a) => {
+      const m = /<!-- wsg:epic-rules -->\n([\s\S]*?)<!-- \/wsg:epic-rules -->\n/.exec(a);
+      return m ? m[1] : null;
+    };
     const plainRules = (slug) => {
       wsg(['new', `${slug}-plain`, '--no-launch'], { env });
-      const a = fs.readFileSync(path.join(root, `${slug}-plain`, 'AGENTS.md'), 'utf8');
-      return a.slice(a.indexOf('## Owner rules'), a.indexOf('## Code map'));
+      return ownSection(fs.readFileSync(path.join(root, `${slug}-plain`, 'AGENTS.md'), 'utf8'));
     };
-    it('the epic\'s section still has FILL IN: the task gets the usual one', () => {
-      const n = wsg(['new', 'first', '--epic', 'rules-epic', '--no-launch'], { env });
-      assert.strictEqual(n.code, 0, n.all);
+    const refreshPlan = (slug) => JSON.parse(wsg(['refresh', '--dry-run', '--ws', path.join(ep, slug)], { env }).out);
+    const LEAD = 'Owner rules of epic `rules-epic` (override tool defaults), from `../AGENTS.md` as of the task\'s last render (`wsg refresh`, `add`, `remove`, `team`); this task\'s own `## Owner rules` section, if it has one, adds to these and wins.';
+
+    const n1 = wsg(['new', 'first', '--epic', 'rules-epic', '--no-launch'], { env });
+    it('the epic\'s section still has FILL IN: the task gets the usual one, no warning', () => {
+      assert.strictEqual(n1.code, 0, n1.all);
+      assert.doesNotMatch(n1.all, /WARN|warn/);
       const a = childAgents('first');
-      assert.strictEqual(a.slice(a.indexOf('## Owner rules'), a.indexOf('## Code map')), plainRules('first'));
+      assert.strictEqual(ownSection(a), plainRules('first'));
       assert.match(a, /FILL IN with a digest of `.*epic-owner-rules\.md`/);
+    });
+    it('and the block right after the epic block says the epic has none yet', () => {
+      const a = childAgents('first');
+      assert.match(a, /<!-- \/wsg:epic -->\n<!-- wsg:epic-rules -->\nEpic `rules-epic` has no Owner rules filled in yet \(`## Owner rules` in `\.\.\/AGENTS\.md`\); `wsg refresh` brings them here once it has\.\n<!-- \/wsg:epic-rules -->\n/);
     });
     const filled = [
       '## Owner rules (override tool defaults)', '',
@@ -1129,55 +1143,241 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       '2. alice reviews every MR.', '',
       '```text', '## not a heading inside a fence', '```', '',
     ].join('\n');
+    const body = ['1. Change nothing until an explicit "ok".', '2. alice reviews every MR.', '', '```text', '## not a heading inside a fence', '```'].join('\n');
     const text = fs.readFileSync(epicAgents, 'utf8');
     fs.writeFileSync(epicAgents, `${text.slice(0, text.indexOf('## Owner rules'))}${filled}\n## Epic only\n\nnot for the tasks\n`);
     it('the epic still has Ticket: FILL IN elsewhere', () => assert.match(fs.readFileSync(epicAgents, 'utf8'), /^Ticket: FILL IN/m));
-    it('the section filled in: copied as is, before the code map, up to the next heading', () => {
-      const n = wsg(['new', 'second', '--epic', 'rules-epic', '--no-launch'], { env });
-      assert.strictEqual(n.code, 0, n.all);
+    const n2 = wsg(['new', 'second', '--epic', 'rules-epic', '--no-launch'], { env });
+    it('the section filled in: rendered in the block, the heading dropped, up to the next heading', () => {
+      assert.strictEqual(n2.code, 0, n2.all);
       const a = childAgents('second');
-      assert.ok(a.includes(`${filled}\n## Code map`), a);
-      assert.doesNotMatch(a, /FILL IN with a digest/);
+      assert.strictEqual(rulesBlock(a), `${LEAD}\n\n${body}\n`);
       assert.doesNotMatch(a, /Epic only|not for the tasks/);
+    });
+    it('no section of the task\'s own, no FILL IN digest, no warning', () => {
+      assert.strictEqual(ownSection(childAgents('second')), '');
+      assert.doesNotMatch(childAgents('second'), /FILL IN with a digest/);
+      assert.doesNotMatch(n2.all, /WARN|warn/);
+    });
+    it('an immediate refresh changes nothing and warns about nothing', () => {
+      const plan = refreshPlan('second');
+      assert.deepStrictEqual(plan.files, []);
+      assert.deepStrictEqual(plan.warnings, []);
+      const r = wsg(['refresh', '--ws', path.join(ep, 'second')], { env });
+      assert.strictEqual(r.code, 0, r.all);
+      assert.match(r.out, /The generated parts are up to date/);
     });
     it('also into a task made without personal rules', () => {
       const n = wsg(['new', 'third', '--epic', 'rules-epic', '--no-launch'], { env: { WS_ROOT: root } });
       assert.strictEqual(n.code, 0, n.all);
-      assert.ok(childAgents('third').includes(`${filled}\n## Code map`));
+      assert.strictEqual(rulesBlock(childAgents('third')), `${LEAD}\n\n${body}\n`);
     });
-    it('a task with copied rules passes its check', () => {
+    it('a task with rendered rules passes its check', () => {
       const c = wsg(['check', path.join(ep, 'second')], { env });
       assert.strictEqual(c.code, 0, c.out);
     });
-    it('FILL IN back in the section: not copied', () => {
-      fs.writeFileSync(epicAgents, fs.readFileSync(epicAgents, 'utf8').replace('2. alice reviews every MR.', '2. FILL IN'));
-      wsg(['new', 'fourth', '--epic', 'rules-epic', '--no-launch'], { env });
-      assert.match(childAgents('fourth'), /FILL IN with a digest of/);
-      assert.ok(!childAgents('fourth').includes('alice reviews'));
+
+    // A rule the epic adds after the task was made reaches the task at its next refresh.
+    const withMango = fs.readFileSync(epicAgents, 'utf8').replace('2. alice reviews every MR.', '2. alice reviews every MR.\n3. Every reply ends with MANGO.');
+    fs.writeFileSync(epicAgents, withMango);
+    it('a rule added to the epic later: refresh --dry-run lists AGENTS.md, without warnings', () => {
+      const plan = refreshPlan('second');
+      assert.deepStrictEqual(plan.files, ['AGENTS.md']);
+      assert.deepStrictEqual(plan.warnings, []);
+      assert.doesNotMatch(childAgents('second'), /MANGO/);
     });
-    it('a section with a generated marker in it is not copied, and the task says why', () => {
-      fs.writeFileSync(epicAgents, fs.readFileSync(epicAgents, 'utf8').replace('2. FILL IN', '2. Keep `<!-- wsg:layout -->` intact.'));
-      assert.strictEqual(generate.epicOwnerRules(ep), null);
-      const n = wsg(['new', 'fifth', '--epic', 'rules-epic', '--no-launch'], { env });
-      assert.strictEqual(n.code, 0, n.all);
-      assert.match(n.all, /the epic's Owner rules were not copied into the task: they hold a <!-- wsg:… --> marker/);
+    it('wsg refresh in the task renders it; nothing else in the file changes', () => {
+      const was = childAgents('second');
+      const r = wsg(['refresh', '--ws', path.join(ep, 'second')], { env });
+      assert.strictEqual(r.code, 0, r.all);
+      assert.match(r.out, /Updated: AGENTS\.md/);
+      assert.strictEqual(childAgents('second'), was.replace('2. alice reviews every MR.\n', '2. alice reviews every MR.\n3. Every reply ends with MANGO.\n'));
+    });
+    it('a refresh of the epic does not write into its tasks', () => {
+      fs.writeFileSync(epicAgents, withMango.replace('MANGO', 'KIWI'));
+      const r = wsg(['refresh', '--ws', ep], { env });
+      assert.strictEqual(r.code, 0, r.all);
+      assert.doesNotMatch(childAgents('second'), /KIWI/);
+      fs.writeFileSync(epicAgents, withMango);
+    });
+    it('the epic\'s AGENTS.md gone: the block kept as it was, with the reason, exit 0', () => {
+      const was = childAgents('second');
+      const moved = path.join(tmp, 'epic-rules-gone.md');
+      fs.renameSync(epicAgents, moved);
+      let r;
+      try { r = wsg(['refresh', '--ws', path.join(ep, 'second')], { env }); } finally { fs.renameSync(moved, epicAgents); }
+      assert.strictEqual(r.code, 0, r.all);
+      assert.match(r.all, /the epic's Owner rules were not rendered: .* has no AGENTS\.md\. The <!-- wsg:epic-rules --> block is kept as it was/);
+      assert.strictEqual(childAgents('second'), was);
+    });
+    it('its Owner rules heading renamed: kept as well, with a warning; a new task gets "none yet"', () => {
+      const was = childAgents('second');
+      fs.writeFileSync(epicAgents, withMango.replace('## Owner rules (override', '## Owner Rules (override'));
+      try {
+        const r = wsg(['refresh', '--ws', path.join(ep, 'second')], { env });
+        assert.strictEqual(r.code, 0, r.all);
+        assert.match(r.all, /AGENTS\.md: the epic's AGENTS\.md has no ## Owner rules section; the <!-- wsg:epic-rules --> block is kept as it was/);
+        assert.strictEqual(childAgents('second'), was);
+        const n = wsg(['new', 'renamed', '--epic', 'rules-epic', '--no-launch'], { env });
+        assert.strictEqual(n.code, 0, n.all);
+        assert.doesNotMatch(n.all, /WARN|warn/);
+        assert.match(rulesBlock(childAgents('renamed')), /has no Owner rules filled in yet/);
+        assert.deepStrictEqual(refreshPlan('renamed').warnings, []);
+        assert.deepStrictEqual(refreshPlan('renamed').files, []);
+      } finally { fs.writeFileSync(epicAgents, withMango); }
+    });
+
+    // A task made by wsg 0.6.0: the epic's section copied once, no block.
+    const copied = (slug, section) => {
+      wsg(['new', slug, '--epic', 'rules-epic', '--no-launch'], { env });
+      const a = childAgents(slug).replace(/<!-- wsg:epic-rules -->\n[\s\S]*?<!-- \/wsg:epic-rules -->\n/, '');
+      fs.writeFileSync(childFile(slug), a.replace('## Code map', `${section}\n## Code map`));
+      return childAgents(slug);
+    };
+    const epicSection = fs.readFileSync(epicAgents, 'utf8').match(/## Owner rules[\s\S]*?(?=\n## Epic only)/)[0];
+    const old = copied('old-copy', `${epicSection}\n`);
+    const m1 = wsg(['refresh', '--ws', path.join(ep, 'old-copy')], { env });
+    it('a task of 0.6.0 with an exact copy: the first refresh adds the block and says to delete the section', () => {
+      assert.strictEqual(m1.code, 0, m1.all);
+      assert.match(m1.all, /AGENTS\.md: added the <!-- wsg:epic-rules --> block \(new in wsg 0\.6\.1\)/);
+      assert.match(m1.all, /the task's own ## Owner rules section repeats the epic's, which the <!-- wsg:epic-rules --> block now renders: delete the section/);
+    });
+    it('the section itself is not touched: only the block is new', () => {
+      const a = childAgents('old-copy');
+      assert.ok(a.includes(`${epicSection}\n`));
+      assert.strictEqual(a.replace(/<!-- wsg:epic-rules -->\n[\s\S]*?<!-- \/wsg:epic-rules -->\n/, ''), old);
+      assert.match(rulesBlock(a), /MANGO/);
+    });
+    it('a later refresh: no change, no warning', () => {
+      const r = wsg(['refresh', '--ws', path.join(ep, 'old-copy')], { env });
+      assert.strictEqual(r.code, 0, r.all);
+      assert.doesNotMatch(r.all, /WARN|added the|repeats/);
+      assert.match(r.out, /The generated parts are up to date/);
+    });
+    it('a copy the task has added to since: "N of M lines are also the epic\'s"', () => {
+      copied('old-partial', '## Owner rules (override tool defaults)\n\n1. Change nothing until an explicit "ok".\n2. bob deploys on Fridays.\n');
+      const r = wsg(['refresh', '--ws', path.join(ep, 'old-partial')], { env });
+      assert.strictEqual(r.code, 0, r.all);
+      assert.match(r.all, /1 of 2 lines of the task's own ## Owner rules section are also the epic's/);
+      assert.doesNotMatch(r.all, /delete the section/);
+    });
+    it('a task section of its own only: no copy warning', () => {
+      copied('old-own', '## Owner rules (override tool defaults)\n\n1. bob deploys on Fridays.\n');
+      const r = wsg(['refresh', '--ws', path.join(ep, 'old-own')], { env });
+      assert.match(r.all, /added the <!-- wsg:epic-rules --> block/);
+      assert.doesNotMatch(r.all, /also the epic's|delete the section/);
+    });
+    it('the block deleted by hand later: added back, the copy warned about again', () => {
+      fs.writeFileSync(childFile('old-copy'), childAgents('old-copy').replace(/<!-- wsg:epic-rules -->\n[\s\S]*?<!-- \/wsg:epic-rules -->\n/, ''));
+      const r = wsg(['refresh', '--ws', path.join(ep, 'old-copy')], { env });
+      assert.strictEqual(r.code, 0, r.all);
+      assert.match(r.all, /added the <!-- wsg:epic-rules --> block/);
+      assert.match(r.all, /delete the section/);
+    });
+
+    // The epic can't be read: the block is kept, the refresh goes on.
+    const secondBefore = childAgents('second');
+    it('the epic\'s state unreadable: refresh exit 0, the block kept as it was, with the reason', () => {
+      const f = path.join(ep, W.STATE_FILE);
+      const was = fs.readFileSync(f, 'utf8');
+      fs.writeFileSync(f, '{');
+      let r;
+      try { r = wsg(['refresh', '--ws', path.join(ep, 'second')], { env }); } finally { fs.writeFileSync(f, was); }
+      assert.strictEqual(r.code, 0, r.all);
+      assert.match(r.all, /the epic's Owner rules were not rendered: .*wsg\.json.*\. The <!-- wsg:epic-rules --> block is kept as it was/);
+      assert.strictEqual(childAgents('second'), secondBefore);
+    });
+    it('the epic\'s AGENTS.md a symlink: kept as well', () => {
+      const moved = path.join(tmp, 'epic-rules-agents.md');
+      fs.renameSync(epicAgents, moved);
+      fs.symlinkSync(moved, epicAgents);
+      let r;
+      try { r = wsg(['refresh', '--ws', path.join(ep, 'second')], { env }); } finally { fs.unlinkSync(epicAgents); fs.renameSync(moved, epicAgents); }
+      assert.strictEqual(r.code, 0, r.all);
+      assert.match(r.all, /block is kept as it was/);
+      assert.strictEqual(childAgents('second'), secondBefore);
+    });
+    it('a task moved out of its epic: the directory above is no epic, kept', () => {
+      const r = generate.epicRules(root, 'rules-epic');
+      assert.strictEqual(r.kind, 'refused');
+      assert.match(r.why, /is no wsg workspace/);
+      const b = generate.epicRulesBlock(path.join(root, 'first-plain'), { epic: { slug: 'rules-epic' } }, childAgents('second'));
+      assert.strictEqual(`${b.lines.join('\n')}\n`, rulesBlock(childAgents('second')));
+      assert.match(b.warning, /kept as it was/);
+    });
+    it('another epic\'s slug, or no epic above: refused with the reason', () => {
+      assert.match(generate.epicRules(ep, 'other').why, /is epic rules-epic, but this task's state names other/);
+      assert.match(generate.epicRules(path.join(root, 'first-plain'), 'x').why, /is a task workspace, not an epic/);
+    });
+
+    // A section that can't be pasted: a marker, an open fence.
+    fs.writeFileSync(epicAgents, withMango.replace('2. alice reviews every MR.', '2. Keep `<!-- wsg:layout -->` intact.'));
+    const nm = wsg(['new', 'fifth', '--epic', 'rules-epic', '--no-launch'], { env });
+    it('a section with a generated marker in it: the task is made, the block points to ../AGENTS.md, with why', () => {
+      assert.strictEqual(nm.code, 0, nm.all);
+      assert.strictEqual(nm.all.match(/were not rendered/g).length, 1, nm.all);
+      assert.match(nm.all, /the epic's Owner rules were not rendered: they hold a <!-- wsg:… --> marker, which would become a second generated block\. The <!-- wsg:epic-rules --> block points to \.\.\/AGENTS\.md instead/);
+      assert.match(rulesBlock(childAgents('fifth')), /^The Owner rules of epic `rules-epic` could not be rendered here \(`wsg check` says why\): read `## Owner rules` in `\.\.\/AGENTS\.md`\.\n$/);
       assert.match(childAgents('fifth'), /FILL IN with a digest of/);
     });
-    it('an unclosed fence: not copied either, with the reason', () => {
-      fs.writeFileSync(epicAgents, fs.readFileSync(epicAgents, 'utf8').replace('2. Keep `<!-- wsg:layout -->` intact.', '2. alice reviews.')
-        .replace('## not a heading inside a fence\n```\n', '## not a heading inside a fence\n'));
+    it('its dry run warns the same, exit 0', () => {
+      const d = wsg(['new', 'fifth-dry', '--epic', 'rules-epic', '--dry-run'], { env });
+      assert.strictEqual(d.code, 0, d.all);
+      const plan = JSON.parse(d.out);
+      assert.deepStrictEqual(plan.errors, []);
+      assert.ok(plan.warnings.some((w) => /were not rendered: they hold a <!-- wsg:… --> marker/.test(w)), JSON.stringify(plan.warnings));
+    });
+    it('an existing task keeps its block, with the reason, exit 0', () => {
+      const r = wsg(['refresh', '--ws', path.join(ep, 'second')], { env });
+      assert.strictEqual(r.code, 0, r.all);
+      assert.match(r.all, /they hold a <!-- wsg:… --> marker.*block is kept as it was/);
+      assert.strictEqual(childAgents('second'), secondBefore);
+    });
+    it('an unclosed fence: the same, with the reason', () => {
+      fs.writeFileSync(epicAgents, withMango.replace('## not a heading inside a fence\n```\n', '## not a heading inside a fence\n'));
       const n = wsg(['new', 'sixth', '--epic', 'rules-epic', '--no-launch'], { env });
       assert.strictEqual(n.code, 0, n.all);
       assert.match(n.all, /leave a code fence open/);
     });
     it('a section with FILL IN is not warned about, even with the fence open', () => {
-      fs.writeFileSync(epicAgents, fs.readFileSync(epicAgents, 'utf8').replace('2. alice reviews.', '2. FILL IN'));
-      assert.doesNotMatch(wsg(['new', 'seventh', '--epic', 'rules-epic', '--no-launch'], { env }).all, /not copied/);
+      fs.writeFileSync(epicAgents, fs.readFileSync(epicAgents, 'utf8').replace('2. alice reviews every MR.', '2. FILL IN'));
+      const n = wsg(['new', 'seventh', '--epic', 'rules-epic', '--no-launch'], { env });
+      assert.doesNotMatch(n.all, /not rendered/);
+      assert.match(rulesBlock(childAgents('seventh')), /has no Owner rules filled in yet/);
+      assert.match(childAgents('seventh'), /FILL IN with a digest of/);
     });
-    it('no section at all: the task gets the usual one', () => {
+    it('FILL IN back in the section: a task\'s refresh renders "none yet"', () => {
+      const r = wsg(['refresh', '--ws', path.join(ep, 'second')], { env });
+      assert.strictEqual(r.code, 0, r.all);
+      assert.match(rulesBlock(childAgents('second')), /^Epic `rules-epic` has no Owner rules filled in yet/);
+    });
+    it('no section at all: none, marked missing; no AGENTS.md: refused', () => {
       const a = fs.readFileSync(epicAgents, 'utf8');
       fs.writeFileSync(epicAgents, a.slice(0, a.indexOf('## Owner rules')));
-      assert.strictEqual(generate.epicOwnerRules(ep), null);
+      assert.deepStrictEqual(generate.epicRules(ep, 'rules-epic'), { kind: 'none', missing: true });
+      fs.unlinkSync(epicAgents);
+      try { assert.match(generate.epicRules(ep, 'rules-epic').why, /has no AGENTS\.md/); } finally { fs.writeFileSync(epicAgents, a); }
+    });
+
+    // With a source: each source's render keeps the block, and the reason is said once.
+    const src = makeRepo('epic-rules-src');
+    fs.writeFileSync(epicAgents, withMango);
+    it('the epic takes a source', () => { const r = wsg(['add', src, '--ws', ep], { env }); assert.strictEqual(r.code, 0, r.all); });
+    fs.writeFileSync(epicAgents, withMango.replace('2. alice reviews every MR.', '2. Keep `<!-- wsg:layout -->` intact.'));
+    const ns = wsg(['new', 'with-src', '--epic', 'rules-epic', '--sources', 'epic-rules-src', '--no-launch'], { env });
+    it('with a source and rules that can\'t be read: made, the reason said once', () => {
+      assert.strictEqual(ns.code, 0, ns.all);
+      assert.ok(fs.existsSync(path.join(ep, 'with-src', 'epic-rules-src')), ns.all);
+      assert.strictEqual(ns.all.match(/were not rendered/g).length, 1, ns.all);
+      assert.match(rulesBlock(childAgents('with-src')), /could not be rendered here/);
+    });
+    fs.writeFileSync(epicAgents, withMango);
+    const nf = wsg(['new', 'with-src-ok', '--epic', 'rules-epic', '--sources', 'epic-rules-src', '--no-launch'], { env });
+    it('with a source and rules: the block rendered, no warning, a refresh changes nothing', () => {
+      assert.strictEqual(nf.code, 0, nf.all);
+      assert.doesNotMatch(nf.all, /WARN|not rendered/);
+      assert.match(rulesBlock(childAgents('with-src-ok')), /MANGO/);
+      assert.deepStrictEqual(refreshPlan('with-src-ok').files, []);
     });
   }
 

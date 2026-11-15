@@ -296,9 +296,11 @@ async function cmdNew(args) {
     }
     // What createInEpic reads from the epic before it makes anything — its Owner rules, the tasks
     // block of tasks.md — checked here, in the plan: a dry run refuses what the real run would. Its
-    // warnings go into a dry run's plan; a real run gets them from createInEpic, once.
+    // warnings go into a dry run's plan; a real run gets them from createInEpic, once. Owner rules
+    // that can't be read never refuse the task: the block points to ../AGENTS.md, with a warning.
     try {
-      generate.epicOwnerRules(epicWs, dryRun ? { warn: (w) => taken.warnings.push(w) } : {});
+      const rules = dryRun ? generate.epicRules(epicWs, epic.slug) : null;
+      if (rules && rules.kind === 'refused') taken.warnings.push(generate.epicRulesWarning(rules, false));
       const tasks = generate.renderTasks(epicWs, epic);
       if (dryRun) taken.warnings.push(...tasks.warnings);
     } catch (e) {
