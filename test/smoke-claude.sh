@@ -27,6 +27,9 @@
 #      wsg-epic-* skills are in the init event's skills but not offered to the model (manual-only),
 #      while a model-invocable control skill added to the epic is; it quotes a marker put into the
 #      epic's pointer rule. The other reads a marker line of ../knowledge.md with the Read tool.
+#   7. The task's status, wsg only, no model: `wsg list --json` shows the task of step 6 open;
+#      `wsg status <epic>/<task> review`, then `wsg close <epic>/<task>`; `wsg list --json` and the
+#      epic's tasks.md show it done with today's date.
 #
 # The agent is the user-level one: for the run, this checkout's agent is rendered into
 # ${CLAUDE_CONFIG_DIR:-~/.claude}/agents/wsg-advisor.md, as `wsg install-skills` would write it,
@@ -268,6 +271,27 @@ out="$(ask "$W7" "Use the Read tool on ../knowledge.md and reply with its line t
 reply="$(reply_of "$out")"
 report "the session reads ../knowledge.md with the Read tool" "$([ "$(has "$(tool_results "$out")" KNOW-TOKEN-2c8)" = yes ] && has "$reply" KNOW-TOKEN-2c8 || echo no)"
 echo "  info  its reply: $(snippet "$reply")"
+
+echo "7. the task's status: list, status review, close, list"
+# A field of the task in wsg list --json: list_field <field>.
+list_field() {
+  wsg list --json | node -e '
+    let s = ""; process.stdin.on("data", (d) => { s += d; }).on("end", () => {
+      const e = JSON.parse(s).result.workspaces.find((w) => w.slug === "seven");
+      const t = e && e.tasks.find((w) => w.slug === "seven-a");
+      process.stdout.write(String(t ? t[process.argv[1]] : "missing"));
+    });' "$1"
+}
+report "wsg list --json: the task is open" "$([ "$(list_field status)" = open ] && echo yes || echo no)"
+wsg status seven/seven-a review >/dev/null && ok=yes || ok=no
+report "wsg status seven/seven-a review" "$ok"
+report "wsg status reads it back: review" "$([ "$(wsg status seven/seven-a)" = review ] && echo yes || echo no)"
+report "tasks.md shows [review]" "$(has "$(cat "$E7/tasks.md")" '`seven-a/` [review]')"
+wsg close seven/seven-a >/dev/null && ok=yes || ok=no
+report "wsg close seven/seven-a" "$ok"
+TODAY="$(node -e 'process.stdout.write(new Date().toISOString().slice(0, 10))')"
+report "wsg list --json: done, closed today" "$([ "$(list_field status) $(list_field closed)" = "done $TODAY" ] && echo yes || echo no)"
+report "tasks.md shows [done <date>]" "$(has "$(cat "$E7/tasks.md")" "\`seven-a/\` [done $TODAY]")"
 
 echo
 echo "passed: $pass, failed: $fail"

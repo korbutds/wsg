@@ -6612,11 +6612,11 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     it('README names refresh, install-skills --uninstall and the advisor guide', () => {
       for (const x of ['`wsg refresh [--dry-run] [--ws SLUG\\|PATH]`', '`wsg install-skills [--uninstall]`', '`wsg guide [setup\\|advisor\\|teach\\|epic]`', '## Advisor', '**Codex.**', 'docs/advisor-guide.md']) assert.ok(readme.includes(x), x);
     });
-    it('the version is 0.5.0, in package.json and its lock', () => {
-      assert.strictEqual(wsg(['--version']).out, '0.5.0\n');
+    it('the version is 0.6.0, in package.json and its lock', () => {
+      assert.strictEqual(wsg(['--version']).out, '0.6.0\n');
       const lock = JSON.parse(fs.readFileSync(path.join(ROOT, 'package-lock.json'), 'utf8'));
-      assert.strictEqual(lock.version, '0.5.0');
-      assert.strictEqual(lock.packages[''].version, '0.5.0');
+      assert.strictEqual(lock.version, '0.6.0');
+      assert.strictEqual(lock.packages[''].version, '0.6.0');
     });
 
     const bare = wsg([]);
