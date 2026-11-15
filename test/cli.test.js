@@ -1826,6 +1826,37 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     fs.writeFileSync(epicState, epicText);
     it('the epic has it again: no warning', () => assert.doesNotMatch(checkOut(pay).out, /was taken from the epic/));
 
+    // A done task whose notes still stage entries for the epic: not merged yet.
+    {
+      const before = checkOut(ep).out;
+      const st = path.join(bare, W.STATE_FILE);
+      const notes = path.join(bare, 'notes.md');
+      const stWas = fs.readFileSync(st, 'utf8');
+      const notesWas = fs.readFileSync(notes, 'utf8');
+      const withEntry = notesWas.replace(/(## For the epic\n\n<!--[\s\S]*?-->\n)/, '$1\n- 2026-11-14: a fact (a.ts:1)\n');
+      const pendingRe = /WARN task bare is done, but "## For the epic" in its notes\.md still has entries/;
+      try {
+        fs.writeFileSync(notes, withEntry);
+        it('an open task with entries for the epic: no warning, the report as it was', () => assert.strictEqual(checkOut(ep).out, before));
+        fs.writeFileSync(st, JSON.stringify({ ...JSON.parse(stWas), status: 'done', closed: '2026-11-14' }));
+        const r = checkOut(ep);
+        it('a done task with entries for the epic: WARN, the epic does not fail', () => {
+          assert.strictEqual(r.code, 0, r.out);
+          assert.match(r.out, pendingRe);
+        });
+        const rj = wsg(['check', ep, '--json'], { env });
+        it('and in check --json as a warn item', () => {
+          const items = JSON.parse(rj.out).result.sections.flatMap((sec) => sec.items);
+          assert.ok(items.some((it) => it.level === 'warn' && /^task bare is done, but "## For the epic"/.test(it.text)), rj.out);
+        });
+        fs.writeFileSync(notes, notesWas);
+        it('done with the entries merged (only the template\'s comment): no warning', () => assert.doesNotMatch(checkOut(ep).out, pendingRe));
+      } finally {
+        fs.writeFileSync(st, stWas);
+        fs.writeFileSync(notes, notesWas);
+      }
+    }
+
     // In the epic: a task directory whose state doesn't read, a workspace that is no task of it.
     const broken = path.join(ep, 'broken');
     fs.mkdirSync(path.join(broken, '.claude'), { recursive: true });
@@ -1833,8 +1864,13 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     it('a task whose state does not read: WARN, the epic does not fail', () => {
       const r = checkOut(ep);
       assert.strictEqual(r.code, 0, r.out);
-      assert.match(r.out, /WARN broken\/ — cannot read .*: not listed as a task of the epic until it is fixed/);
+      assert.match(r.out, /WARN broken\/ — cannot read .*: not listed as a task of the epic, and tasks\.md has no line for it, until it is fixed/);
       assert.match(r.out, /OK +task pay PROJ-42/);
+    });
+    it('and check --json has it as a warn item of the epic\'s report', () => {
+      const r = wsg(['check', ep, '--json'], { env });
+      const items = JSON.parse(r.out).result.sections.flatMap((sec) => sec.items);
+      assert.ok(items.some((it) => it.level === 'warn' && /^broken\/ — cannot read .*tasks\.md has no line for it/.test(it.text)), r.out);
     });
     fs.writeFileSync(path.join(broken, W.STATE_FILE), JSON.stringify({ version: 2, kind: 'task', slug: 'broken', sources: [] }));
     it('a workspace inside the epic that is not its task: WARN', () =>
@@ -1848,7 +1884,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     it('tasks.md out of date: WARN, run wsg refresh', () => {
       const r = checkOut(ep);
       assert.strictEqual(r.code, 0, r.out);
-      assert.match(r.out, /WARN tasks\.md lists other tasks than this directory holds — run wsg refresh/);
+      assert.match(r.out, /WARN tasks\.md lists other tasks or statuses than this directory holds — run wsg refresh/);
     });
     it('after wsg refresh it clears', () => {
       assert.strictEqual(wsg(['refresh', '--ws', ep], { env }).code, 0);
