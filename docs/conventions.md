@@ -59,7 +59,9 @@ procedures are in `wsg guide epic`, so any agent can follow them; the skills onl
 A task of the epic is made with `wsg new <slug> --epic <epic>`, in `<epic>/<slug>/`, and the
 epic's `tasks.md` lists it. Its `wsg.json` links it to the epic (`"epic": { "slug": … }`) and keeps
 the ticket key; its `AGENTS.md` has a `<!-- wsg:epic -->` block pointing to `../knowledge.md` and
-`../tasks.md`, and the epic's Owner rules section, copied as is when it holds no FILL IN; its
+`../tasks.md`, and right after it a `<!-- wsg:epic-rules -->` block with the epic's `## Owner rules`
+section, rendered from `../AGENTS.md` on every refresh of the task (the task's own `## Owner rules`
+section, if it has one, adds to them and wins); its
 `notes.md` has `## For the epic`, where it stages what the epic should learn from it. The epic's
 files are merged from the epic session when the task is closed (`wsg guide epic` → Closing), never
 edited from the task. A task's status — `open`, `review` or `done` — is the `status` field of its
@@ -104,7 +106,7 @@ change. Every `wsg add` re-renders from it:
 
 | Where | What |
 |---|---|
-| `AGENTS.md` | `<!-- wsg:advisor -->` — the one-line rule that questions for the owner go through the advisor first; `<!-- wsg:team -->` — three lines pointing to the team, only after `wsg team`; `<!-- wsg:epic -->` — in a task of an epic, the pointers to the epic, from the task's own state; `<!-- wsg:layout -->` — the source lines of Layout; `<!-- wsg:verification -->` — the Verification bullets |
+| `AGENTS.md` | `<!-- wsg:advisor -->` — the one-line rule that questions for the owner go through the advisor first; `<!-- wsg:team -->` — three lines pointing to the team, only after `wsg team`; `<!-- wsg:epic -->` — in a task of an epic, the pointers to the epic, from the task's own state; `<!-- wsg:epic-rules -->` — in a task of an epic, the epic's Owner rules, from `../AGENTS.md` (kept as they are, with a warning, when the epic can't be read); `<!-- wsg:layout -->` — the source lines of Layout; `<!-- wsg:verification -->` — the Verification bullets |
 | `CLAUDE.md` | `<!-- wsg:imports -->` — the `@<repo>/AGENTS.md` imports (`@AGENTS.md` itself stays outside) |
 | `README.md` | `<!-- wsg:sources -->` — the sources table and the launch commands |
 | `.claude/skills/<skill>/SKILL.md` | in a process workspace with a team: `<!-- wsg:team -->` — one pointer line to `team/workflow.md`, written by `wsg team` after the first `# ` heading |
@@ -221,9 +223,10 @@ the workspace's `AGENTS.md` — neither your personal rules nor the repositories
 chain. Everything Codex must know has to be in this file or in explicit pointers like "open X before
 working with Y".
 
-The same is expected for a task of an epic (not verified): the epic's `AGENTS.md` above it is not in the chain. So the
-task's own `AGENTS.md` carries what it needs from the epic — plain-text pointers to `../knowledge.md`
-and `../tasks.md`, and the epic's Owner rules copied at creation. Epics are not verified with Codex.
+The same holds for a task of an epic (verified 2026-11-15, Codex 0.166, from the prompt it builds):
+the epic's `AGENTS.md` above it is not in the chain. So the task's own `AGENTS.md` carries what it
+needs from the epic — plain-text pointers to `../knowledge.md` and `../tasks.md`, and the epic's
+Owner rules, rendered into it by `wsg refresh`. Codex's answers in an epic task are not verified.
 
 ## Memory
 

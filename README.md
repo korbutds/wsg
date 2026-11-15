@@ -221,7 +221,9 @@ $WS_ROOT/shop/
   the branches first. A task without a git repository reports setup not finished: from the task,
   `wsg add <name>` takes the epic's source of that name later (a flag given wins, `./<name>` is a
   path). The epic's `tasks.md` lists the task, and the task's `AGENTS.md` points to
-  `../knowledge.md` and `../tasks.md` and gets the epic's Owner rules when they are filled in.
+  `../knowledge.md` and `../tasks.md` and renders the epic's Owner rules in a
+  `<!-- wsg:epic-rules -->` block: a rule added to the epic later reaches the task at its next
+  `wsg refresh`; `wsg check` on the epic names the tasks that need one.
 - **Knowledge.** `knowledge.md` is the single source of truth, kept within 4 KiB and rewritten
   rather than appended to. A task never edits the epic's files: what the next task should know
   goes under `## For the epic` in the task's `notes.md`, dated, with evidence. When its work is
@@ -439,11 +441,15 @@ shows you the text before writing it.
   `.worktreeinclude`, and auto-cleanup. `wsg` helps where those fall short: a task spanning several
   repositories, a task knowledge layer, and a limits validator.
 - No command to delete a workspace — for now, three commands by hand.
-- **Epics in Codex are not verified.** Epics were built and tried with Claude Code only. A task
-  carries what it needs from its epic in its own `AGENTS.md`, as plain-text pointers, because
-  Codex is expected to read only the `AGENTS.md` of its directory (not verified); whether Codex reads `../knowledge.md`
-  from a task is not checked. `ws <epic>/<task> --codex` adds `--add-dir` for the task's linked
-  sources, not for the epic directory.
+- **Epics in Codex are only partly verified.** Epics were built and tried with Claude Code. A
+  task carries what it needs from its epic in its own `AGENTS.md` — plain-text pointers and the
+  epic's Owner rules, rendered — because Codex reads only the `AGENTS.md` of its directory: the
+  workspace is no git repository, so the epic's `AGENTS.md` above is not in its chain (verified
+  2026-11-15 with the prompt Codex builds, before any model call). How Codex answers in a task,
+  and whether it reads `../knowledge.md` from one, is not verified. The epic's rules in a task are
+  as of its last `wsg refresh` (or `wsg add`, `wsg remove`, `wsg team`), never pushed from the
+  epic. `ws <epic>/<task> --codex` adds `--add-dir` for the task's linked sources, not for the
+  epic directory.
 - **A task session under an epic.** Observed with `claude -p`: a task's session loads the epic's
   `CLAUDE.md`, rules, skills and agents, but not its `.claude/settings.json` (the task's own
   apply) and not an `@` import that leaves the task directory — so the task's `AGENTS.md` points to

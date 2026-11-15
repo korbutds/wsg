@@ -47,8 +47,9 @@ Go through these in order. Each answer goes into its section of `AGENTS.md`, rep
 8. **Links** — spec, designs, related MRs: one `Name: URL` line each, under the title.
 9. **Owner rules** — only if `AGENTS.md` has an "Owner rules" section: read the file it names, and
    condense the rules that matter for this task into a short numbered list there. Keep the six
-   required lines. A section already filled in, with no FILL IN (in a task of an epic, copied from
-   the epic), is left as it is.
+   required lines. A section already filled in, with no FILL IN, is left as it is. A task of an
+   epic gets the epic's rules in its `<!-- wsg:epic-rules -->` block instead: when the block holds
+   rules, delete a FILL IN section left in the task, or keep in it only the rules this task adds.
 
 If the title is just the slug or not in English, propose a better one and update the `# ` heading
 of every file that repeats it.
@@ -70,8 +71,9 @@ refuses an epic, a team belongs in a task. In section 5, the first step of the w
 task (`wsg guide epic` → Starting a task).
 
 **A task of an epic** (`AGENTS.md` has a `<!-- wsg:epic -->` block) is set up like any task, but
-read `../knowledge.md` first: it may answer questions before you ask them. The ticket and the
-Owner rules may already be there, and the repositories the task took from the epic are in Layout.
+read `../knowledge.md` first: it may answer questions before you ask them. The ticket may already
+be there, the epic's Owner rules are in the `<!-- wsg:epic-rules -->` block (wsg renders it; never
+edit it), and the repositories the task took from the epic are in Layout.
 Another repository of the epic is attached by its name from here: `wsg add <name> --dry-run` shows
 the worktree and branch it gets with the epic's defaults (a flag given wins over them), then
 `wsg add <name>` after "ok". A repository the epic doesn't have is attached by its path, as in

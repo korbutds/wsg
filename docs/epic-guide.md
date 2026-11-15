@@ -36,8 +36,8 @@ From the epic session, when the owner asks to start work on a ticket.
    `wsg new <slug> --epic <epic> --dry-run` with the same flags: it prints the plan, nothing made.
    A source that can't be attached refuses the whole task, nothing made.
 4. After it runs, the output names the sources the task took; the task's `AGENTS.md` points to
-   `../knowledge.md` and `../tasks.md`, and holds the epic's Owner rules when they are filled in
-   here. Tell the owner how to open a session in the task directory — `ws <epic>/<task>` or the
+   `../knowledge.md` and `../tasks.md`, and renders the epic's Owner rules (see Owner rules below).
+   Tell the owner how to open a session in the task directory — `ws <epic>/<task>` or the
    `cd … && <agent>` line, as the output says; the task is worked on there, not here. Its first session runs the setup
    (`wsg guide setup`) for what the epic does not give: why, done, scope, invariants.
 
@@ -97,6 +97,25 @@ From the epic session (`/wsg-epic-sync` in Claude Code), and as step 1 of Starti
 3. A tracker change that looks like a decision (a scope cut, a new dependency) is shown to the
    owner as a candidate for `knowledge.md`, never written without "ok".
 4. No tracker tool: report `SKIPPED tracker: no tool available` and change nothing.
+
+## Owner rules
+
+The epic's `## Owner rules` section in its `AGENTS.md` holds the rules for every task of it. Each
+task renders it, heading dropped, in a `<!-- wsg:epic-rules -->` block of its own `AGENTS.md`:
+rendered, not copied, so a rule added here reaches a task at its next `wsg refresh` (also `wsg add`,
+`wsg remove`, `wsg team` there). A refresh of the epic does not write into its tasks: `wsg check`
+here names the tasks whose block is behind; tell the owner to run `wsg refresh` in each, or in the
+task's session before it goes on. A rule only one task needs goes into that task's own
+`## Owner rules` section, which adds to the epic's and wins. A section with FILL IN renders as "no
+rules yet"; one with a `<!-- wsg:… -->` marker or an open code fence is not rendered — the tasks
+keep what they had, and `wsg check` says why. So does an epic whose `AGENTS.md` is missing, or has
+no `## Owner rules` section at all (deleted, or the heading renamed): a task's refresh keeps the
+block as it was, with a warning, rather than drop the rules.
+
+A task made by wsg 0.6.0 or earlier has the epic's section copied once into its own
+`## Owner rules`. Its first refresh adds the block and warns when that section repeats the epic's;
+`wsg check` keeps warning. wsg never edits that section: delete it, or keep only the task's own
+rules there, after the owner's "ok".
 
 ## Adding a repository
 

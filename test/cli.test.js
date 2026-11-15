@@ -571,6 +571,21 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       const g = fs.readFileSync(path.join(ROOT, 'docs', 'epic-guide.md'), 'utf8');
       for (const h of ['Starting a task', 'Working', 'Closing', 'Syncing', 'Adding a repository']) assert.match(g, new RegExp(`^## ${h}$`, 'm'), h);
     });
+    it('the docs: the epic\'s Owner rules are rendered into its tasks, not copied', () => {
+      const flat = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8').replace(/\s+/g, ' ');
+      const g = flat('docs/epic-guide.md');
+      assert.match(fs.readFileSync(path.join(ROOT, 'docs', 'epic-guide.md'), 'utf8'), /^## Owner rules$/m);
+      assert.ok(g.includes('rendered, not copied, so a rule added here reaches a task at its next `wsg refresh`'));
+      assert.ok(g.includes('A refresh of the epic does not write into its tasks'));
+      const conv = flat('docs/conventions.md');
+      assert.ok(conv.includes('`<!-- wsg:epic-rules -->` — in a task of an epic, the epic\'s Owner rules, from `../AGENTS.md`'));
+      assert.doesNotMatch(conv, /copied (as is|at creation)/);
+      const readme = flat('README.md');
+      assert.ok(readme.includes('renders the epic\'s Owner rules in a `<!-- wsg:epic-rules -->` block'));
+      assert.ok(readme.includes('Codex reads only the `AGENTS.md` of its directory'));
+      assert.doesNotMatch(readme, /Codex is expected to read only/);
+      assert.doesNotMatch(flat('docs/setup-guide.md'), /copied from the epic/);
+    });
 
     const c = wsg(['check', ep], { env });
     it('a fresh epic passes its check', () => assert.strictEqual(c.code, 0, c.out));
@@ -6965,11 +6980,11 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     it('README names refresh, install-skills --uninstall and the advisor guide', () => {
       for (const x of ['`wsg refresh [--dry-run] [--ws SLUG\\|PATH]`', '`wsg install-skills [--uninstall]`', '`wsg guide [setup\\|advisor\\|teach\\|epic]`', '## Advisor', '**Codex.**', 'docs/advisor-guide.md']) assert.ok(readme.includes(x), x);
     });
-    it('the version is 0.6.0, in package.json and its lock', () => {
-      assert.strictEqual(wsg(['--version']).out, '0.6.0\n');
+    it('the version is 0.6.1, in package.json and its lock', () => {
+      assert.strictEqual(wsg(['--version']).out, '0.6.1\n');
       const lock = JSON.parse(fs.readFileSync(path.join(ROOT, 'package-lock.json'), 'utf8'));
-      assert.strictEqual(lock.version, '0.6.0');
-      assert.strictEqual(lock.packages[''].version, '0.6.0');
+      assert.strictEqual(lock.version, '0.6.1');
+      assert.strictEqual(lock.packages[''].version, '0.6.1');
     });
 
     const bare = wsg([]);
