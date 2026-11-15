@@ -1381,6 +1381,159 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     });
   }
 
+  console.log('\nwsg check: the epic\'s Owner rules in its tasks');
+  {
+    const root = path.join(tmp, 'epic-rules-check-root');
+    const env = { WS_ROOT: root };
+    const ep = path.join(root, 'acme');
+    wsg(['new', 'acme', '--kind', 'epic', '--no-launch'], { env });
+    const epicAgents = path.join(ep, 'AGENTS.md');
+    const epicText = fs.readFileSync(epicAgents, 'utf8');
+    // An epic made without personal rules has no Owner rules section: the owner adds one.
+    assert.ok(!epicText.includes('## Owner rules'));
+    const withRules = (rules) => `${epicText}\n## Owner rules (override tool defaults)\n\n${rules}\n`;
+    fs.writeFileSync(epicAgents, withRules('1. Change nothing until an explicit "ok".\n2. alice reviews every MR.'));
+    for (const slug of ['cart', 'refunds']) wsg(['new', slug, '--epic', 'acme', '--no-launch'], { env });
+    const task = (slug) => path.join(ep, slug);
+    const taskFile = (slug) => path.join(ep, slug, 'AGENTS.md');
+    const chk = (dir) => wsg(['check', dir], { env });
+    const RULES_BLOCK = /<!-- wsg:epic-rules -->\n[\s\S]*?<!-- \/wsg:epic-rules -->\n/;
+
+    const c0 = chk(task('cart'));
+    it('a fresh task: OK, its block is the epic\'s rules as they are now', () => {
+      assert.strictEqual(c0.code, 0, c0.out);
+      assert.match(c0.out, /OK +AGENTS\.md has the epic's Owner rules as they are now/);
+      assert.doesNotMatch(c0.out, /WARN.*wsg:epic-rules/);
+    });
+    it('the epic lists no task to refresh', () => assert.doesNotMatch(chk(ep).out, /tasks without the epic's Owner rules/));
+    it('an epic without rules yet: its task says so, OK', () => {
+      const e2 = path.join(root, 'blank');
+      wsg(['new', 'blank', '--kind', 'epic', '--no-launch'], { env });
+      wsg(['new', 'one', '--epic', 'blank', '--no-launch'], { env });
+      assert.match(chk(path.join(e2, 'one')).out, /OK +the epic has no Owner rules yet; AGENTS\.md says so/);
+      assert.doesNotMatch(chk(e2).out, /tasks without the epic's Owner rules/);
+    });
+
+    fs.writeFileSync(epicAgents, withRules('1. Change nothing until an explicit "ok".\n2. alice reviews every MR.\n3. Every reply ends with MANGO.'));
+    it('a rule added to the epic: the task warns its block is stale, exit 0', () => {
+      const r = chk(task('cart'));
+      assert.strictEqual(r.code, 0, r.out);
+      assert.match(r.out, /WARN the <!-- wsg:epic-rules --> block is not the epic's Owner rules as they are now — run wsg refresh/);
+    });
+    it('the epic lists both tasks, without git or a refresh of its own', () => {
+      const before = fs.readFileSync(taskFile('cart'), 'utf8');
+      const r = chk(ep);
+      assert.match(r.out, /WARN tasks without the epic's Owner rules as they are now in their AGENTS\.md: cart, refunds — run wsg refresh in each/);
+      assert.strictEqual(fs.readFileSync(taskFile('cart'), 'utf8'), before);
+    });
+    it('after wsg refresh in one task, only the other is listed', () => {
+      assert.strictEqual(wsg(['refresh', '--ws', task('cart')], { env }).code, 0);
+      assert.match(chk(task('cart')).out, /OK +AGENTS\.md has the epic's Owner rules as they are now/);
+      assert.match(chk(ep).out, /in their AGENTS\.md: refunds — run wsg refresh in each/);
+    });
+
+    it('the block deleted: WARN, run wsg refresh; the epic lists the task', () => {
+      fs.writeFileSync(taskFile('refunds'), fs.readFileSync(taskFile('refunds'), 'utf8').replace(RULES_BLOCK, ''));
+      const r = chk(task('refunds'));
+      assert.strictEqual(r.code, 0, r.out);
+      assert.match(r.out, /WARN AGENTS\.md has no <!-- wsg:epic-rules --> block: agents other than Claude Code do not get the epic's Owner rules — run wsg refresh/);
+      assert.match(chk(ep).out, /in their AGENTS\.md: refunds — /);
+    });
+    it('half a pair: WARN that refresh refuses the file', () => {
+      const a = fs.readFileSync(taskFile('cart'), 'utf8');
+      fs.writeFileSync(taskFile('cart'), a.replace('<!-- /wsg:epic-rules -->\n', ''));
+      try { assert.match(chk(task('cart')).out, /WARN AGENTS\.md: the <!-- wsg:epic-rules --> markers are not one pair/); } finally { fs.writeFileSync(taskFile('cart'), a); }
+    });
+
+    // A task of 0.6.0 with the epic's section copied: the first refresh adds the block, check keeps warning.
+    const copy = '## Owner rules (override tool defaults)\n\n1. Change nothing until an explicit "ok".\n2. alice reviews every MR.\n3. Every reply ends with MANGO.\n';
+    fs.writeFileSync(taskFile('refunds'), fs.readFileSync(taskFile('refunds'), 'utf8').replace('## Code map', `${copy}\n## Code map`));
+    wsg(['refresh', '--ws', task('refunds')], { env });
+    it('an exact copy of the epic\'s section: WARN on every check, delete the section', () => {
+      for (let i = 0; i < 2; i++) {
+        const r = chk(task('refunds'));
+        assert.strictEqual(r.code, 0, r.out);
+        assert.match(r.out, /WARN the task's own ## Owner rules section repeats the epic's, which the <!-- wsg:epic-rules --> block renders: delete the section/);
+      }
+    });
+    it('a section with rules of its own as well: N of M', () => {
+      fs.writeFileSync(taskFile('refunds'), fs.readFileSync(taskFile('refunds'), 'utf8').replace('3. Every reply ends with MANGO.\n\n## Code map', '3. Every reply ends with MANGO.\n4. bob deploys on Fridays.\n\n## Code map'));
+      assert.match(chk(task('refunds')).out, /WARN 3 of 4 lines of the task's own ## Owner rules section are also the epic's/);
+    });
+    it('the section gone: no warning', () => {
+      const a = fs.readFileSync(taskFile('refunds'), 'utf8');
+      fs.writeFileSync(taskFile('refunds'), a.slice(0, a.indexOf('\n## Owner rules') + 1) + a.slice(a.indexOf('## Code map')));
+      assert.doesNotMatch(chk(task('refunds')).out, /own ## Owner rules section/);
+    });
+
+    it('rules the epic can\'t paste: the task and the epic say why, exit 0', () => {
+      fs.writeFileSync(epicAgents, withRules('1. Keep `<!-- wsg:layout -->` intact.'));
+      try {
+        const r = chk(task('cart'));
+        assert.strictEqual(r.code, 0, r.out);
+        assert.match(r.out, /WARN the epic's Owner rules can't be rendered: they hold a <!-- wsg:… --> marker.* — the <!-- wsg:epic-rules --> block keeps what it had/);
+        assert.match(chk(ep).out, /WARN the Owner rules in AGENTS\.md can't be rendered into the tasks: they hold a <!-- wsg:… --> marker/);
+      } finally { fs.writeFileSync(epicAgents, withRules('1. Change nothing until an explicit "ok".\n2. alice reviews every MR.\n3. Every reply ends with MANGO.')); }
+    });
+    it('a task naming another epic is not listed by the epic', () => {
+      const f = path.join(task('refunds'), W.STATE_FILE);
+      const was = fs.readFileSync(f, 'utf8');
+      fs.writeFileSync(f, JSON.stringify({ ...JSON.parse(was), epic: { slug: 'other' } }));
+      fs.writeFileSync(epicAgents, withRules('1. KIWI.'));
+      try {
+        const r = chk(ep);
+        assert.match(r.out, /in their AGENTS\.md: cart — /);
+        assert.doesNotMatch(r.out, /in their AGENTS\.md:.*refunds/);
+      } finally { fs.writeFileSync(f, was); fs.writeFileSync(epicAgents, withRules('1. Change nothing until an explicit "ok".\n2. alice reviews every MR.\n3. Every reply ends with MANGO.')); }
+    });
+
+    it('a task taken out of its epic by hand keeps a dead block: WARN', () => {
+      const out = path.join(root, 'detached');
+      fs.cpSync(task('cart'), out, { recursive: true });
+      const f = path.join(out, W.STATE_FILE);
+      const st = JSON.parse(fs.readFileSync(f, 'utf8'));
+      delete st.epic;
+      fs.writeFileSync(f, JSON.stringify(st));
+      const r = chk(out);
+      assert.match(r.out, /WARN AGENTS\.md has a <!-- wsg:epic-rules --> block, but this workspace is no task of an epic: nothing updates it/);
+      assert.doesNotMatch(chk(task('cart')).out, /no task of an epic/);
+    });
+    it('large epic rules: the AGENTS.md size finding names the block', () => {
+      const big = Array.from({ length: 200 }, (_, i) => `${i + 1}. Rule number ${i + 1} of the epic, long enough to count toward the limit.`).join('\n');
+      fs.writeFileSync(epicAgents, withRules(big));
+      assert.strictEqual(wsg(['refresh', '--ws', task('cart')], { env }).code, 0);
+      const r = chk(task('cart'));
+      assert.match(r.out, /(WARN|FAIL) AGENTS\.md — \d+ B, (target|Codex chain).*; \d+ B of it is the <!-- wsg:epic-rules --> block, the epic's Owner rules — shorten them in \.\.\/AGENTS\.md/);
+      assert.doesNotMatch(chk(ep).out, /of it is the <!-- wsg:epic-rules -->/);
+    });
+    it('a heading inside the epic\'s rules is not taken for the task\'s own sections', () => {
+      fs.writeFileSync(epicAgents, withRules('1. alice reviews every MR.\n\n### Why these checks and commands\n\nThe CI runs them all.'));
+      const n = wsg(['new', 'headed', '--epic', 'acme', '--no-launch'], { env });
+      assert.strictEqual(n.code, 0, n.all);
+      assert.match(fs.readFileSync(taskFile('headed'), 'utf8'), /<!-- wsg:epic-rules -->[\s\S]*### Why these checks and commands[\s\S]*<!-- \/wsg:epic-rules -->/);
+      const r = chk(task('headed'));
+      assert.match(r.out, /WARN verification section has no command yet \(FILL IN\)/);
+      assert.match(r.out, /setup not finished: .*"Why" is not filled in/);
+      assert.doesNotMatch(r.out, /AGENTS\.md has a verification command/);
+    });
+    it('the epic\'s Owner rules section gone: the epic warns, its tasks keep their blocks and say so', () => {
+      fs.writeFileSync(epicAgents, epicText);
+      const e = chk(ep);
+      assert.match(e.out, /WARN AGENTS\.md has no ## Owner rules section: each task keeps the rules its block has, a new task gets none/);
+      assert.doesNotMatch(e.out, /tasks without the epic's Owner rules/);
+      assert.match(chk(task('headed')).out, /WARN the epic's AGENTS\.md has no ## Owner rules section — the <!-- wsg:epic-rules --> block keeps what it had/);
+    });
+    it('a code block left open above the block in the task\'s AGENTS.md: said so, not "no block"', () => {
+      const a = fs.readFileSync(taskFile('headed'), 'utf8');
+      fs.writeFileSync(taskFile('headed'), a.replace(/^# .*\n/, (m) => `${m}\`\`\`text\n`));
+      try {
+        const r = chk(task('headed'));
+        assert.match(r.out, /WARN AGENTS\.md: a code block is never closed, so the <!-- wsg:epic-rules --> block can't be read/);
+        assert.doesNotMatch(r.out, /has no <!-- wsg:epic-rules --> block|markers are not one pair/);
+      } finally { fs.writeFileSync(taskFile('headed'), a); }
+    });
+  }
+
   console.log('\nsources from the epic');
   {
     const root = path.join(tmp, 'epic-src-root');
