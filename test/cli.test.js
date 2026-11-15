@@ -921,9 +921,12 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       assert.match(block, /`\.\.\/tasks\.md`/);
       assert.match(block, /`## For the epic` in `notes\.md`, dated, with evidence/);
     });
+    it('the block: the task session sets review, done is the epic session\'s or the owner\'s', () => {
+      assert.match(block, /Work finished: `wsg status shop\/pay-fix review`\. `done` is set only by the epic session or the owner\./);
+    });
     it('the block is plain text, small', () => {
       assert.doesNotMatch(block, /(^|\s)@/);
-      assert.ok(Buffer.byteLength(block) <= 450, Buffer.byteLength(block));
+      assert.ok(Buffer.byteLength(block) <= 560, Buffer.byteLength(block));
     });
     it('otherwise the AGENTS.md of a task', () => {
       for (const h of ['## Why', '## Definition of done', '## Out of scope', '## Layout', '## Verification', '## Invariants are not findings', '## Code map']) assert.ok(agents.includes(h), h);
@@ -6576,13 +6579,13 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       const G = require(path.join(ROOT, 'lib', 'advisor-guard.js'));
       for (const c of ['git log', 'git show', 'git diff', 'git status', 'git blame', 'git grep', 'git rev-parse', 'git merge-base',
         'git ls-files', 'git for-each-ref', 'git symbolic-ref HEAD', 'git ls-remote', 'git branch --list', 'git branch -v', 'git branch -a',
-        'git branch -r', 'git branch --show-current', 'git -C . log', ...['guide advisor', 'check', '--where', 'add x --dry-run',
-          'remove x --dry-run', 'new x --dry-run'].map((x) => `node "${cliPath}" ${x}`), 'ls', 'cat a', 'head a', 'tail a', 'wc a', 'grep a b', 'rg a',
+        'git branch -r', 'git branch --show-current', 'git -C . log', ...['guide advisor', 'check', 'list', 'status shop/pay', '--where', 'add x --dry-run',
+          'remove x --dry-run', 'new x --dry-run', 'status shop/pay review --dry-run', 'close shop/pay --dry-run'].map((x) => `node "${cliPath}" ${x}`), 'ls', 'cat a', 'head a', 'tail a', 'wc a', 'grep a b', 'rg a',
         'find .', 'pwd']) assert.ok(G.decide({ tool_name: 'Bash', tool_input: { command: c }, cwd: demo }).allow, c);
       // Up to the next item, whatever marks it: "2." in the agent, "-" in the guide.
       const rule = (text) => text.slice(text.indexOf('Bash only to read'), text.indexOf('Other tools, MCP included')).replace(/\s+/g, ' ').replace(/ (-|\d\.) $/, '');
       assert.ok(rule(agentTpl).includes('`git` `log`, `show`, `diff`, `status`, `blame`, `grep`, `rev-parse`, `merge-base`, `ls-files`, `for-each-ref`, `symbolic-ref`, `ls-remote`, `branch --list|-v|-a|-r|--show-current`'), rule(agentTpl));
-      assert.ok(rule(agentTpl).includes('wsg only as `node "<WSG_CLI>"`: `guide`, `check`, `--where`, `add … --dry-run`, `remove … --dry-run`, `new … --dry-run`'), rule(agentTpl));
+      assert.ok(rule(agentTpl).includes('wsg only as `node "<WSG_CLI>"`: `guide`, `check`, `list`, `status <task>`, `--where`, `add … --dry-run`, `remove … --dry-run`, `new … --dry-run`, `status <task> <status> --dry-run`, `close … --dry-run`'), rule(agentTpl));
       assert.ok(rule(agentTpl).includes('`ls`, `cat`, `head`, `tail`, `wc`, `grep`, `rg`, `find`, `pwd`'));
       assert.ok(rule(agentTpl).includes('no pipes, redirection, `;`, `&&` or `$`'));
       assert.strictEqual(rule(advisorGuide), rule(agentTpl));

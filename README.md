@@ -120,6 +120,9 @@ The commands the agent (or you) call:
 | `wsg refresh [--dry-run] [--ws SLUG\|PATH]` | Brings the generated parts up to date with this wsg — e.g. adds the advisor block to a workspace made by 0.2 — and touches nothing else. `--dry-run` prints the files it would change as JSON. |
 | `wsg team <preset> [--without ROLE,...] [--dry-run] [--ws SLUG\|PATH]` | Adds a team of roles (preset `fullstack`): cards and a workflow in `team/`, a Claude Code subagent per role, `/wsg-feature`. Only adds; an existing file is kept. `--dry-run` prints what it would create, keep and update as JSON. Not in an epic: in its tasks. See [Team](#team). |
 | `wsg check [path\|slug] [--json]` | Checks a workspace against the conventions; `--json` gives the report by section as one JSON document. A task of an epic is `<epic>/<task>`. |
+| `wsg list [--json]` | Lists every workspace in `WS_ROOT`, each epic's tasks under it, with the kind, a task's status marker, the ticket and the title; a 0.1 workspace and one whose state does not read are listed with what is wrong. Only reads, runs no git. `--json` gives each workspace's state, sources and the directories a session needs. |
+| `wsg status <task> [open\|review\|done] [--dry-run] [--json]` | Prints a task's or a process's status, or sets it: only `.claude/wsg.json` and the epic's `tasks.md` block change. The move to done warns about uncommitted or unpushed work and about entries left under `## For the epic`, and never refuses for them. The task is always named: a slug, `<epic>/<task>` or a path. |
+| `wsg close <task> [--dry-run] [--json]` | `wsg status <task> done`. Merges, pushes and removes nothing. |
 | `wsg promote [slug\|path] --skill NAME` | Turns a task into a process. Not an epic or a task of one. |
 | `wsg guide [setup\|advisor\|teach\|epic]` | Prints a guide an agent follows: the setup dialogue, the advisor's procedure, teaching a team role a practice, or working in an epic. |
 | `wsg install-skills [--uninstall]` | Installs the `wsg-new` and `wsg-teach` skills into `~/.claude/skills` and the `wsg-advisor` agent into `~/.claude/agents` (or under `$CLAUDE_CONFIG_DIR`) and, when Codex is there, `~/.codex/agents` (or `$CODEX_HOME/agents`). Overwrites only files it wrote — they carry a marker — and refuses others with exit 1. `--uninstall` removes only its own files. |
@@ -221,15 +224,20 @@ $WS_ROOT/shop/
   `../knowledge.md` and `../tasks.md` and gets the epic's Owner rules when they are filled in.
 - **Knowledge.** `knowledge.md` is the single source of truth, kept within 4 KiB and rewritten
   rather than appended to. A task never edits the epic's files: what the next task should know
-  goes under `## For the epic` in the task's `notes.md`, dated, with evidence. When the task is
-  done, the agent in the epic session merges it (`/wsg-epic-close <task>`) into `knowledge.md`,
-  `.claude/rules/<repo>.md`, `decisions.md` and `tasks.md`, after your "ok". `/wsg-epic-sync` reads
+  goes under `## For the epic` in the task's `notes.md`, dated, with evidence. When its work is
+  finished, the task's session sets it to review (`wsg status shop/cart-fix review`). The agent in
+  the epic session then merges it (`/wsg-epic-close <task>`; in Codex, ask it to run
+  `wsg guide epic`, section Closing) into `knowledge.md`, `.claude/rules/<repo>.md`,
+  `decisions.md` and `tasks.md`, after your "ok", and then marks it done with
+  `wsg close shop/cart-fix`, the last write. The status lives in the task's `.claude/wsg.json`; `tasks.md` and `wsg list`
+  show it as `[review]` or `[done <date>]`. `/wsg-epic-sync` reads
   the epic's other tasks from the tracker, with any read tool the agent has, into `tasks.md`;
   nothing is ever written to the tracker. To start a task, ask in the epic session
   (`/wsg-epic-task <ticket>`). The procedures are in [docs/epic-guide.md](docs/epic-guide.md)
   (`wsg guide epic`), so any agent can follow them; the skills only point there.
 - **Check.** `wsg check` in the epic checks `knowledge.md` (a warning over 4 KiB, an error over
-  8 KiB), the pointer rule, the `tasks.md` block, the skills and the tasks inside. In a task
+  8 KiB), the pointer rule, the `tasks.md` block, the skills and the tasks inside — a task whose
+  state does not read, a done task whose `## For the epic` still has entries. In a task
   (`wsg check shop/cart-fix`) it checks the link to the epic and the epic block of `AGENTS.md`, and
   its always-on budget counts what loads from the epic: its `CLAUDE.md` and rules without `paths:`.
 - **Not in an epic.** `wsg team` refuses an epic with exit 2 — its agents would load in every task
@@ -523,6 +531,7 @@ shows you the text before writing it.
 - [docs/advisor-guide.md](docs/advisor-guide.md) — what the advisor checks, in what order, and how it answers
 - [docs/epic-guide.md](docs/epic-guide.md) — starting, closing and syncing the tasks of an epic
 - [docs/teach-guide.md](docs/teach-guide.md) — how `/wsg-teach` writes a practice into a role's memory
+- [docs/json-contract.md](docs/json-contract.md) — what `--json` prints, for scripts and apps
 
 Sources for the limits: [Claude Code memory](https://code.claude.com/docs/en/memory),
 [worktrees](https://code.claude.com/docs/en/worktrees),

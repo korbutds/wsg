@@ -75,7 +75,8 @@ Owner rules may already be there, and the repositories the task took from the ep
 Another repository of the epic is attached by its name from here: `wsg add <name> --dry-run` shows
 the worktree and branch it gets with the epic's defaults (a flag given wins over them), then
 `wsg add <name>` after "ok". A repository the epic doesn't have is attached by its path, as in
-section 2. Never edit the epic's files from here.
+section 2. Never edit the epic's files from here. When its work is finished, the task's session
+sets it to review (`wsg status <epic>/<task> review`); done is the epic session's or the owner's.
 
 ## 2. Sources
 

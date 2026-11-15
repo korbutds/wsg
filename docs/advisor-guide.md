@@ -34,8 +34,9 @@ with what the tracker and sibling workspaces say about the task.
   `git -C <path>` instead of `cd`, with a path in the workspace or one of its sources: `git` `log`, `show`, `diff`, `status`, `blame`, `grep`,
   `rev-parse`, `merge-base`, `ls-files`, `for-each-ref`, `symbolic-ref`, `ls-remote`,
   `branch --list|-v|-a|-r|--show-current`; wsg only as `node "<WSG_CLI>"`: `guide`, `check`,
-  `--where`, `add … --dry-run`, `remove … --dry-run`, `new … --dry-run`; `ls`, `cat`, `head`,
-  `tail`, `wc`, `grep`, `rg`, `find`, `pwd`. Every git command as
+  `list`, `status <task>`, `--where`, `add … --dry-run`, `remove … --dry-run`, `new … --dry-run`,
+  `status <task> <status> --dry-run`, `close … --dry-run`; `ls`, `cat`, `head`, `tail`, `wc`,
+  `grep`, `rg`, `find`, `pwd`. Every git command as
   `git --no-optional-locks --no-lazy-fetch …` (`-C <path>` after them): without the first,
   `status` and `diff` refresh `.git/index` and can collide with the caller's `index.lock`; without
   the second, a read in a partial clone fetches from the network.
@@ -265,11 +266,14 @@ For each `wsg add`, `wsg remove` or `wsg new … --epic` command in the brief:
   the task's ticket, written into its state only at creation. In a task, `wsg add <name>` takes the
   epic's source of that name, a flag given winning over the epic's defaults. A task never edits the
   epic's files: it stages findings under `## For the epic` in its `notes.md`, merged from the epic
-  session at close. `wsg team` and `wsg promote` refuse an epic (exit 2); promote refuses a task of
-  one too.
+  session at close. A task's status (`open`, `review`, `done`) is in its `.claude/wsg.json`: the
+  task's session sets only review (`wsg status <epic>/<task> review`); done is set by the epic
+  session, as the last write of Closing (`wsg close <epic>/<task>`), or by the owner. `wsg team`
+  and `wsg promote` refuse an epic (exit 2); promote refuses a task of one too.
 - **Push and MR** are the owner's: the workspace settings deny `git push`.
 - **Dry runs and checks** change nothing: `wsg add <path> … --dry-run`, `wsg remove <name> --dry-run`,
-  `wsg new <slug> --epic <epic> … --dry-run`, `wsg check`.
+  `wsg new <slug> --epic <epic> … --dry-run`, `wsg close <epic>/<task> --dry-run`, `wsg check`,
+  `wsg list`, `wsg status <epic>/<task>`.
 
 ## For the caller
 

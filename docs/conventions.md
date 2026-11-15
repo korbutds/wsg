@@ -62,7 +62,12 @@ the ticket key; its `AGENTS.md` has a `<!-- wsg:epic -->` block pointing to `../
 `../tasks.md`, and the epic's Owner rules section, copied as is when it holds no FILL IN; its
 `notes.md` has `## For the epic`, where it stages what the epic should learn from it. The epic's
 files are merged from the epic session when the task is closed (`wsg guide epic` → Closing), never
-edited from the task. `wsg team` and `wsg promote` refuse an epic, and promote a task of one too.
+edited from the task. A task's status — `open`, `review` or `done` — is the `status` field of its
+`wsg.json`, with `closed` (the date) while done: the task's session sets review
+(`wsg status <epic>/<task> review`), the epic session or the owner sets done
+(`wsg close <epic>/<task>`, the last write of Closing). The `[review]` / `[done <date>]` marker in
+the epic's `tasks.md` block is rendered from it; `wsg list` shows every workspace with it.
+`wsg team` and `wsg promote` refuse an epic, and promote a task of one too.
 
 A task that turns out to be repeatable is turned into a process: `wsg promote <slug> --skill <name>`. Sources,
 rules and memory stay; a skill stub and a log with the first run are added. There is no reverse
@@ -93,7 +98,9 @@ makes it read-only.
 `.claude/wsg.json` is the single source of truth for what the generator owns: the sources and how
 each one is attached (`path`, `name`, `mode`, `branch`, `base`, `target`, `verify`, `note`, `carry`,
 `cloneNm`, `reference`, and in an epic `task: { branch, base, carry, cloneNm }`, the defaults its
-tasks get), plus the kind, slug and title. Every `wsg add` re-renders from it:
+tasks get), plus the kind, slug and title, and for a task or a process its `status` (`open`,
+`review`, `done`; none reads as open) and `closed`, which only `wsg status` and `wsg close`
+change. Every `wsg add` re-renders from it:
 
 | Where | What |
 |---|---|
@@ -102,7 +109,7 @@ tasks get), plus the kind, slug and title. Every `wsg add` re-renders from it:
 | `README.md` | `<!-- wsg:sources -->` — the sources table and the launch commands |
 | `.claude/skills/<skill>/SKILL.md` | in a process workspace with a team: `<!-- wsg:team -->` — one pointer line to `team/workflow.md`, written by `wsg team` after the first `# ` heading |
 | `.claude/settings.json` | `permissions.additionalDirectories` only; every other key stays |
-| `tasks.md` | in an epic: `<!-- wsg:tasks -->` — the epic's tasks in its directory |
+| `tasks.md` | in an epic: `<!-- wsg:tasks -->` — the epic's tasks in its directory, each with its status marker |
 | whole files | `.claude/rules/<name>.md` (written when its source is attached), `mr-target-branch.txt`, the `repo` pointer (not in an epic) |
 
 Text that people and agents write — why, definition of done, out of scope, invariants, links, the

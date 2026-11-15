@@ -50,10 +50,20 @@ In the task's own session.
 3. What the next task of the epic should know — a decision, a repository fact, a pitfall — goes
    into the task's `notes.md` under `## For the epic`: dated, with the evidence (a file and line,
    a commit, a link). Never edit the epic's files from a task: they are merged at close.
+4. When the work is finished, show the owner `wsg status <epic>/<task> review` and run it after
+   "ok": the task is ready for the epic's closing. Only review is the task session's to set; done
+   is set by the epic session (Closing) or by the owner.
 
 ## Closing
 
-From the epic session, when a task is done (`/wsg-epic-close <task>` in Claude Code).
+From the epic session, when a task is finished (`/wsg-epic-close <task>` in Claude Code). Codex has
+no such skill: tell it, in plain text, "Run `wsg guide epic`, section Closing, for <epic>/<task>".
+
+A task's status is the `status` field of its `.claude/wsg.json` — `open`, `review` or `done`, with
+`closed`, the date, while it is done. That field is the source of truth: the `[review]` or
+`[done <date>]` marker after the task's line in the `<!-- wsg:tasks -->` block of `tasks.md` is
+rendered from it, and the free-text `## Status` section of `tasks.md` is a summary in words.
+`wsg status <epic>/<task>` prints it; `wsg list` shows every task with its marker.
 
 1. Read the task's `notes.md` → `## For the epic`, its `.learnings/`, its invariants, and
    `git log` of its branches.
@@ -61,9 +71,19 @@ From the epic session, when a task is done (`/wsg-epic-close <task>` in Claude C
    - `knowledge.md` rewritten, not appended to, within 4 KiB;
    - facts of one repository to `.claude/rules/<repo>.md`;
    - the rationale of a new decision to `decisions.md`;
-   - a line for the task in `tasks.md` → Status: date, outcome.
+   - a line for the task in `tasks.md` → Status: date, outcome;
+   - in the task's `notes.md`, the merged entries moved out of `## For the epic` to the top of
+     `## Notes`, under `### Merged into the epic <date>`. `## For the epic` keeps only its comment:
+     an entry left there reads as not merged, and `wsg close` and `wsg check` warn about it.
 3. Send the draft to the advisor, show the owner the result, and write it only after "ok".
-4. Run `wsg check`: it warns about a `knowledge.md` over 4 KiB and fails one over 8 KiB.
+4. Then, after "ok", the last write: run `wsg close <epic>/<task> --dry-run`, show the owner its
+   warnings — uncommitted or unpushed work in the task's worktrees, entries still under
+   `## For the epic` — then `wsg close <epic>/<task>`. It sets done with today's UTC date and
+   renders the task's marker in `tasks.md`; it merges, pushes and removes nothing, and a warning
+   never stops it. A task named by its slug alone is looked up in `WS_ROOT`, not in the epic:
+   always give `<epic>/<task>`.
+5. Run `wsg check`: it warns about a `knowledge.md` over 4 KiB and fails one over 8 KiB, and about
+   a done task whose `## For the epic` still has entries.
 
 ## Syncing
 
