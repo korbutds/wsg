@@ -4074,7 +4074,9 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     // A command's help: every flag it takes is described, and asking for it touches nothing.
     const { FLAGS } = require(path.join(ROOT, 'lib', 'flags.js'));
     for (const [lang, name] of [...Object.keys(FLAGS).map((n) => ['en', n]), ...Object.keys(FLAGS).map((n) => ['ru', n])]) {
-      const h = wsg(['help', name], { env: { WSG_LANG: lang } });
+      // A two-word command (`context add`) is asked for by both words.
+      const words = name.split(' ');
+      const h = wsg(['help', ...words], { env: { WSG_LANG: lang } });
       it(`wsg help ${name} (${lang}): exit 0, names the command`, () => {
         assert.strictEqual(h.code, 0, h.all);
         assert.match(h.out, new RegExp(`^wsg ${name}\\b`, 'm'));
@@ -4085,9 +4087,9 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
         it(`wsg help ${name} (${lang}) describes ${flag}`, () => assert.ok(h.out.includes(flag) || h.out.includes(pair), flag));
       }
       if (lang === 'en') {
-        it(`wsg ${name} --help is the same text`, () => assert.strictEqual(wsg([name, '--help']).out, h.out));
-        it(`wsg ${name} -h is the same text`, () => assert.strictEqual(wsg([name, '-h']).out, h.out));
-        it(`wsg help ${name} works with a broken config`, () => assert.strictEqual(wsg(['help', name], { env: { WSG_CONFIG: broken } }).code, 0));
+        it(`wsg ${name} --help is the same text`, () => assert.strictEqual(wsg([...words, '--help']).out, h.out));
+        it(`wsg ${name} -h is the same text`, () => assert.strictEqual(wsg([...words, '-h']).out, h.out));
+        it(`wsg help ${name} works with a broken config`, () => assert.strictEqual(wsg(['help', ...words], { env: { WSG_CONFIG: broken } }).code, 0));
       }
     }
     it('the usage points to wsg help', () => assert.match(wsg(['--help']).out, /wsg help <command>/));
@@ -6301,7 +6303,9 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       const out = [];
       for (const span of codeSpans(text)) {
         for (const m of span.matchAll(/(?:^|[\s(])(?:wsg|node "<WSG_CLI>")\s+([a-z][a-z-]*)([^|&;]*)/g)) {
-          const cmd = m[1];
+          // A two-word command is `context add`: its flags are FLAGS['context add'].
+          const sub = /^\s+([a-z]+)/.exec(m[2]);
+          const cmd = m[1] === 'context' && sub ? `${m[1]} ${sub[1]}` : m[1];
           if (cmd === 'help') continue;
           if (!FLAGS[cmd]) { out.push(`unknown command: wsg ${cmd}`); continue; }
           for (const f of m[2].match(/--[a-z][a-z-]*/g) || []) if (!(f in FLAGS[cmd])) out.push(`wsg ${cmd} has no ${f}`);

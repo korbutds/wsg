@@ -19,7 +19,7 @@ const argv = process.argv.slice(2);
 // --json is read from argv before anything can refuse: a flag error, a broken config, a refusal
 // deep in a command is then an envelope on stdout too (lib/json.js), and ui prints nothing there.
 const J = require(path.join(ROOT, 'lib', 'json.js'));
-const { FLAGS, GLOBAL } = require(path.join(ROOT, 'lib', 'flags.js'));
+const { FLAGS, GLOBAL, GROUPS, commandOf } = require(path.join(ROOT, 'lib', 'flags.js'));
 const ALIASES = { '--check': 'check', '--promote': 'promote' };
 const hasOwn = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 const known = (c) => hasOwn(FLAGS, ALIASES[c] || c);
@@ -40,8 +40,9 @@ function flagsSeen(args, spec) {
 }
 {
   // An unknown command or a global flag has no flag table: any --json counts, and it is no dry run.
-  const command = known(argv[0]) ? ALIASES[argv[0]] || argv[0] : null;
-  const seen = command ? flagsSeen(argv.slice(1), FLAGS[command]) : new Set(argv);
+  // A two-word command is named by both words (`context add`), its flags read after them.
+  const { name: command, words } = commandOf(argv, ALIASES);
+  const seen = command ? flagsSeen(argv.slice(words), FLAGS[command]) : new Set(argv);
   // A dry run only for a command that has one: `check --dry-run` is refused as the flag it is.
   if (seen.has('--json')) J.start({ command, dryRun: !!command && hasOwn(FLAGS[command], '--dry-run') && seen.has('--dry-run') });
 }
@@ -100,13 +101,20 @@ if (cmd === '--where') {
 }
 
 // A command's options: `wsg help <command>`, or `wsg <command> --help` as its only argument — only
-// then, so `--note --help` stays a value. Every command in lib/flags.js has a help.<command> text.
+// then, so `--note --help` stays a value. Every command in lib/flags.js has a help.<command> text;
+// the two-word ones share their group's: `wsg help context`, `wsg help context add`,
+// `wsg context --help` and `wsg context add --help` print help.context.
 {
-  const asked = rest.length === 1 && (rest[0] === '--help' || rest[0] === '-h') && known(cmd);
-  if (cmd === 'help' || asked) {
+  const isHelp = (a) => a === '--help' || a === '-h';
+  const asked = rest.length === 1 && isHelp(rest[0]) && known(cmd);
+  const group = GROUPS.includes(cmd) && ((rest.length === 1 && isHelp(rest[0]))
+    || (rest.length === 2 && hasOwn(FLAGS, `${cmd} ${rest[0]}`) && isHelp(rest[1])));
+  if (cmd === 'help' || asked || group) {
     const topic = cmd === 'help' ? rest[0] : cmd;
-    if (cmd === 'help' && rest.length > 1) invalid(t('cli.extraArg', { arg: rest[1] }));
-    if (!known(topic)) invalid(t('cli.unknownCommand', { cmd: topic }));
+    const max = cmd === 'help' && GROUPS.includes(topic) ? 2 : 1;
+    if (cmd === 'help' && rest.length > max) invalid(t('cli.extraArg', { arg: rest[max] }));
+    if (cmd === 'help' && rest.length === 2 && !hasOwn(FLAGS, `${topic} ${rest[1]}`)) invalid(t('cli.unknownCommand', { cmd: `${topic} ${rest[1]}` }));
+    if (!known(topic) && !GROUPS.includes(topic)) invalid(t('cli.unknownCommand', { cmd: topic }));
     process.stdout.write(t(`help.${ALIASES[topic] || topic}`));
     process.exit(0);
   }
@@ -950,6 +958,197 @@ async function statusCommand(given, value, flags, needTask) {
   return 0;
 }
 
+// `wsg context add|note|remove|list`: an epic's context (lib/context.js). A write plans with nothing
+// touched, writes the epic under its lock in one transaction, then refreshes every task of the epic,
+// each under its own lock (generate.refreshEpicTasks): a task that can't be refreshed is reported in
+// the result, never a rollback of the epic's change. Epics only in this version.
+async function cmdContext(args) {
+  const verb = args[0];
+  const name = `context ${verb}`;
+  if (verb === undefined) invalid(t('context.noVerb'));
+  if (!hasOwn(FLAGS, name)) invalid(t('context.badVerb', { verb }));
+  const { flags, pos } = parse(args.slice(1), FLAGS[name], verb === 'list' ? 0 : 1);
+  if (verb !== 'list' && !pos[0]) invalid(t(`context.need.${verb}`));
+  const found = targetWs(flags['--ws']);
+  if (!found) invalid(t('cli.notInWorkspace'));
+  if (found.legacy) invalid(t('cli.legacyWorkspace', { ws: found.ws }));
+  const { ws } = found;
+  currentWs = ws;
+  const W = lib('workspace');
+  const C = lib('context');
+  const generate = lib('generate');
+  const ui = lib('ui');
+  const T = lib('templates');
+  const readEpic = () => {
+    let st;
+    try {
+      st = W.readState(ws);
+    } catch (e) {
+      return invalid(e.message);
+    }
+    if (st.kind !== 'epic') invalid(t('context.epicOnly', { ws, kind: st.kind }));
+    return st;
+  };
+  let state = readEpic();
+  const json = J.active();
+  if (verb === 'list') {
+    const items = state.context || [];
+    const result = { workspace: ws, items: items.map((x) => C.itemResult(ws, x)), blockBytes: C.blockBytes(state.slug, items) };
+    if (json) return J.succeed(result);
+    if (!items.length) {
+      ui.info(t('context.listEmpty', { epic: state.slug }));
+      return 0;
+    }
+    const width = Math.max(...items.map((x) => x.id.length));
+    for (const x of items) {
+      const where = x.type === 'link' ? x.url : `${x.path}, ${T.sizeOf(x.bytes)}${x.binary ? ', binary' : ''}`;
+      process.stdout.write(`${x.id.padEnd(width)}  [${x.type}] ${x.title}${x.description ? ` — ${x.description}` : ''}  (${where})\n`);
+    }
+    ui.dim(t('context.listBlock', { bytes: result.blockBytes, warn: W.CONTEXT.blockWarn, max: W.CONTEXT.blockMax }));
+    return 0;
+  }
+  const dryRun = !!flags['--dry-run'];
+  // A note's text, read before the lock: from stdin it may take a while to come.
+  let body;
+  if (verb === 'note') {
+    const given = ['--text', '--from'].filter((f) => flags[f] !== undefined);
+    if (given.length !== 1) invalid(t('context.noteSource'));
+    if (flags['--from'] !== undefined) {
+      const from = flags['--from'];
+      const max = W.CONTEXT.fileMax;
+      const what = from === '-' ? 'stdin' : from;
+      // size: the bytes found, or the words for "more than the ceiling" when the rest was not read.
+      const tooLarge = (size) => {
+        const [found, ceiling] = typeof size === 'number' ? C.sizesOf(size, max) : [size, T.sizeOf(max)];
+        invalid(t('context.tooLarge', { what, size: found, max: ceiling }));
+      };
+      // Anything but a regular file (stdin, a FIFO, /dev/zero) is read up to one byte past the
+      // ceiling: what is beyond it is never held in memory.
+      const capped = (fd) => {
+        const chunks = [];
+        let total = 0;
+        const buf = Buffer.alloc(1 << 16);
+        const pause = new Int32Array(new SharedArrayBuffer(4));
+        for (;;) {
+          let n;
+          try {
+            n = fs.readSync(fd, buf, 0, buf.length, null);
+          } catch (e) {
+            // A non-blocking stdin with nothing yet: wait a little, then ask again.
+            if (e.code === 'EAGAIN') { Atomics.wait(pause, 0, 0, 10); continue; }
+            if (e.code === 'EOF') break;
+            throw e;
+          }
+          if (n === 0) break;
+          chunks.push(Buffer.from(buf.subarray(0, n)));
+          total += n;
+          if (total > max) tooLarge(t('context.overMax', { max: T.sizeOf(max) }));
+        }
+        return Buffer.concat(chunks);
+      };
+      try {
+        if (from === '-') body = capped(0);
+        else {
+          const fd = fs.openSync(path.resolve(from), 'r');
+          try {
+            const st = fs.fstatSync(fd);
+            // A regular file is measured before it is read.
+            if (st.isFile() && st.size > max) tooLarge(st.size);
+            body = st.isFile() ? fs.readFileSync(fd) : capped(fd);
+          } finally {
+            fs.closeSync(fd);
+          }
+          if (body.length > max) tooLarge(body.length);
+        }
+      } catch (e) {
+        invalid(t('context.noteRead', { from, msg: e.message }));
+      }
+    }
+  }
+  // Held from the plan to the last write of the epic and through the refresh of its tasks: the epic's
+  // first, then each task's, as add takes them. A dry run changes nothing and takes no lock.
+  if (!dryRun) {
+    lock(ws);
+    state = readEpic();
+  }
+  const plan = verb === 'add'
+    ? C.planAdd(ws, state, pos[0], { id: flags['--id'], title: flags['--title'], desc: flags['--desc'], cwd: process.cwd() })
+    : verb === 'note'
+      ? C.planNote(ws, state, pos[0], { text: flags['--text'], body, title: flags['--title'], desc: flags['--desc'], replace: !!flags['--replace'], discard: !!flags['--discard-edits'] })
+      : C.planRemove(ws, state, pos[0], { discard: !!flags['--discard-edits'] });
+  // The result --json gives, plan or done: every key always there, the paths absolute.
+  const result = (tasks) => ({
+    workspace: ws,
+    item: C.itemResult(ws, plan.item),
+    files: plan.errors.length ? [] : plan.files.map((f) => path.join(ws, f)),
+    restartNeeded: !plan.errors.length && plan.blockChanged,
+    tasks,
+  });
+  // A refused plan: the same document with --dry-run and without.
+  if (plan.errors.length) {
+    if (json) return J.fail('invalid_input', plan.errors[0], { details: plan.errors, result: result([]), warnings: plan.warnings });
+    if (dryRun) {
+      process.stdout.write(`${JSON.stringify({ ...result([]), errors: plan.errors, warnings: plan.warnings }, null, 2)}\n`);
+      return INVALID;
+    }
+    for (const e of plan.errors) process.stderr.write(`wsg: ${e}\n`);
+    return INVALID;
+  }
+  if (dryRun) {
+    const tasks = await generate.refreshEpicTasks(ws, { dryRun: true });
+    if (json) return J.succeed(result(tasks), { warnings: plan.warnings });
+    process.stdout.write(`${JSON.stringify({ ...result(tasks), errors: [], warnings: plan.warnings }, null, 2)}\n`);
+    return 0;
+  }
+  guardPlatform();
+  if (!json) for (const w of plan.warnings) ui.warn(w);
+  try {
+    await C.apply(ws, plan);
+  } catch (e) {
+    if (e && e.name === 'Interrupted') {
+      if (json) return J.fail('interrupted', cancelled(e), { ...J.rollbackOf(e, ws), warnings: plan.warnings });
+      process.stderr.write(`${cancelled(e)}\n`);
+      return 130;
+    }
+    // A step that failed: rolled back as far as it went (guarded() in lib/generate.js).
+    if (json && e && e.rollback) return J.fail('step_failed', String(e.message), { ...J.rollbackOf(e, ws), warnings: plan.warnings });
+    throw e;
+  }
+  // The epic's change is written: from here a stop signal stops only the refresh of its tasks, and
+  // says so — the epic is not put back (lib/lock.js's handler would say it was). The tasks left are
+  // reported; each catches up at its next wsg refresh.
+  let stop = false;
+  const onStop = () => { stop = true; };
+  const takeBack = lib('lock').handOver();
+  for (const sig of ['SIGINT', 'SIGHUP', 'SIGTERM']) process.on(sig, onStop);
+  let tasks;
+  try {
+    tasks = await generate.refreshEpicTasks(ws, { stop: () => stop });
+  } finally {
+    for (const sig of ['SIGINT', 'SIGHUP', 'SIGTERM']) process.off(sig, onStop);
+    takeBack();
+  }
+  for (const x of tasks) if (!x.refreshed && x.code !== 'done' && x.code !== 'interrupted') ui.warn(t('context.taskNotRefreshed', { task: x.task, reason: x.reason }));
+  if (stop || tasks.some((x) => x.code === 'interrupted')) {
+    const left = tasks.filter((x) => x.code === 'interrupted').map((x) => x.task).join(', ') || '—';
+    const said = t('context.fanoutInterrupted', { epic: state.slug, list: left });
+    if (json) return J.fail('interrupted', said, { rollback: 'unknown', result: result(tasks), warnings: plan.warnings });
+    process.stderr.write(`\n${said}\n`);
+    return 130;
+  }
+  if (json) return J.succeed(result(tasks), { warnings: plan.warnings });
+  const item = plan.item;
+  const done = verb === 'add' ? 'context.added' : verb === 'remove' ? 'context.removed'
+    : state.context && state.context.some((x) => x.id === item.id) ? 'context.replaced' : 'context.noted';
+  ui.head(t(done, { type: item.type, id: item.id, epic: state.slug }));
+  const refreshed = tasks.filter((x) => x.refreshed).map((x) => x.task);
+  const left = tasks.filter((x) => x.code === 'done').map((x) => x.task);
+  if (refreshed.length) ui.info(t('context.tasksRefreshed', { list: refreshed.join(', ') }));
+  if (left.length) ui.dim(t('context.tasksDone', { list: left.join(', ') }));
+  if (plan.blockChanged) ui.info(t('context.restart'));
+  return 0;
+}
+
 async function cmdPromote(args) {
   const { flags, pos } = parse(args, FLAGS.promote, 1);
   if (!flags['--skill']) invalid(t('cli.promoteSkill'));
@@ -1016,6 +1215,7 @@ const COMMANDS = {
   status: cmdStatus,
   close: cmdClose,
   promote: cmdPromote,
+  context: cmdContext,
   'install-skills': cmdInstallSkills,
   // The 0.1 spellings, kept for one release.
   '--check': cmdCheck,
