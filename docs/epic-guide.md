@@ -104,8 +104,8 @@ The epic's `## Owner rules` section in its `AGENTS.md` holds the rules for every
 task renders it, heading dropped, in a `<!-- wsg:epic-rules -->` block of its own `AGENTS.md`:
 rendered, not copied, so a rule added here reaches a task at its next `wsg refresh` (also `wsg add`,
 `wsg remove`, `wsg team` there). A refresh of the epic does not write into its tasks: `wsg check`
-here names the tasks whose block is behind; tell the owner to run `wsg refresh` in each, or in the
-task's session before it goes on. A rule only one task needs goes into that task's own
+here names the tasks whose block is behind; tell the owner to run `wsg refresh --tasks` here (all
+open tasks at once), or `wsg refresh` in the task's session before it goes on. A rule only one task needs goes into that task's own
 `## Owner rules` section, which adds to the epic's and wins. A section with FILL IN renders as "no
 rules yet"; one with a `<!-- wsg:… -->` marker or an open code fence is not rendered — the tasks
 keep what they had, and `wsg check` says why. So does an epic whose `AGENTS.md` is missing, or has
@@ -150,6 +150,49 @@ above 2 KiB is a warning, above 4 KiB refused. A binary file (PDF, image) is cop
 marked: Claude Code reads it, other agents may not. `wsg check` here fails on a listed file that is
 missing, and warns about a file in `context/` the index does not list and about tasks whose block is
 behind. Epics only in this version.
+
+## MCP
+
+MCP servers every task of the epic should have — a tracker, a database, docs — are the epic's,
+changed only through the commands below, from the epic session, after the owner's "ok". Claude Code
+only in this version:
+
+```bash
+wsg mcp add <name> [--env A,B=value] [--dry-run] -- <command> [args...]
+wsg mcp add <name> --url URL [--bearer-env VAR] [--dry-run]
+wsg mcp remove <name> [--dry-run]
+wsg mcp disable <name> [--dry-run]     # a global server, off in the epic and its tasks
+wsg mcp enable <name> [--dry-run]
+wsg mcp list
+```
+
+The epic's servers go into `<epic>/.mcp.json`, which Claude Code finds from the epic and from every
+task inside it, and each workspace's own `.claude/settings.json` enables them by name
+(`enabledMcpjsonServers`: a parent's settings do not apply in a task). A global server the epic
+turns off is listed there as `deniedMcpServers`, by name — one from the user's config (`wsg mcp
+list` shows those), or a plugin's as `plugin:<plugin>:<server>`. The owner's own entries in both
+files stay: each workspace's `.claude/wsg.json` records what wsg put there, and a removal takes out
+exactly that. A name the owner's `.mcp.json` has already is refused, never overwritten. A change is
+rendered into every task at once, as for the context; a busy task catches up at its next
+`wsg refresh` (`wsg refresh --tasks` here does all of them), and `wsg check` here names the tasks
+that are behind. A task made later gets the servers at `wsg new --epic`.
+
+Secrets never go into the files. `--env NAME` forwards a variable by name — `${NAME}` in
+`.mcp.json`, which Claude Code fills from the environment it runs in; `--bearer-env VAR` sends an
+http server's token as `Authorization: Bearer ${VAR}`. A literal `--env NAME=value` is refused for a
+name that looks like a secret (TOKEN, KEY, SECRET, PASSWORD, AUTH, …); a token typed into an
+argument or a URL is warned about — `.mcp.json` is readable by every task's agent. `wsg mcp list`
+and `wsg check` name the variables this shell has no value for; ask the owner to export them where
+the agent runs.
+
+Limits, say them to the owner when they matter:
+- Running sessions keep their servers: restart them after a change.
+- In a terminal, the epic's servers stay "Pending approval" in a task until that task's folder is
+  trusted — one trust dialog per task directory; trusting the epic does not carry over.
+- A server that signs in with OAuth: authenticate it once in a terminal session (`/mcp`).
+- Plugin servers are turned off by `plugin:<plugin>:<server>`; whether a claude.ai connector can be
+  turned off by name is not verified. `wsg mcp list` does not list either.
+- Codex: not yet (`--agent codex` is refused). Epics only.
 
 ## Adding a repository
 

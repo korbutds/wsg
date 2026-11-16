@@ -3464,7 +3464,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       assert.match(r4.err, /created by wsg 0\.1/);
       assert.strictEqual(fs.readFileSync(path.join(legacy, 'AGENTS.md'), 'utf8'), '# old\n');
     });
-    it('the usage names it', () => assert.match(wsg(['--help']).out, /wsg refresh \[--dry-run\] \[--ws SLUG\|PATH\]/));
+    it('the usage names it', () => assert.match(wsg(['--help']).out, /wsg refresh \[--tasks\] \[--dry-run\] \[--json\] \[--ws SLUG\|PATH\]/));
   }
 
   console.log('\nthe status in the state survives the other commands');
@@ -4677,7 +4677,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       assert.strictEqual(outside.code, 2, outside.all);
       assert.strictEqual(envelope(outside, 'outside').error.code, 'invalid_input');
     });
-    for (const args of [['--help', '--json'], ['help', 'remove', '--json'], ['guide', '--json'], ['refresh', '--json'], ['promote', '--json']]) {
+    for (const args of [['--help', '--json'], ['help', 'remove', '--json'], ['guide', '--json'], ['team', 'fullstack', '--json'], ['promote', '--json']]) {
       const r = wsg(args, { cwd: wsJ });
       it(`wsg ${args.join(' ')}: a command without --json refuses it, in the envelope`, () => {
         assert.strictEqual(r.code, 2, r.all);
@@ -6303,9 +6303,9 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       const out = [];
       for (const span of codeSpans(text)) {
         for (const m of span.matchAll(/(?:^|[\s(])(?:wsg|node "<WSG_CLI>")\s+([a-z][a-z-]*)([^|&;]*)/g)) {
-          // A two-word command is `context add`: its flags are FLAGS['context add'].
+          // A two-word command is `context add`, `mcp add`: its flags are FLAGS['context add'].
           const sub = /^\s+([a-z]+)/.exec(m[2]);
-          const cmd = m[1] === 'context' && sub ? `${m[1]} ${sub[1]}` : m[1];
+          const cmd = require(path.join(ROOT, 'lib', 'flags.js')).GROUPS.includes(m[1]) && sub ? `${m[1]} ${sub[1]}` : m[1];
           if (cmd === 'help') continue;
           if (!FLAGS[cmd]) { out.push(`unknown command: wsg ${cmd}`); continue; }
           for (const f of m[2].match(/--[a-z][a-z-]*/g) || []) if (!(f in FLAGS[cmd])) out.push(`wsg ${cmd} has no ${f}`);
@@ -6982,13 +6982,13 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     });
     it('README says CLAUDE.md has an advisor block too', () => assert.match(readme, /`CLAUDE\.md` has a block of the same name telling Claude Code to call the subagent/));
     it('README names refresh, install-skills --uninstall and the advisor guide', () => {
-      for (const x of ['`wsg refresh [--dry-run] [--ws SLUG\\|PATH]`', '`wsg install-skills [--uninstall]`', '`wsg guide [setup\\|advisor\\|teach\\|epic]`', '## Advisor', '**Codex.**', 'docs/advisor-guide.md']) assert.ok(readme.includes(x), x);
+      for (const x of ['`wsg refresh [--tasks] [--dry-run] [--json] [--ws SLUG\\|PATH]`', '`wsg install-skills [--uninstall]`', '`wsg guide [setup\\|advisor\\|teach\\|epic]`', '## Advisor', '**Codex.**', 'docs/advisor-guide.md']) assert.ok(readme.includes(x), x);
     });
-    it('the version is 0.6.1, in package.json and its lock', () => {
-      assert.strictEqual(wsg(['--version']).out, '0.6.1\n');
+    it('the version is 0.7.0, in package.json and its lock', () => {
+      assert.strictEqual(wsg(['--version']).out, '0.7.0\n');
       const lock = JSON.parse(fs.readFileSync(path.join(ROOT, 'package-lock.json'), 'utf8'));
-      assert.strictEqual(lock.version, '0.6.1');
-      assert.strictEqual(lock.packages[''].version, '0.6.1');
+      assert.strictEqual(lock.version, '0.7.0');
+      assert.strictEqual(lock.packages[''].version, '0.7.0');
     });
 
     const bare = wsg([]);

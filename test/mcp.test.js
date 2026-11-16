@@ -513,6 +513,119 @@ const MCP = { servers: [STDIO, HTTP], disabled: { claude: ['github', 'plugin:acm
     });
   }
 
+  console.log('\nwsg refresh --tasks, refresh --json');
+  {
+    const { env, ep } = epicRoot('refresh-root');
+    for (const slug of ['cart', 'old']) newTask(env, slug);
+    wsg(['close', 'shop/old'], { env });
+    setState(ep, (s) => ({ ...s, mcp: { servers: [STDIO], disabled: { claude: ['github'] } } }));
+    const plainDry = wsg(['refresh', '--dry-run', '--ws', ep], { env });
+    it('plain --dry-run stays what it was: no tasks key, relative files', () => {
+      const j = JSON.parse(plainDry.out);
+      assert.deepStrictEqual(Object.keys(j), ['workspace', 'files', 'settingsChanged', 'errors', 'warnings']);
+      assert.ok(j.files.includes('.mcp.json'));
+    });
+    const dryTasks = JSON.parse(wsg(['refresh', '--tasks', '--dry-run', '--ws', ep], { env }).out);
+    it('plain --dry-run --tasks lists the tasks, nothing written', () => {
+      assert.deepStrictEqual(dryTasks.tasks.map((x) => [x.task, x.code]), [['cart', null], ['old', 'done']]);
+      assert.ok(!exists(path.join(ep, '.mcp.json')));
+    });
+    const jd = jsonOf(wsg(['refresh', '--dry-run', '--json', '--ws', ep], { env }));
+    it('--json --dry-run: an envelope, the files absolute, tasks null without --tasks', () => {
+      assert.strictEqual(jd.ok, true);
+      assert.strictEqual(jd.command, 'refresh');
+      assert.strictEqual(jd.dryRun, true);
+      assert.ok(jd.result.files.includes(path.join(ep, '.mcp.json')));
+      assert.strictEqual(jd.result.tasks, null);
+      assert.ok(!exists(path.join(ep, '.mcp.json')));
+    });
+    const plain = wsg(['refresh', '--tasks', '--ws', ep], { env });
+    it('--tasks: the epic, then its open tasks; the done one left as it is', () => {
+      assert.strictEqual(plain.code, 0, plain.all);
+      assert.match(plain.out, /Tasks refreshed: cart/);
+      assert.match(plain.out, /Done tasks left as they are: old/);
+      assert.ok(exists(path.join(ep, '.mcp.json')));
+      assert.deepStrictEqual(settingsOf(path.join(ep, 'cart')).enabledMcpjsonServers, ['shopdb']);
+      assert.ok(!('enabledMcpjsonServers' in settingsOf(path.join(ep, 'old'))));
+    });
+    const j = jsonOf(wsg(['refresh', '--tasks', '--json', '--ws', ep], { env }));
+    it('--tasks --json: nothing left to change, every task in the result', () => {
+      assert.strictEqual(j.ok, true);
+      assert.deepStrictEqual(j.result.files, []);
+      assert.strictEqual(j.result.settingsChanged, false);
+      assert.deepStrictEqual(j.result.tasks.map((x) => [x.task, x.refreshed, x.code]), [['cart', true, null], ['old', false, 'done']]);
+    });
+    it('--tasks outside an epic: refused', () => {
+      const r = wsg(['refresh', '--tasks', '--ws', path.join(ep, 'cart')], { env });
+      assert.strictEqual(r.code, 2, r.all);
+      assert.match(r.err, /--tasks refreshes the tasks of an epic/);
+      assert.strictEqual(jsonOf(wsg(['refresh', '--tasks', '--json', '--ws', path.join(ep, 'cart')], { env })).error.code, 'invalid_input');
+    });
+    it('--json, a refusal: the envelope, invalid_input', () => {
+      fs.writeFileSync(path.join(ep, '.mcp.json'), '{ broken');
+      const r = wsg(['refresh', '--json', '--dry-run', '--ws', ep], { env });
+      assert.strictEqual(r.code, 2, r.all);
+      assert.strictEqual(jsonOf(r).error.code, 'invalid_input');
+      fs.rmSync(path.join(ep, '.mcp.json'));
+      wsg(['refresh', '--ws', ep], { env });
+    });
+  }
+
+  console.log('\nwsg check: the epic\'s MCP servers');
+  {
+    const { env, ep } = epicRoot('check-root');
+    for (const slug of ['cart', 'pay']) newTask(env, slug);
+    const items = (ws, extra = {}) => {
+      const j = jsonOf(wsg(['check', ws, '--json'], { env: { ...env, ...extra } }));
+      return j.result.sections.flatMap((x) => x.items.map((it) => `${it.level} ${it.text}`));
+    };
+    const has = (list, re) => list.some((l) => re.test(l));
+    it('an epic and a task without servers: no MCP lines', () => {
+      assert.ok(!has(items(ep), /MCP/));
+      assert.ok(!has(items(path.join(ep, 'cart')), /MCP/));
+    });
+    wsg(['mcp', 'add', 'shopdb', '--env', 'SHOP_DB_TOKEN', '--ws', 'shop', '--', 'srv'], { env });
+    wsg(['mcp', 'disable', 'github', '--ws', 'shop'], { env });
+    const clean = items(ep, { SHOP_DB_TOKEN: 'x' });
+    it('all in place: an ok line, the trust note, no warning about MCP', () => {
+      assert.ok(has(clean, /^ok MCP: 1 server of the epic, 1 global turned off/), clean.join('\n'));
+      assert.ok(has(clean, /^info in a terminal, the epic's MCP servers stay "Pending approval" in a task until its folder is trusted/));
+      assert.ok(!has(clean, /^(warn|fail) .*MCP/), clean.join('\n'));
+    });
+    it('a variable not set in this environment: a warning naming it, never a value', () => {
+      const l = items(ep);
+      assert.ok(has(l, /^warn MCP: not set in this environment: SHOP_DB_TOKEN/));
+    });
+    it('the task: its settings enable the epic\'s servers, the trust note', () => {
+      const l = items(path.join(ep, 'cart'), { SHOP_DB_TOKEN: 'x' });
+      assert.ok(has(l, /^ok \.claude\/settings\.json enables the epic's MCP servers \(1\) and turns off 1 global/), l.join('\n'));
+      assert.ok(has(l, /Pending approval/));
+    });
+    // A task left behind: its settings edited back by hand.
+    setJson(settingsFile(path.join(ep, 'pay')), (s) => { const { enabledMcpjsonServers, ...rest } = s; return rest; });
+    it('a stale task: named in the epic\'s check', () => assert.ok(has(items(ep, { SHOP_DB_TOKEN: 'x' }), /^warn tasks without the epic's MCP servers as they are now in their \.claude\/settings\.json: pay — run wsg refresh --tasks here/)));
+    it('and in its own', () => assert.ok(has(items(path.join(ep, 'pay'), { SHOP_DB_TOKEN: 'x' }), /^warn \.claude\/settings\.json: enabledMcpjsonServers or deniedMcpServers is not what the epic's MCP servers say now/)));
+    wsg(['refresh', '--tasks', '--ws', ep], { env });
+    it('refresh --tasks clears it', () => assert.ok(!has(items(ep, { SHOP_DB_TOKEN: 'x' }), /^warn tasks without the epic's MCP/)));
+    // .mcp.json lost the epic's entry.
+    setJson(path.join(ep, '.mcp.json'), (j) => ({ mcpServers: {} }));
+    it('.mcp.json missing a wsg entry: a warning naming it', () => assert.ok(has(items(ep, { SHOP_DB_TOKEN: 'x' }), /^warn \.mcp\.json has no entry for the epic's MCP server shopdb/)));
+    setJson(path.join(ep, '.mcp.json'), (j) => ({ mcpServers: { shopdb: { command: 'edited' } } }));
+    it('an entry edited by hand: a warning to refresh', () => assert.ok(has(items(ep, { SHOP_DB_TOKEN: 'x' }), /^warn \.mcp\.json is not the epic's MCP servers as they are now/)));
+    wsg(['refresh', '--ws', ep], { env });
+    // A user-scope server by the same name.
+    fs.writeFileSync(path.join(claudeDir, '.claude.json'), JSON.stringify({ mcpServers: { shopdb: { command: 'other', env: { T: 'hidden-value-7' } } } }));
+    const shadow = wsg(['check', ep], { env: { ...env, SHOP_DB_TOKEN: 'x' } });
+    it('a server that takes the name of a user-scope one: a warning; nothing of that config is printed', () => {
+      assert.match(shadow.all, /the epic's server shopdb takes the name of a server in your user-scope Claude Code config/);
+      assert.ok(!shadow.all.includes('hidden-value-7'));
+    });
+    fs.rmSync(path.join(claudeDir, '.claude.json'));
+    // The owner put a server by the epic's name into .mcp.json, and wsg's snapshot does not know it.
+    setState(ep, (s) => ({ ...s, mcpRendered: { ...s.mcpRendered, mcpJson: [] } }));
+    it('an owner\'s entry by the epic\'s server name: FAIL, refresh refuses', () => assert.ok(has(items(ep, { SHOP_DB_TOKEN: 'x' }), /^fail .*has a server shopdb that wsg did not put there/)));
+  }
+
   console.log('\nwsg mcp: a failed write is rolled back');
   if (asRoot) console.log('  skip  running as root: a read-only file does not stop a write');
   else {
@@ -580,6 +693,45 @@ const MCP = { servers: [STDIO, HTTP], disabled: { claude: ['github', 'plugin:acm
       assert.strictEqual(read(target), commented);
     });
     it('a dry run says nothing would change', () => assert.deepStrictEqual(jsonOf(wsg(['refresh', '--dry-run', '--ws', ep], { env })).files, []));
+  }
+
+  console.log('\nwsg check after the last server went while a task was busy; a reopened task');
+  {
+    const { env, ep } = epicRoot('late-root');
+    for (const slug of ['cart', 'held', 'old']) newTask(env, slug);
+    wsg(['close', 'shop/old'], { env });
+    wsg(['mcp', 'add', 'shopdb', '--ws', 'shop', '--', 'srv'], { env });
+    const lockFile = path.join(ep, 'held', '.claude', 'wsg.lock');
+    fs.writeFileSync(lockFile, JSON.stringify({ pid: process.pid, time: new Date().toISOString() }));
+    wsg(['mcp', 'remove', 'shopdb', '--ws', 'shop'], { env });
+    fs.rmSync(lockFile);
+    const items = (ws) => jsonOf(wsg(['check', ws, '--json'], { env })).result.sections.flatMap((x) => x.items.map((it) => `${it.level} ${it.text}`));
+    it('the epic has no servers and no snapshot left, the busy task still has wsg\'s entries', () => {
+      assert.ok(!('mcp' in stateOf(ep)) && !('mcpRendered' in stateOf(ep)));
+      assert.deepStrictEqual(settingsOf(path.join(ep, 'held')).enabledMcpjsonServers, ['shopdb']);
+    });
+    it('the epic\'s check names that task', () => assert.ok(items(ep).some((l) => /^warn tasks without the epic's MCP servers as they are now in their \.claude\/settings\.json: held/.test(l))));
+    wsg(['refresh', '--tasks', '--ws', ep], { env });
+    it('and is quiet once it is refreshed', () => assert.ok(!items(ep).some((l) => /MCP/.test(l))));
+    // A done task left out of a change, then reopened.
+    wsg(['mcp', 'add', 'tracker', '--url', 'https://mcp.example.com/acme', '--ws', 'shop'], { env });
+    it('a done task is left out of the change', () => assert.ok(!('enabledMcpjsonServers' in settingsOf(path.join(ep, 'old')))));
+    const r = wsg(['status', 'shop/old', 'open'], { env });
+    it('reopened, it gets the epic\'s servers at once', () => {
+      assert.strictEqual(r.code, 0, r.all);
+      assert.deepStrictEqual(settingsOf(path.join(ep, 'old')).enabledMcpjsonServers, ['tracker']);
+      assert.strictEqual(stateOf(path.join(ep, 'old')).status, 'open');
+      assert.deepStrictEqual(stateOf(path.join(ep, 'old')).mcpRendered, { enabled: ['tracker'], denied: [] });
+      assert.deepStrictEqual(jsonOf(wsg(['refresh', '--dry-run', '--ws', path.join(ep, 'old')], { env })).files, []);
+    });
+    // An owner's own .mcp.json that is no JSON, in an epic whose wsg servers are all gone.
+    wsg(['mcp', 'remove', 'tracker', '--ws', 'shop'], { env });
+    fs.writeFileSync(path.join(ep, '.mcp.json'), '// mine\n{}\n');
+    it('an owner\'s .mcp.json with comments in an epic without wsg\'s servers: check says nothing about it', () => {
+      const r2 = wsg(['check', ep, '--json'], { env });
+      assert.ok(!items(ep).some((l) => /MCP|mcp\.json/.test(l)), items(ep).join('\n'));
+      assert.notStrictEqual(jsonOf(r2).error && jsonOf(r2).error.code, 'internal');
+    });
   }
 
   console.log('\nthe render helpers');

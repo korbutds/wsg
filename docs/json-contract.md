@@ -5,8 +5,9 @@ stdout — the envelope — and nothing else there; stderr carries only diagnost
 messages, a crash's stack). This file describes `schemaVersion` 1, as `lib/json.js` and
 `bin/cli.js` produce it.
 
-Commands that take `--json`: `new`, `add`, `remove`, `check`, `list`, `status`, `close`,
-`context add`, `context note`, `context remove`, `context list`, and `wsg --version --json`. Any other command given `--json` refuses it as an unknown flag, in the
+Commands that take `--json`: `new`, `add`, `remove`, `refresh`, `check`, `list`, `status`, `close`,
+`context add`, `context note`, `context remove`, `context list`, `mcp add`, `mcp remove`,
+`mcp disable`, `mcp enable`, `mcp list`, and `wsg --version --json`. Any other command given `--json` refuses it as an unknown flag, in the
 envelope (`invalid_input`). `--json` is read before anything else can refuse, so a flag error, a
 settings file that can't be read or an unknown command is an envelope too.
 
@@ -30,7 +31,7 @@ settings file that can't be read or an unknown command is an envelope too.
 ## Envelope
 
 ```json
-{"schemaVersion": 1, "wsgVersion": "0.6.1", "ok": true, "command": "close", "dryRun": false,
+{"schemaVersion": 1, "wsgVersion": "0.7.0", "ok": true, "command": "close", "dryRun": false,
  "result": {}, "error": null, "warnings": []}
 ```
 
@@ -39,7 +40,7 @@ settings file that can't be read or an unknown command is an envelope too.
 | `schemaVersion` | `1`. Raised on any breaking change: a key removed or renamed, a meaning or a value changed. New keys may be added without a raise. |
 | `wsgVersion` | the wsg that printed it |
 | `ok` | `true` when the command did what was asked; `false` with `error` set |
-| `command` | the command (`check` for `--check` too); a two-word command is named by both words, separated by one space: `context add`, `context note`, `context remove`, `context list`; `null` for an unknown command (`context` alone, or with a word it doesn't have, included), a global flag or `--version` |
+| `command` | the command (`check` for `--check` too); a two-word command is named by both words, separated by one space: `context add`, `context note`, `context remove`, `context list`, `mcp add`, `mcp remove`, `mcp disable`, `mcp enable`, `mcp list`; `null` for an unknown command (`context` or `mcp` alone, or with a word it doesn't have, included), a global flag or `--version` |
 | `dryRun` | `true` when the command ran with `--dry-run` (a command that has one) |
 | `result` | the command's outcome, below; on an error it may still hold the refused plan (a refused `add`, `new`, `remove`, `status`, `close`, a `check` that found errors), else `null` |
 | `error` | `null` on success, else the object below |
@@ -148,7 +149,10 @@ tasks and processes in `WS_ROOT` — each epic's tasks in its `tasks`. Each entr
 | `sources` | `[{name, mode, branch, dirty, unpushed}]`. Git is asked only on a move to done, and only about worktrees: then `dirty` is the list of changed files as `git status --porcelain` shows them (`[]`: clean) and `unpushed` the number of commits not on the branch's upstream, or without one not on its base. `dirty: null` and `unpushed: null` mean git was not asked, or could not tell |
 | `tasksMdUpdated` | whether the epic's `tasks.md` block changed (planned, in a dry run) |
 
-Only `.claude/wsg.json` and the epic's `tasks.md` block are written, in one transaction. Uncommitted
+Only `.claude/wsg.json` and the epic's `tasks.md` block are written, in one transaction — and, when a
+done task of an epic is reopened, its other generated parts, so it gets what the epic changed while it
+was done (its context index, its MCP servers). A render refused at plan time (a broken marker, say) is a
+warning and the status is set anyway; a write that fails rolls the whole reopening back (`step_failed`). Uncommitted
 or unpushed work and entries left under `## For the epic` are warnings, never refusals; so is done
 set for a task of an epic from inside its own workspace (a standalone task or a process gets no
 such warning: it has no epic session).
@@ -182,6 +186,61 @@ not UTF-8 text; `copied` `true` for a note and for a file wsg copied in — `con
 those — `false` for a link and for a file that was in `context/` already and was only listed, which a
 removal only unlists. `blockBytes`: the size of the `<!-- wsg:epic-context -->` block every task carries,
 markers included.
+
+### refresh
+
+`{workspace, files, settingsChanged, tasks}`. The plain `wsg refresh --dry-run` keeps its own JSON
+(relative paths, `errors`, `warnings`); with `--json` it is this envelope, `dryRun` `true`. A
+generated part that can't be rendered (a broken marker, a `.mcp.json` that does not read, an entry
+of the owner's in it by the name of the epic's server) is `invalid_input`, nothing written.
+
+| Key | Value |
+|---|---|
+| `workspace` | the workspace |
+| `files` | the paths written or removed (planned, in a dry run); `[]` when there was nothing to bring up to date |
+| `settingsChanged` | whether `.claude/settings.json` changed: a running session keeps the settings it started with |
+| `tasks` | with `--tasks` (an epic only; anything else is `invalid_input`): every task of the epic, after the epic, each under its own lock, as in `context add`; `null` without `--tasks` |
+
+### mcp add, mcp remove, mcp disable, mcp enable
+
+An epic's MCP servers for Claude Code (epics only: a task or a process is `invalid_input`; so is
+`--agent codex` — "not supported yet"). The epic is written in one transaction under its lock — its
+`.claude/wsg.json`, `.mcp.json` (the epic's servers, next to the owner's own entries, which are
+kept) and `.claude/settings.json` (`enabledMcpjsonServers`, `deniedMcpServers`, the owner's entries
+kept) — then every task of it is refreshed as in `context add`. A name the owner's `.mcp.json` has
+already is refused, never overwritten. `--env NAME=value` with a name that looks like a secret
+(`TOKEN`, `KEY`, `SECRET`, `PASSWORD`, `AUTH`, … as a whole name or a part between `_`, `-`, `.`)
+is `invalid_input`; an argument or a URL that looks like it carries one is a warning, naming the
+argument's position and flag, never its value. `disable` of a name already off and `enable` of one
+that is not off change nothing: `ok` with a warning, `restartNeeded` `false`.
+
+`{workspace, name, server, disabled, files, settingsChanged, restartNeeded, tasks}`
+
+| Key | Value |
+|---|---|
+| `workspace` | the epic |
+| `name` | the server's name as given (as the epic has it, for `remove`) |
+| `server` | the server added or removed, as in `mcp list`; `null` for `disable`, `enable` and a refused plan that got no further |
+| `disabled` | `{claude: [names]}`: the global servers the epic turns off, after the command (as they are, when refused) |
+| `files` | the epic's paths written or removed: `.mcp.json`, `.claude/settings.json`, `.claude/wsg.json`; `[]` when refused |
+| `settingsChanged` | whether the epic's `.claude/settings.json` changed |
+| `restartNeeded` | whether the epic's MCP servers changed at all: Claude Code reads them when a session starts |
+| `tasks` | as in `context add` |
+
+### mcp list
+
+`{workspace, servers, disabled, global, missingEnv}`. Read-only.
+
+| Key | Value |
+|---|---|
+| `servers` | `[{name, transport, command, args, url, env, bearerEnv, agents}]` in their order. `transport` `stdio` (`command`, `args`; `url` `null`) or `http` (`url`; `command` `null`, `args` `[]`). `env`: the names of the variables the server gets, never a value — neither one forwarded from the environment (`${NAME}` in `.mcp.json`) nor a literal given with `--env NAME=value`. `bearerEnv`: the name of the variable that holds an http server's token, or `null`. `agents`: `["claude"]` in this version |
+| `disabled` | `{claude: [names]}`: the global servers the epic turns off, any name Claude Code may know one by — `plugin:<plugin>:<server>` for a plugin's |
+| `global` | `{claude: [{name, transport}]}`: the servers of the user-scope Claude Code config (`$CLAUDE_CONFIG_DIR/.claude.json`, else `~/.claude.json`), names and transports only. Plugin servers and claude.ai connectors are not in that file, so not here: a UI that turns servers off takes a free-text name too |
+| `missingEnv` | the variables the epic's servers read that the environment wsg runs in has no value for |
+
+`command`, `args` and `url` are what the owner gave. A token typed into them by hand is in the
+result, and in `.mcp.json`, which every task's agent can read: `mcp add` warns about it; keep
+secrets in variables.
 
 ### --version
 

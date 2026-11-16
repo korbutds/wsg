@@ -30,6 +30,13 @@
 #   7. The task's status, wsg only, no model: `wsg list --json` shows the task of step 6 open;
 #      `wsg status <epic>/<task> review`, then `wsg close <epic>/<task>`; `wsg list --json` and the
 #      epic's tasks.md show it done with today's date.
+#   8. Opt-in (WSG_SMOKE_MCP=1), no model: an epic's MCP servers (`wsg mcp`). An epic gets a stdio
+#      server (a dummy one written to the temp dir) and turns off a global one; in its task,
+#      `claude mcp list` names the epic's server and not the one turned off, while a global server
+#      the epic leaves on is listed (the control). It runs with a CLAUDE_CONFIG_DIR of its own in
+#      the temp dir, whose .claude.json holds the two global servers: the user's config is not read
+#      or touched, and no login is needed. WSG_SMOKE_ONLY=mcp runs this step alone — then nothing
+#      of the steps above runs, the advisor agent is not installed and no model is asked.
 #
 # The agent is the user-level one: for the run, this checkout's agent is rendered into
 # ${CLAUDE_CONFIG_DIR:-~/.claude}/agents/wsg-advisor.md, as `wsg install-skills` would write it,
@@ -58,12 +65,16 @@
 #   init event lists the epic's manual-only skills and the control skill; the model, with the Skill
 #   tool alone, names only the control one and quotes the rule's marker; ../knowledge.md is read
 #   with the Read tool. With --tools "" the model is offered no skill at all, the control included.
+# Outcome recorded on 2026-11-16 for step 8 (WSG_SMOKE_ONLY=mcp), with Claude Code 2.1.325: all
+#   pass. In the task, never trusted, the epic's server is listed as "Pending approval"; the denied
+#   global server is not listed; the control is connected.
 #
 # The temp dir and the session history Claude Code keeps for it are removed at the end.
 
 set -euo pipefail
 
 MODEL="${1:-haiku}"
+MCP_ONLY=no; [ "${WSG_SMOKE_ONLY:-}" = mcp ] && MCP_ONLY=yes
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 command -v claude >/dev/null || { echo "claude is not on PATH" >&2; exit 1; }
 command -v node >/dev/null || { echo "node is not on PATH" >&2; exit 1; }
@@ -72,7 +83,8 @@ command -v node >/dev/null || { echo "node is not on PATH" >&2; exit 1; }
 SCRIPT="test/smoke-claude.sh"
 # shellcheck source=test/advisor-agent.sh
 . "$SRC/test/advisor-agent.sh"
-recover_advisor
+# Step 8 alone installs no agent: nothing under the user's config dir is touched.
+[ "$MCP_ONLY" = yes ] || recover_advisor
 TMP="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/wsg-smoke-XXXXXX")" && pwd -P)"
 PROJECTS="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects"
 session_dir() { printf '%s/%s' "$PROJECTS" "$(printf '%s' "$1" | sed 's/[^a-zA-Z0-9]/-/g')"; }
@@ -151,6 +163,46 @@ listed() { printf '%s\n' "$1" | grep -qx "$2" && echo yes || echo no; }
 # The first 300 characters of a reply, on one line. Not `head -c | tr`: a byte cut splits a
 # multibyte character, and tr in a UTF-8 locale stops on it with "Illegal byte sequence".
 snippet() { local s="${1//$'\n'/ }"; printf '%s' "${s:0:300}"; }
+
+# 8. An epic's MCP servers in a task, as `claude mcp list` there sees them. No model.
+mcp_step() {
+  echo "8. an epic's MCP servers: claude mcp list in its task (no model)"
+  local srv="$TMP/bin/dummy-mcp.js" cfg="$TMP/mcp-config" e t out
+  cat > "$srv" <<'JS'
+// A stdio MCP server that answers initialize and tools/list, enough for a health check.
+const rl = require('node:readline').createInterface({ input: process.stdin });
+const send = (m) => process.stdout.write(`${JSON.stringify(m)}\n`);
+rl.on('line', (l) => {
+  let m; try { m = JSON.parse(l); } catch { return; }
+  if (m.method === 'initialize') send({ jsonrpc: '2.0', id: m.id, result: { protocolVersion: m.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: process.argv[2] || 'dummy', version: '0.0.1' } } });
+  else if (m.method === 'tools/list') send({ jsonrpc: '2.0', id: m.id, result: { tools: [] } });
+  else if (m.id !== undefined) send({ jsonrpc: '2.0', id: m.id, result: {} });
+});
+JS
+  mkdir -p "$cfg"
+  node -e 'const [file, srv] = process.argv.slice(1);
+    const s = (n) => ({ command: "node", args: [srv, n] });
+    require("fs").writeFileSync(file, JSON.stringify({ mcpServers: { smokeoff: s("smokeoff"), smokeon: s("smokeon") } }));' "$cfg/.claude.json" "$srv"
+  wsg new mcpe --kind epic --no-launch >/dev/null
+  wsg new mcpe-a --epic mcpe --no-launch >/dev/null
+  e="$WS_ROOT/mcpe"; t="$e/mcpe-a"
+  CLAUDE_CONFIG_DIR="$cfg" wsg mcp add smokeepic --ws mcpe -- node "$srv" smokeepic >/dev/null
+  CLAUDE_CONFIG_DIR="$cfg" wsg mcp disable smokeoff --ws mcpe >/dev/null
+  report "the task's settings.json enables the epic's server and denies the global one" \
+    "$(grep -q '"smokeepic"' "$t/.claude/settings.json" && grep -q '"serverName": "smokeoff"' "$t/.claude/settings.json" && echo yes || echo no)"
+  out="$(cd "$t" && CLAUDE_CONFIG_DIR="$cfg" claude mcp list 2>&1)" || true
+  report "claude mcp list in the task names the epic's server" "$(has "$out" smokeepic)"
+  report "and not the global server the epic turns off" "$(hasnt "$out" smokeoff)"
+  report "a global server the epic leaves on is listed (the control)" "$(has "$out" smokeon)"
+  echo "  info  $(snippet "$out")"
+}
+if [ "$MCP_ONLY" = yes ]; then
+  mcp_step
+  echo
+  echo "passed: $pass, failed: $fail"
+  [ "$fail" = 0 ]
+  exit
+fi
 
 echo "1. a session starts in the workspace"
 fresh one; W1="$WS_ROOT/one"
@@ -292,6 +344,8 @@ report "wsg close seven/seven-a" "$ok"
 TODAY="$(node -e 'process.stdout.write(new Date().toISOString().slice(0, 10))')"
 report "wsg list --json: done, closed today" "$([ "$(list_field status) $(list_field closed)" = "done $TODAY" ] && echo yes || echo no)"
 report "tasks.md shows [done <date>]" "$(has "$(cat "$E7/tasks.md")" "\`seven-a/\` [done $TODAY]")"
+
+[ "${WSG_SMOKE_MCP:-}" = 1 ] && mcp_step
 
 echo
 echo "passed: $pass, failed: $fail"

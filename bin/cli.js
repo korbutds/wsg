@@ -675,16 +675,39 @@ async function cmdRemove(args) {
 }
 
 // Brings the generated parts in line with this wsg and the state: a block new in this version, or
-// markers deleted by hand. Nothing else is touched; --dry-run lists what would change.
-function cmdRefresh(args) {
+// markers deleted by hand. Nothing else is touched; --dry-run lists what would change. --tasks, in an
+// epic: then every task of it, each under its own lock, as wsg context and wsg mcp do after a change
+// (a busy task is reported, a done one left as it is).
+async function cmdRefresh(args) {
   const { flags } = parse(args, FLAGS.refresh, 0);
   const found = targetWs(flags['--ws']);
   if (!found) invalid(t('cli.notInWorkspace'));
   if (found.legacy) invalid(t('cli.legacyWorkspace', { ws: found.ws }));
   const { ws } = found;
+  currentWs = ws;
   const generate = lib('generate');
   const W = lib('workspace');
   const ui = lib('ui');
+  const json = J.active();
+  const withTasks = !!flags['--tasks'];
+  let slug = path.basename(ws);
+  if (withTasks) {
+    let st;
+    try {
+      st = W.readState(ws);
+    } catch (e) {
+      invalid(e.message);
+    }
+    if (st.kind !== 'epic') invalid(t('cli.refreshTasksEpic', { ws, kind: st.kind }));
+    slug = st.slug;
+  }
+  // The result --json gives: the files absolute; tasks null without --tasks.
+  const result = (rendered, tasks) => ({
+    workspace: ws,
+    files: rendered ? generate.changedFiles(rendered).map((f) => path.join(ws, f)) : [],
+    settingsChanged: rendered ? rendered.settingsChanged : false,
+    tasks: withTasks ? tasks : null,
+  });
   if (flags['--dry-run']) {
     let rendered = null;
     let error = '';
@@ -693,10 +716,16 @@ function cmdRefresh(args) {
     } catch (e) {
       error = e.message;
     }
+    const tasks = withTasks && !error ? await generate.refreshEpicTasks(ws, { dryRun: true }) : [];
+    if (json) {
+      if (error) return J.fail('invalid_input', error, { details: [error], result: result(null, []) });
+      return J.succeed(result(rendered, tasks), { warnings: rendered.warnings });
+    }
     process.stdout.write(`${JSON.stringify({
       workspace: ws,
       files: rendered ? generate.changedFiles(rendered) : [],
       settingsChanged: rendered ? rendered.settingsChanged : false,
+      ...(withTasks ? { tasks } : {}),
       errors: error ? [error] : [],
       warnings: rendered ? rendered.warnings : [],
     }, null, 2)}\n`);
@@ -711,10 +740,24 @@ function cmdRefresh(args) {
   } catch (e) {
     invalid(e.message);
   }
+  let tasks = null;
+  if (withTasks) {
+    const r = await refreshTasksOf(ws);
+    tasks = r.tasks;
+    if (r.stopped) {
+      const left = tasks.filter((x) => x.code === 'interrupted').map((x) => x.task).join(', ') || '—';
+      const said = t('cli.refreshTasksInterrupted', { epic: slug, list: left });
+      if (json) return J.fail('interrupted', said, { rollback: 'unknown', result: result(rendered, tasks) });
+      process.stderr.write(`\n${said}\n`);
+      return 130;
+    }
+  }
+  if (json) return J.succeed(result(rendered, tasks));
   const files = generate.changedFiles(rendered);
   if (files.length) ui.head(t('cli.refreshed', { list: files.join(', ') }));
   else ui.ok(t('cli.refreshNone'));
   if (rendered.settingsChanged) ui.info(t('cli.refreshRestart'));
+  if (tasks) reportTasks(tasks);
   return 0;
 }
 

@@ -117,13 +117,14 @@ The commands the agent (or you) call:
 | `wsg new <slug> [--title T] [--kind task\|process\|epic] [--skill NAME] [--ticket X] [--epic E] [--sources a,b\|none] [--dry-run] [--json] [--no-launch]` | Creates the skeleton and starts the agent; `--no-launch` prints the next step instead. Only the slug is needed, and `--kind` for a process or an epic: the setup dialogue asks for the rest. `--epic E` makes a task inside the epic `E`, `--sources` picks the epic's repositories it takes (see [Epics](#epics)); `--dry-run` prints the plan as JSON; `--json` prints one JSON document, the outcome or the error, and never starts the agent. |
 | `wsg add <path> [--worktree\|--link\|--reference] [--branch B] [--base REF] [--reset-to-base] [--target T] [--verify CMD] [--carry all\|none\|a,b] [--[no-]clone-node-modules] [--note TEXT] [--branch-template T] [--dry-run] [--json] [--ws SLUG\|PATH]` | Attaches one source to the workspace you are in. An existing branch is attached as it is, one only on origin is continued; `--reset-to-base` starts it over (with a `backup/…`). Every check happens before anything is touched; a failure rolls back only this source. `--dry-run` prints the plan as JSON; `--json` prints one JSON document, the outcome or the error, and nothing else. In an epic, a link with the defaults its tasks reuse; in a task of an epic, `wsg add <name>` takes the epic's source of that name. |
 | `wsg remove <name> [--delete-ignored] [--dry-run] [--json] [--ws SLUG\|PATH]` | Detaches a source: a clean worktree (its branch is kept) or the symlink, its rule, and its generated parts. Ignored files that exist nowhere else (made in the worktree, or carried in and changed since) are deleted with the worktree only after `--delete-ignored`; a `node_modules` wsg cloned is not checked, so changes inside it are not protected. The way to fix a source attached with the wrong flags: remove, then add again. |
-| `wsg refresh [--dry-run] [--ws SLUG\|PATH]` | Brings the generated parts up to date with this wsg — e.g. adds the advisor block to a workspace made by 0.2 — and touches nothing else. `--dry-run` prints the files it would change as JSON. |
+| `wsg refresh [--tasks] [--dry-run] [--json] [--ws SLUG\|PATH]` | Brings the generated parts up to date with this wsg — e.g. adds the advisor block to a workspace made by 0.2 — and touches nothing else. `--tasks` in an epic: then every task of it, each under its own lock. `--dry-run` prints the files it would change as JSON; `--json` prints one JSON document. |
 | `wsg team <preset> [--without ROLE,...] [--dry-run] [--ws SLUG\|PATH]` | Adds a team of roles (preset `fullstack`): cards and a workflow in `team/`, a Claude Code subagent per role, `/wsg-feature`. Only adds; an existing file is kept. `--dry-run` prints what it would create, keep and update as JSON. Not in an epic: in its tasks. See [Team](#team). |
 | `wsg check [path\|slug] [--json]` | Checks a workspace against the conventions; `--json` gives the report by section as one JSON document. A task of an epic is `<epic>/<task>`. |
 | `wsg list [--json]` | Lists every workspace in `WS_ROOT`, each epic's tasks under it, with the kind, a task's status marker, the ticket and the title; a 0.1 workspace and one whose state does not read are listed with what is wrong. Only reads, runs no git. `--json` gives each workspace's state, sources and the directories a session needs. |
-| `wsg status <task> [open\|review\|done] [--dry-run] [--json]` | Prints a task's or a process's status, or sets it: only `.claude/wsg.json` and the epic's `tasks.md` block change. The move to done warns about uncommitted or unpushed work and about entries left under `## For the epic`, and never refuses for them. The task is always named: a slug, `<epic>/<task>` or a path. |
+| `wsg status <task> [open\|review\|done] [--dry-run] [--json]` | Prints a task's or a process's status, or sets it: only `.claude/wsg.json` and the epic's `tasks.md` block change (a done task of an epic reopened also gets its generated parts refreshed). The move to done warns about uncommitted or unpushed work and about entries left under `## For the epic`, and never refuses for them. The task is always named: a slug, `<epic>/<task>` or a path. |
 | `wsg close <task> [--dry-run] [--json]` | `wsg status <task> done`. Merges, pushes and removes nothing. |
 | `wsg context add <url\|path> [--id ID] [--title T] [--desc D]`, `wsg context note <id> (--text T\|--from FILE\|--from -) [--replace]`, `wsg context remove <id>`, `wsg context list` (each with `--ws E`, `--json`; the writes with `--dry-run`) | An epic's context: links, files copied into `context/`, notes. Its index — one line per item — is rendered into the epic's and every task's `AGENTS.md` in a `<!-- wsg:epic-context -->` block, at once; the agent opens an item only when it needs it. See [Epics](#epics). |
+| `wsg mcp add <name> [--env A,B=value] -- <command> [args...]`, `wsg mcp add <name> --url URL [--bearer-env VAR]`, `wsg mcp remove <name>`, `wsg mcp disable <name>`, `wsg mcp enable <name>`, `wsg mcp list` (each with `--ws E`, `--json`; the writes with `--dry-run`) | An epic's MCP servers for Claude Code: written into the epic's `.mcp.json` and enabled in the epic's and every task's `.claude/settings.json`, at once; `disable` turns a global server off there by name. Secrets by reference only (`${VAR}`). Codex not yet. See [Epics](#epics). |
 | `wsg promote [slug\|path] --skill NAME` | Turns a task into a process. Not an epic or a task of one. |
 | `wsg guide [setup\|advisor\|teach\|epic]` | Prints a guide an agent follows: the setup dialogue, the advisor's procedure, teaching a team role a practice, or working in an epic. |
 | `wsg install-skills [--uninstall]` | Installs the `wsg-new` and `wsg-teach` skills into `~/.claude/skills` and the `wsg-advisor` agent into `~/.claude/agents` (or under `$CLAUDE_CONFIG_DIR`) and, when Codex is there, `~/.codex/agents` (or `$CODEX_HOME/agents`). Overwrites only files it wrote — they carry a marker — and refuses others with exit 1. `--uninstall` removes only its own files. |
@@ -199,6 +200,7 @@ $WS_ROOT/shop/
 ├── knowledge.md       what every task must know: decisions, repositories, pitfalls
 ├── tasks.md           the tasks in this directory, and other people's from the tracker
 ├── decisions.md       the rationale behind the decisions
+├── .mcp.json          the epic's MCP servers (wsg mcp), found from every task below
 ├── api -> ~/projects/api  a link, with the defaults its tasks reuse
 ├── .claude/
 │   ├── rules/epic-knowledge.md  a pointer to knowledge.md, loaded every session
@@ -229,6 +231,13 @@ $WS_ROOT/shop/
   <url|path>` and `wsg context note <id>` from the epic: links stay in the state, files and notes
   live in the epic's `context/`. Every task's `AGENTS.md` gets only the index, in a
   `<!-- wsg:epic-context -->` block, rendered into all open tasks at once; bodies are read on demand.
+- **MCP.** `wsg mcp add <name> -- <command> [args...]` (or `--url URL`) from the epic gives every
+  task the server: it goes into the epic's `.mcp.json`, and the epic's and each task's
+  `.claude/settings.json` enable it by name. `wsg mcp disable <name>` turns a global server off in
+  the epic and its tasks (`deniedMcpServers`; a plugin's as `plugin:<plugin>:<server>`). The
+  owner's own entries in both files are kept. Secrets stay in your environment: `--env NAME` and
+  `--bearer-env VAR` put `${NAME}` into `.mcp.json`, a literal for a secret-looking name is refused,
+  and `wsg mcp list` names the variables your shell lacks. Claude Code only; see Limitations.
 - **Knowledge.** `knowledge.md` is the single source of truth, kept within 4 KiB and rewritten
   rather than appended to. A task never edits the epic's files: what the next task should know
   goes under `## For the epic` in the task's `notes.md`, dated, with evidence. When its work is
@@ -244,7 +253,9 @@ $WS_ROOT/shop/
   (`wsg guide epic`), so any agent can follow them; the skills only point there.
 - **Check.** `wsg check` in the epic checks `knowledge.md` (a warning over 4 KiB, an error over
   8 KiB), the pointer rule, the `tasks.md` block, the skills and the tasks inside — a task whose
-  state does not read, a done task whose `## For the epic` still has entries. In a task
+  state does not read, a done task whose `## For the epic` still has entries — and, with MCP
+  servers, `.mcp.json`, the tasks whose settings are behind, variables your shell lacks and a
+  server that takes the name of one in your user-scope config. In a task
   (`wsg check shop/cart-fix`) it checks the link to the epic and the epic block of `AGENTS.md`, and
   its always-on budget counts what loads from the epic: its `CLAUDE.md` and rules without `paths:`.
 - **Not in an epic.** `wsg team` refuses an epic with exit 2 — its agents would load in every task
@@ -292,7 +303,9 @@ seconds instead of a full install.
 `.claude/wsg.json` records the sources and how each is attached. Every `wsg add` re-renders from it
 what the generator owns: the blocks between `<!-- wsg:… -->` markers in `AGENTS.md`, `CLAUDE.md`
 and `README.md` (in `AGENTS.md`, also the one-line advisor rule), `permissions.additionalDirectories` in `.claude/settings.json`, the `repo`
-pointer and `mr-target-branch.txt` (an epic has neither). Text outside the markers — what the agent and you write — is
+pointer and `mr-target-branch.txt` (an epic has neither); in an epic and its tasks also the
+epic's MCP entries — its servers in the epic's `.mcp.json`, `enabledMcpjsonServers` and
+`deniedMcpServers` in `.claude/settings.json` — next to the owner's own, which stay. Text outside the markers — what the agent and you write — is
 never touched, and other keys in `settings.json` are kept. `wsg refresh` re-renders them without
 attaching anything — for a workspace made by an earlier wsg. Details: [docs/conventions.md](docs/conventions.md).
 
@@ -512,6 +525,16 @@ shows you the text before writing it.
   checks this and the other behaviour wsg relies on against a real Claude Code; its header lists
   the steps.
 - `paths` in rules are untested for a repository attached via a symlink pointing outside.
+- **An epic's MCP servers.** Claude Code only; Codex is not supported yet (`--agent codex` is
+  refused). A running session keeps its servers: restart it after `wsg mcp`. In a terminal, the
+  epic's servers stay "Pending approval" in a task until that task's folder is trusted — trust is
+  per task directory, a trusted epic does not carry over (observed with Claude Code 2.1.325,
+  `test/smoke-claude.sh` step 8). Turning a global server off relies on `deniedMcpServers` in a
+  project's `.claude/settings.json`, observed on 2.1.325 but documented by Claude Code for managed
+  settings; a plugin's server is turned off by `plugin:<plugin>:<server>`, a claude.ai connector by
+  name is not verified, and `wsg mcp list` shows neither. `.mcp.json` and `wsg mcp list --json`
+  carry the commands, arguments and URLs as given: keep tokens in variables. A server that signs
+  in with OAuth needs one authentication in a terminal session.
 - **A team shares one working copy.** Roles work in the same worktree, with no per-role worktree:
   two roles editing one file overwrite each other. The file ownership table in `plan.md` is the
   only protection, so parallel work needs rows that do not overlap.
