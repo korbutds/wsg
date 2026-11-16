@@ -958,6 +958,35 @@ async function statusCommand(given, value, flags, needTask) {
   return 0;
 }
 
+// Every task of the epic refreshed after its change is written (generate.refreshEpicTasks), each under
+// its own lock; the caller holds the epic's. From here a stop signal stops only the refresh of the
+// tasks, and says so — the epic is not put back (lib/lock.js's handler would say it was). The tasks
+// left are reported; each catches up at its next wsg refresh. Returns { tasks, stopped }.
+async function refreshTasksOf(ws) {
+  let stop = false;
+  const onStop = () => { stop = true; };
+  const takeBack = lib('lock').handOver();
+  for (const sig of ['SIGINT', 'SIGHUP', 'SIGTERM']) process.on(sig, onStop);
+  let tasks;
+  try {
+    tasks = await lib('generate').refreshEpicTasks(ws, { stop: () => stop });
+  } finally {
+    for (const sig of ['SIGINT', 'SIGHUP', 'SIGTERM']) process.off(sig, onStop);
+    takeBack();
+  }
+  for (const x of tasks) if (!x.refreshed && x.code !== 'done' && x.code !== 'interrupted') lib('ui').warn(t('context.taskNotRefreshed', { task: x.task, reason: x.reason }));
+  return { tasks, stopped: stop || tasks.some((x) => x.code === 'interrupted') };
+}
+
+// What the tasks' refresh printed for people: the ones refreshed, the done ones left as they are.
+function reportTasks(tasks) {
+  const ui = lib('ui');
+  const refreshed = tasks.filter((x) => x.refreshed).map((x) => x.task);
+  const left = tasks.filter((x) => x.code === 'done').map((x) => x.task);
+  if (refreshed.length) ui.info(t('context.tasksRefreshed', { list: refreshed.join(', ') }));
+  if (left.length) ui.dim(t('context.tasksDone', { list: left.join(', ') }));
+}
+
 // `wsg context add|note|remove|list`: an epic's context (lib/context.js). A write plans with nothing
 // touched, writes the epic under its lock in one transaction, then refreshes every task of the epic,
 // each under its own lock (generate.refreshEpicTasks): a task that can't be refreshed is reported in
@@ -1114,22 +1143,8 @@ async function cmdContext(args) {
     if (json && e && e.rollback) return J.fail('step_failed', String(e.message), { ...J.rollbackOf(e, ws), warnings: plan.warnings });
     throw e;
   }
-  // The epic's change is written: from here a stop signal stops only the refresh of its tasks, and
-  // says so — the epic is not put back (lib/lock.js's handler would say it was). The tasks left are
-  // reported; each catches up at its next wsg refresh.
-  let stop = false;
-  const onStop = () => { stop = true; };
-  const takeBack = lib('lock').handOver();
-  for (const sig of ['SIGINT', 'SIGHUP', 'SIGTERM']) process.on(sig, onStop);
-  let tasks;
-  try {
-    tasks = await generate.refreshEpicTasks(ws, { stop: () => stop });
-  } finally {
-    for (const sig of ['SIGINT', 'SIGHUP', 'SIGTERM']) process.off(sig, onStop);
-    takeBack();
-  }
-  for (const x of tasks) if (!x.refreshed && x.code !== 'done' && x.code !== 'interrupted') ui.warn(t('context.taskNotRefreshed', { task: x.task, reason: x.reason }));
-  if (stop || tasks.some((x) => x.code === 'interrupted')) {
+  const { tasks, stopped } = await refreshTasksOf(ws);
+  if (stopped) {
     const left = tasks.filter((x) => x.code === 'interrupted').map((x) => x.task).join(', ') || '—';
     const said = t('context.fanoutInterrupted', { epic: state.slug, list: left });
     if (json) return J.fail('interrupted', said, { rollback: 'unknown', result: result(tasks), warnings: plan.warnings });
@@ -1141,12 +1156,145 @@ async function cmdContext(args) {
   const done = verb === 'add' ? 'context.added' : verb === 'remove' ? 'context.removed'
     : state.context && state.context.some((x) => x.id === item.id) ? 'context.replaced' : 'context.noted';
   ui.head(t(done, { type: item.type, id: item.id, epic: state.slug }));
-  const refreshed = tasks.filter((x) => x.refreshed).map((x) => x.task);
-  const left = tasks.filter((x) => x.code === 'done').map((x) => x.task);
-  if (refreshed.length) ui.info(t('context.tasksRefreshed', { list: refreshed.join(', ') }));
-  if (left.length) ui.dim(t('context.tasksDone', { list: left.join(', ') }));
+  reportTasks(tasks);
   if (plan.blockChanged) ui.info(t('context.restart'));
   return 0;
+}
+
+// `wsg mcp add|remove|disable|enable|list`: an epic's MCP servers for Claude Code (lib/mcp.js). A
+// write plans with nothing touched, writes the epic under its lock in one transaction — its state,
+// .mcp.json, its settings.json — then refreshes every task of the epic, each under its own lock, as
+// wsg context does. Epics only, Claude Code only in this version: --agent codex is refused. Values
+// never leave: results name the variables, never what they hold.
+async function cmdMcp(args) {
+  const verb = args[0];
+  const name = `mcp ${verb}`;
+  if (verb === undefined) invalid(t('mcp.noVerb'));
+  if (!hasOwn(FLAGS, name)) invalid(t('mcp.badVerb', { verb }));
+  // The server's command after `--`, as it is: its own flags are never wsg's.
+  let words = args.slice(1);
+  let argv = [];
+  if (verb === 'add') {
+    const at = words.indexOf('--');
+    if (at >= 0) {
+      argv = words.slice(at + 1);
+      words = words.slice(0, at);
+    }
+  }
+  const { flags, pos } = parse(words, FLAGS[name], verb === 'list' ? 0 : 1);
+  if (verb !== 'list' && !pos[0]) invalid(t(`mcp.need.${verb}`));
+  if (flags['--agent'] !== undefined && flags['--agent'] !== 'claude') {
+    invalid(flags['--agent'] === 'codex' ? t('mcp.codexNotYet') : t('mcp.badAgent', { agent: flags['--agent'] }));
+  }
+  const found = targetWs(flags['--ws']);
+  if (!found) invalid(t('cli.notInWorkspace'));
+  if (found.legacy) invalid(t('cli.legacyWorkspace', { ws: found.ws }));
+  const { ws } = found;
+  currentWs = ws;
+  const W = lib('workspace');
+  const M = lib('mcp');
+  const generate = lib('generate');
+  const ui = lib('ui');
+  const readEpic = () => {
+    let st;
+    try {
+      st = W.readState(ws);
+    } catch (e) {
+      return invalid(e.message);
+    }
+    if (st.kind !== 'epic') invalid(t('mcp.epicOnly', { ws, kind: st.kind }));
+    return st;
+  };
+  let state = readEpic();
+  const json = J.active();
+  if (verb === 'list') {
+    const result = M.listResult(ws, state);
+    if (json) return J.succeed(result);
+    printMcpList(result, state.slug);
+    return 0;
+  }
+  const dryRun = !!flags['--dry-run'];
+  // Held from the plan to the last write of the epic and through the refresh of its tasks.
+  if (!dryRun) {
+    lock(ws);
+    state = readEpic();
+  }
+  const global = M.globalClaude();
+  const plan = verb === 'add'
+    ? M.planAdd(ws, state, pos[0], { argv, env: flags['--env'], url: flags['--url'], bearerEnv: flags['--bearer-env'], global })
+    : verb === 'remove' ? M.planRemove(ws, state, pos[0]) : M.planToggle(ws, state, pos[0], verb === 'disable', { global });
+  // The result --json gives, plan or done: every key always there, the paths absolute.
+  const after = plan.next ? (plan.next.mcp || { disabled: { claude: [] } }) : null;
+  const result = (tasks) => ({
+    workspace: ws,
+    name: plan.name,
+    server: M.serverResult(plan.server),
+    disabled: { claude: after ? [...(after.disabled.claude || [])] : [...((state.mcp && state.mcp.disabled.claude) || [])] },
+    files: plan.errors.length ? [] : plan.files.map((f) => path.join(ws, f)),
+    settingsChanged: !plan.errors.length && plan.settingsChanged,
+    restartNeeded: !plan.errors.length && plan.changed,
+    tasks,
+  });
+  if (plan.errors.length) {
+    if (json) return J.fail('invalid_input', plan.errors[0], { details: plan.errors, result: result([]), warnings: plan.warnings });
+    if (dryRun) {
+      process.stdout.write(`${JSON.stringify({ ...result([]), errors: plan.errors, warnings: plan.warnings }, null, 2)}\n`);
+      return INVALID;
+    }
+    for (const e of plan.errors) process.stderr.write(`wsg: ${e}\n`);
+    return INVALID;
+  }
+  if (dryRun) {
+    const tasks = await generate.refreshEpicTasks(ws, { dryRun: true });
+    if (json) return J.succeed(result(tasks), { warnings: plan.warnings });
+    process.stdout.write(`${JSON.stringify({ ...result(tasks), errors: [], warnings: plan.warnings }, null, 2)}\n`);
+    return 0;
+  }
+  guardPlatform();
+  if (!json) for (const w of plan.warnings) ui.warn(w);
+  try {
+    await M.apply(ws, plan);
+  } catch (e) {
+    if (e && e.name === 'Interrupted') {
+      if (json) return J.fail('interrupted', cancelled(e), { ...J.rollbackOf(e, ws), warnings: plan.warnings });
+      process.stderr.write(`${cancelled(e)}\n`);
+      return 130;
+    }
+    if (json && e && e.rollback) return J.fail('step_failed', String(e.message), { ...J.rollbackOf(e, ws), warnings: plan.warnings });
+    throw e;
+  }
+  const { tasks, stopped } = await refreshTasksOf(ws);
+  if (stopped) {
+    const left = tasks.filter((x) => x.code === 'interrupted').map((x) => x.task).join(', ') || '—';
+    const said = t('mcp.fanoutInterrupted', { epic: state.slug, list: left });
+    if (json) return J.fail('interrupted', said, { rollback: 'unknown', result: result(tasks), warnings: plan.warnings });
+    process.stderr.write(`\n${said}\n`);
+    return 130;
+  }
+  if (json) return J.succeed(result(tasks), { warnings: plan.warnings });
+  if (plan.changed) ui.head(t(`mcp.done.${verb}`, { name: plan.name, epic: state.slug }));
+  else ui.ok(t('mcp.unchanged', { epic: state.slug }));
+  reportTasks(tasks);
+  if (plan.changed) ui.info(t('mcp.restart'));
+  return 0;
+}
+
+// `wsg mcp list` for people: the epic's servers, the global ones it turns off, the user-scope ones,
+// the variables this shell has no value for. Never a literal's value.
+function printMcpList(r, slug) {
+  const ui = lib('ui');
+  const out = (s) => process.stdout.write(`${s}\n`);
+  if (!r.servers.length) ui.info(t('mcp.listEmpty', { epic: slug }));
+  const width = Math.max(0, ...r.servers.map((s) => s.name.length));
+  for (const s of r.servers) {
+    const what = s.transport === 'stdio' ? [s.command, ...s.args].join(' ') : s.url;
+    const vars = s.transport === 'stdio' ? (s.env.length ? `  env: ${s.env.join(', ')}` : '') : (s.bearerEnv ? `  bearer: ${s.bearerEnv}` : '');
+    out(`${s.name.padEnd(width)}  ${s.transport.padEnd(5)}  ${what}${vars}`);
+  }
+  out(t('mcp.listDisabled', { list: r.disabled.claude.join(', ') || '—' }));
+  out(t('mcp.listGlobal', { list: r.global.claude.map((g) => `${g.name} [${g.transport}]`).join(', ') || '—' }));
+  ui.dim(t('mcp.listPlugins'));
+  if (r.missingEnv.length) ui.warn(t('mcp.listMissing', { list: r.missingEnv.join(', ') }));
 }
 
 async function cmdPromote(args) {
@@ -1216,6 +1364,7 @@ const COMMANDS = {
   close: cmdClose,
   promote: cmdPromote,
   context: cmdContext,
+  mcp: cmdMcp,
   'install-skills': cmdInstallSkills,
   // The 0.1 spellings, kept for one release.
   '--check': cmdCheck,

@@ -56,6 +56,8 @@ const stateOf = (ws) => readJson(stateFile(ws));
 const settingsOf = (ws) => readJson(settingsFile(ws));
 const setJson = (p, fn) => fs.writeFileSync(p, `${JSON.stringify(fn(readJson(p)), null, 2)}\n`);
 const setState = (ws, fn) => setJson(stateFile(ws), fn);
+// A file made read-only stops a write only for a user other than root: those rollback tests skip then.
+const asRoot = typeof process.getuid === 'function' && process.getuid() === 0;
 // A root of its own with an epic in it: { root, env, ep }.
 function epicRoot(name, slug = 'shop') {
   const root = path.join(tmp, name);
@@ -275,6 +277,284 @@ const MCP = { servers: [STDIO, HTTP], disabled: { claude: ['github', 'plugin:acm
       assert.deepStrictEqual(stateOf(task).mcpRendered, { enabled: ['shopdb'], denied: [] });
     });
     fs.writeFileSync(stateFile(ep), good);
+  }
+
+  console.log('\nwsg mcp add, list, remove: envelopes, fan-out');
+  {
+    const { env, ep } = epicRoot('cmd-root');
+    for (const slug of ['cart', 'old', 'held']) newTask(env, slug);
+    wsg(['close', 'shop/old'], { env });
+    const lockFile = path.join(ep, 'held', '.claude', 'wsg.lock');
+    fs.writeFileSync(lockFile, JSON.stringify({ pid: process.pid, time: new Date().toISOString() }));
+    const SECRET = 's3cr3t-value-9f2';
+    const LITERAL = 'eu-west-literal';
+    const envS = { ...env, SHOP_DB_TOKEN: SECRET };
+    fs.writeFileSync(path.join(claudeDir, '.claude.json'), JSON.stringify({ mcpServers: { github: { command: 'gh', env: { GITHUB_TOKEN: SECRET } }, shopdb: { url: `https://x/?token=${SECRET}` } } }));
+    const oldBefore = read(settingsFile(path.join(ep, 'old')));
+    const heldBefore = read(settingsFile(path.join(ep, 'held')));
+    const dry = wsg(['mcp', 'add', 'shopdb', '--env', `SHOP_DB_TOKEN,SHOP_REGION=${LITERAL}`, '--ws', 'shop', '--dry-run', '--json', '--', 'npx', '-y', 'shop-db-mcp'], { env: envS });
+    const dj = jsonOf(dry);
+    it('a dry run: the plan in the envelope, nothing written, the tasks listed', () => {
+      assert.strictEqual(dry.code, 0, dry.all);
+      assert.strictEqual(dj.command, 'mcp add');
+      assert.strictEqual(dj.dryRun, true);
+      assert.deepStrictEqual(dj.result.files.map((f) => path.relative(ep, f)).sort(), ['.claude/settings.json', '.claude/wsg.json', '.mcp.json']);
+      assert.ok(!exists(path.join(ep, '.mcp.json')));
+      assert.ok(!('mcp' in stateOf(ep)));
+      assert.deepStrictEqual(dj.result.tasks.map((x) => [x.task, x.refreshed, x.code]), [['cart', false, null], ['held', false, null], ['old', false, 'done']]);
+    });
+    const add = wsg(['mcp', 'add', 'shopdb', '--env', `SHOP_DB_TOKEN,SHOP_REGION=${LITERAL}`, '--ws', 'shop', '--json', '--', 'npx', '-y', 'shop-db-mcp', '--json'], { env: envS });
+    const aj = jsonOf(add);
+    it('add: ok, the server with its variables by name, restartNeeded, settingsChanged', () => {
+      assert.strictEqual(add.code, 0, add.all);
+      assert.deepStrictEqual(aj.result.server, { name: 'shopdb', transport: 'stdio', command: 'npx', args: ['-y', 'shop-db-mcp', '--json'], url: null, env: ['SHOP_DB_TOKEN', 'SHOP_REGION'], bearerEnv: null, agents: ['claude'] });
+      assert.strictEqual(aj.result.restartNeeded, true);
+      assert.strictEqual(aj.result.settingsChanged, true);
+    });
+    it('.mcp.json holds the secret by reference only; the literal is there, as given', () => {
+      const text = read(path.join(ep, '.mcp.json'));
+      assert.ok(!text.includes(SECRET));
+      assert.deepStrictEqual(JSON.parse(text).mcpServers.shopdb.env, { SHOP_DB_TOKEN: '${SHOP_DB_TOKEN}', SHOP_REGION: LITERAL });
+    });
+    it('a flag after -- is the server\'s, not wsg\'s', () => assert.deepStrictEqual(stateOf(ep).mcp.servers[0].args, ['-y', 'shop-db-mcp', '--json']));
+    it('a name the user-scope config has too: a warning', () => assert.ok(aj.warnings.some((w) => /user-scope Claude Code config has a server shopdb too/.test(w))));
+    it('fan-out: the open task refreshed, the done one left, the busy one reported, the epic\'s change kept', () => {
+      const by = Object.fromEntries(aj.result.tasks.map((x) => [x.task, x]));
+      assert.deepStrictEqual([by.cart.refreshed, by.old.code, by.held.code], [true, 'done', 'busy']);
+      assert.deepStrictEqual(settingsOf(path.join(ep, 'cart')).enabledMcpjsonServers, ['shopdb']);
+      assert.strictEqual(read(settingsFile(path.join(ep, 'old'))), oldBefore);
+      assert.strictEqual(read(settingsFile(path.join(ep, 'held'))), heldBefore);
+      assert.deepStrictEqual(Object.keys(readJson(path.join(ep, '.mcp.json')).mcpServers), ['shopdb']);
+    });
+    const list = wsg(['mcp', 'list', '--ws', 'shop', '--json'], { env: envS });
+    const lj = jsonOf(list);
+    it('list: the servers, disabled, the user-scope names and transports', () => {
+      assert.strictEqual(list.code, 0, list.all);
+      assert.deepStrictEqual(Object.keys(lj.result), ['workspace', 'servers', 'disabled', 'global', 'missingEnv']);
+      assert.deepStrictEqual(lj.result.global, { claude: [{ name: 'github', transport: 'stdio' }, { name: 'shopdb', transport: 'http' }] });
+      assert.deepStrictEqual(lj.result.disabled, { claude: [] });
+      assert.deepStrictEqual(lj.result.missingEnv, []);
+    });
+    it('missingEnv: a variable this environment has no value for', () => {
+      assert.deepStrictEqual(jsonOf(wsg(['mcp', 'list', '--ws', 'shop', '--json'], { env })).result.missingEnv, ['SHOP_DB_TOKEN']);
+    });
+    const dis = wsg(['mcp', 'disable', 'plugin:acme:docs', '--ws', 'shop', '--json'], { env: envS });
+    const plain = wsg(['mcp', 'list', '--ws', 'shop'], { env: envS });
+    const rem = wsg(['mcp', 'remove', 'shopdb', '--ws', 'shop', '--json'], { env: envS });
+    it('envelopes and plain output never carry a value: neither the secret in the environment or the user config, nor a literal', () => {
+      for (const r of [dry, add, list, dis, plain, rem]) {
+        assert.ok(!r.all.includes(SECRET), r.all);
+        assert.ok(!r.all.includes(LITERAL), r.all);
+      }
+    });
+    it('disable: a plugin\'s server by plugin:<plugin>:<server>, denied in the epic and its tasks', () => {
+      assert.strictEqual(dis.code, 0, dis.all);
+      assert.deepStrictEqual(jsonOf(dis).result.disabled, { claude: ['plugin:acme:docs'] });
+      assert.deepStrictEqual(settingsOf(path.join(ep, 'cart')).deniedMcpServers, [{ serverName: 'plugin:acme:docs' }]);
+    });
+    it('remove: gone from .mcp.json and the settings of the epic and its tasks', () => {
+      assert.strictEqual(rem.code, 0, rem.all);
+      assert.ok(!exists(path.join(ep, '.mcp.json')));
+      assert.ok(!('enabledMcpjsonServers' in settingsOf(ep)));
+      assert.ok(!('enabledMcpjsonServers' in settingsOf(path.join(ep, 'cart'))));
+      assert.deepStrictEqual(stateOf(ep).mcp, { servers: [], disabled: { claude: ['plugin:acme:docs'] } });
+    });
+    const en = wsg(['mcp', 'enable', 'plugin:acme:docs', '--ws', 'shop', '--json'], { env });
+    it('enable: the name goes, and with it the mcp key and the snapshots', () => {
+      assert.strictEqual(en.code, 0, en.all);
+      assert.ok(!('mcp' in stateOf(ep)) && !('mcpRendered' in stateOf(ep)));
+      assert.ok(!('deniedMcpServers' in settingsOf(path.join(ep, 'cart'))));
+      assert.ok(!('mcpRendered' in stateOf(path.join(ep, 'cart'))));
+    });
+    fs.rmSync(lockFile);
+    it('the busy task catches up at its next refresh', () => {
+      const r = wsg(['refresh', '--ws', path.join(ep, 'held')], { env });
+      assert.strictEqual(r.code, 0, r.all);
+      assert.strictEqual(read(settingsFile(path.join(ep, 'held'))), heldBefore);
+    });
+    fs.rmSync(path.join(claudeDir, '.claude.json'));
+  }
+
+  console.log('\nwsg mcp: refusals');
+  {
+    const { env, ep } = epicRoot('refuse-root');
+    newTask(env, 'cart');
+    const snapshot = () => JSON.stringify([read(stateFile(ep)), read(settingsFile(ep)), read(settingsFile(path.join(ep, 'cart'))), exists(path.join(ep, '.mcp.json'))]);
+    const before = snapshot();
+    const refused = (args, re, code = 2) => {
+      const r = wsg(args, { env });
+      // --json before the server's command: after -- it would be the server's.
+      const at = args.indexOf('--');
+      const j = jsonOf(wsg(at < 0 ? [...args, '--json'] : [...args.slice(0, at), '--json', ...args.slice(at)], { env }));
+      assert.strictEqual(r.code, code, r.all);
+      assert.match(r.err, re);
+      assert.strictEqual(j.ok, false);
+      assert.strictEqual(j.error.code, 'invalid_input');
+      assert.strictEqual(j.error.rollback, 'none');
+      assert.strictEqual(snapshot(), before);
+    };
+    const cases = [
+      ['--agent codex', ['mcp', 'add', 'x', '--agent', 'codex', '--ws', 'shop', '--', 'srv'], /Codex MCP is not supported yet/],
+      ['--agent codex on disable', ['mcp', 'disable', 'github', '--agent', 'codex', '--ws', 'shop'], /Codex MCP is not supported yet/],
+      ['an unknown agent', ['mcp', 'add', 'x', '--agent', 'cursor', '--ws', 'shop', '--', 'srv'], /unknown agent cursor/],
+      ['a name with a space', ['mcp', 'add', 'my server', '--ws', 'shop', '--', 'srv'], /letters, digits, - and _/],
+      ['a plugin-style name for the epic\'s own server', ['mcp', 'add', 'plugin:a:b', '--ws', 'shop', '--', 'srv'], /letters, digits, - and _/],
+      ['a name of 65 characters', ['mcp', 'add', 'a'.repeat(65), '--ws', 'shop', '--', 'srv'], /at most 64/],
+      ['a secret-looking literal', ['mcp', 'add', 'db', '--env', 'DB_PASSWORD=hunter2', '--ws', 'shop', '--', 'srv'], /DB_PASSWORD looks like a secret/],
+      ['a secret-looking literal, a part of the name', ['mcp', 'add', 'db', '--env', 'X_API_KEY=1', '--ws', 'shop', '--', 'srv'], /X_API_KEY looks like a secret/],
+      ['a variable name that is none', ['mcp', 'add', 'db', '--env', '1X', '--ws', 'shop', '--', 'srv'], /1X… is not a variable name/],
+      ['a variable twice', ['mcp', 'add', 'db', '--env', 'A,A=1', '--ws', 'shop', '--', 'srv'], /given twice/],
+      ['no command and no URL', ['mcp', 'add', 'db', '--ws', 'shop'], /how is db started/],
+      ['a command and a URL', ['mcp', 'add', 'db', '--url', 'https://x', '--ws', 'shop', '--', 'srv'], /either a command after -- or --url/],
+      ['--env with --url', ['mcp', 'add', 'db', '--url', 'https://x', '--env', 'A', '--ws', 'shop'], /--env is for a server started by a command/],
+      ['--bearer-env with a command', ['mcp', 'add', 'db', '--bearer-env', 'T', '--ws', 'shop', '--', 'srv'], /--bearer-env is for an http server/],
+      ['a URL that is no http one', ['mcp', 'add', 'db', '--url', 'ftp://x', '--ws', 'shop'], /only an http or https URL/],
+      ['remove of a server the epic has not', ['mcp', 'remove', 'nope', '--ws', 'shop'], /the epic has no server nope/],
+      ['no verb', ['mcp'], /wsg mcp needs one of add, remove, disable, enable, list/],
+      ['an unknown verb', ['mcp', 'bogus'], /unknown command: mcp bogus/],
+      ['add without a name', ['mcp', 'add', '--ws', 'shop'], /specify the server/],
+      ['a task, not an epic', ['mcp', 'list', '--ws', path.join(ep, 'cart')], /is a task workspace: wsg mcp works on an epic/],
+      ['list takes no --dry-run', ['mcp', 'list', '--dry-run', '--ws', 'shop'], /unknown argument: --dry-run/],
+    ];
+    for (const [name, args, re] of cases) it(`refused: ${name}`, () => refused(args, re));
+    it('a secret name with a value by reference: taken', () => {
+      const r = wsg(['mcp', 'add', 'db', '--env', 'DB_PASSWORD=${SHOP_PW}', '--ws', 'shop', '--dry-run', '--json', '--', 'srv'], { env });
+      assert.strictEqual(r.code, 0, r.all);
+    });
+    it('a non-secret literal: taken', () => {
+      const r = wsg(['mcp', 'add', 'db', '--env', 'MONKEY=1,AUTHOR=me', '--ws', 'shop', '--dry-run', '--json', '--', 'srv'], { env });
+      assert.strictEqual(r.code, 0, r.all);
+    });
+    it('a secret-looking argument or URL query: a warning naming the flag, never the value', () => {
+      const r = jsonOf(wsg(['mcp', 'add', 'db', '--ws', 'shop', '--dry-run', '--json', '--', 'srv', '--api-key', 'zz-value-1', '--x-token=zz-value-2', 'API_SECRET=zz-value-3', 'https://h/?access_token=zz-value-4', '--plain', '${OK_TOKEN}'], { env }));
+      const ws = r.warnings.filter((w) => /may carry a secret/.test(w));
+      assert.strictEqual(ws.length, 4, ws.join('\n'));
+      assert.ok(ws.some((w) => /\(--api-key\)/.test(w)) && ws.some((w) => /\(--x-token\)/.test(w)));
+      // The arguments themselves are in the result: what the owner typed (the contract says so).
+      assert.doesNotMatch(r.warnings.join('\n'), /zz-value/);
+      const u = jsonOf(wsg(['mcp', 'add', 'trk', '--url', 'https://h/mcp?apikey=zz-value-5', '--ws', 'shop', '--dry-run', '--json'], { env }));
+      assert.ok(u.warnings.some((w) => /URL of trk may carry a secret/.test(w)));
+      assert.ok(!u.warnings.join('\n').includes('zz-value'));
+    });
+    it('a secret name with text around a reference, or a default: refused', () => {
+      for (const v of ['abc123${SHOP_X}', '${SHOP_X}abc', '${SHOP_X:-abc123}']) {
+        const r = wsg(['mcp', 'add', 'db', '--env', `API_KEY=${v}`, '--ws', 'shop', '--dry-run', '--json', '--', 'srv'], { env });
+        assert.strictEqual(r.code, 2, `${v}: ${r.all}`);
+        assert.match(jsonOf(r).error.message, /API_KEY looks like a secret/);
+      }
+    });
+    it('arguments: a value that is exactly ${VAR} is no warning; text around it is', () => {
+      const quiet = jsonOf(wsg(['mcp', 'add', 'db', '--ws', 'shop', '--dry-run', '--json', '--', 'srv', '--api-key', '${SHOP_K}', '--token=${SHOP_T}', 'DB_PASSWORD=${SHOP_P}', 'https://h/?access_token=${SHOP_A}', 'Authorization: Bearer ${SHOP_B}'], { env }));
+      assert.deepStrictEqual(quiet.warnings.filter((w) => /may carry a secret/.test(w)), []);
+      const loud = jsonOf(wsg(['mcp', 'add', 'db', '--ws', 'shop', '--dry-run', '--json', '--', 'srv', '--token=abc123${SHOP_T}', '--api-key', 'x${SHOP_K}', 'Authorization: Bearer zz${SHOP_B}'], { env }));
+      assert.strictEqual(loud.warnings.filter((w) => /may carry a secret/.test(w)).length, 3, loud.warnings.join('\n'));
+      const url = jsonOf(wsg(['mcp', 'add', 'trk', '--url', 'https://h/mcp?token=${SHOP_T}', '--ws', 'shop', '--dry-run', '--json'], { env }));
+      assert.ok(!url.warnings.some((w) => /may carry a secret/.test(w)));
+    });
+    it('a refused --url, --bearer-env or --env name: the message repeats no secret', () => {
+      const cases = [
+        ['--url', 'ftp://user:tok-secret-1@h.example/x?token=tok-secret-2', /ftp:\/\/h\.example/],
+        ['--url', 'https://h.example/a b?token=tok-secret-3', /: https:\/\/h\.example$/],
+        ['--bearer-env', 'Bearer tok-secret-4', /^Bea… is not a variable name/],
+      ];
+      for (const [flag, value, re] of cases) {
+        const r = jsonOf(wsg(['mcp', 'add', 'trk', ...(flag === '--url' ? [] : ['--url', 'https://h.example/mcp']), flag, value, '--ws', 'shop', '--json'], { env }));
+        assert.strictEqual(r.ok, false);
+        assert.match(r.error.message, re);
+        assert.doesNotMatch(JSON.stringify(r.error), /tok-secret/);
+      }
+      const e = jsonOf(wsg(['mcp', 'add', 'db', '--env', 'TOKEN:tok-secret-5', '--ws', 'shop', '--json', '--', 'srv'], { env }));
+      assert.strictEqual(e.ok, false);
+      assert.match(e.error.message, /TOK… is not a variable name/);
+      assert.doesNotMatch(JSON.stringify(e), /tok-secret/);
+    });
+    it('the server\'s arguments after --, named like wsg\'s flags, stay the server\'s', () => {
+      const args = ['tool', '--json', '--dry-run', '--ws', 'elsewhere', '--help', '--version'];
+      const r = wsg(['mcp', 'add', 'flagged', '--ws', 'shop', '--', ...args], { env });
+      assert.strictEqual(r.code, 0, r.all);
+      assert.strictEqual(jsonOf(r), null);
+      assert.match(r.out, /Added MCP server flagged/);
+      const srv = stateOf(ep).mcp.servers.find((s) => s.name === 'flagged');
+      assert.deepStrictEqual([srv.command, ...srv.args], args);
+      assert.strictEqual(wsg(['mcp', 'remove', 'flagged', '--ws', 'shop'], { env }).code, 0);
+    });
+    // A server of the owner's in .mcp.json by the same name.
+    fs.writeFileSync(path.join(ep, '.mcp.json'), `${JSON.stringify({ mcpServers: { db: { command: 'mine' } } })}\n`);
+    it('a name the owner\'s .mcp.json has: refused, the file as it was', () => {
+      const r = jsonOf(wsg(['mcp', 'add', 'db', '--ws', 'shop', '--json', '--', 'srv'], { env }));
+      assert.strictEqual(r.ok, false);
+      assert.match(r.error.message, /has a server db that wsg did not put there/);
+      assert.deepStrictEqual(readJson(path.join(ep, '.mcp.json')), { mcpServers: { db: { command: 'mine' } } });
+      assert.ok(!('mcp' in stateOf(ep)));
+    });
+    fs.rmSync(path.join(ep, '.mcp.json'));
+    wsg(['mcp', 'add', 'db', '--ws', 'shop', '--', 'srv'], { env });
+    it('the same name twice, in another case: refused', () => assert.match(wsg(['mcp', 'add', 'DB', '--ws', 'shop', '--', 'srv'], { env }).err, /has a server db already/));
+    it('disable of the epic\'s own server: refused', () => assert.match(wsg(['mcp', 'disable', 'db', '--ws', 'shop'], { env }).err, /the epic's own server: wsg mcp remove db/));
+    it('enable of a name that is not off: a warning, nothing changes', () => {
+      const r = jsonOf(wsg(['mcp', 'enable', 'github', '--ws', 'shop', '--json'], { env }));
+      assert.strictEqual(r.ok, true);
+      assert.strictEqual(r.result.restartNeeded, false);
+      assert.deepStrictEqual(r.result.files, []);
+      assert.ok(r.warnings.some((w) => /not turned off/.test(w)));
+    });
+    it('disable of a name the user-scope config does not have: done, with a warning', () => {
+      const r = jsonOf(wsg(['mcp', 'disable', 'github', '--ws', 'shop', '--json'], { env }));
+      assert.strictEqual(r.ok, true);
+      assert.ok(r.warnings.some((w) => /no server github/.test(w)));
+    });
+    it('a name that is turned off can\'t be the epic\'s own', () => assert.match(wsg(['mcp', 'add', 'github', '--ws', 'shop', '--', 'srv'], { env }).err, /a global server the epic turns off/));
+    it('help: wsg help mcp, wsg mcp add --help', () => {
+      for (const args of [['help', 'mcp'], ['mcp', '--help'], ['mcp', 'add', '--help'], ['help', 'mcp', 'list']]) {
+        const r = wsg(args, { env });
+        assert.strictEqual(r.code, 0, r.all);
+        assert.match(r.out, /wsg mcp add <name>/);
+      }
+    });
+  }
+
+  console.log('\nwsg mcp: a failed write is rolled back');
+  if (asRoot) console.log('  skip  running as root: a read-only file does not stop a write');
+  else {
+    const { env, ep } = epicRoot('rollback-root');
+    newTask(env, 'cart');
+    const task = path.join(ep, 'cart');
+    const snap = (dir) => {
+      const out = {};
+      const walk = (d) => {
+        for (const e of fs.readdirSync(d).sort()) {
+          const p = path.join(d, e);
+          const rel = path.relative(dir, p);
+          if (rel === path.join('.claude', 'wsg.lock')) continue;
+          const st = fs.lstatSync(p);
+          if (st.isDirectory()) { out[rel] = 'dir'; walk(p); } else out[rel] = st.isSymbolicLink() ? `-> ${fs.readlinkSync(p)}` : fs.readFileSync(p).toString('base64');
+        }
+      };
+      walk(dir);
+      return out;
+    };
+    const before = snap(ep);
+    fs.chmodSync(settingsFile(ep), 0o444);
+    const r = wsg(['mcp', 'add', 'shopdb', '--ws', 'shop', '--json', '--', 'srv'], { env });
+    fs.chmodSync(settingsFile(ep), 0o644);
+    const j = jsonOf(r);
+    it('the epic\'s settings.json can\'t be written: step_failed, rolled back, the epic and its task as they were', () => {
+      assert.strictEqual(r.code, 1, r.all);
+      assert.strictEqual(j.error.code, 'step_failed');
+      assert.strictEqual(j.error.rollback, 'done');
+      assert.deepStrictEqual(snap(ep), before);
+    });
+    const taskBefore = snap(task);
+    fs.chmodSync(settingsFile(task), 0o444);
+    const r2 = wsg(['mcp', 'add', 'shopdb', '--ws', 'shop', '--json', '--', 'srv'], { env });
+    fs.chmodSync(settingsFile(task), 0o644);
+    const j2 = jsonOf(r2);
+    it('a task\'s settings.json can\'t be written: the epic\'s change kept, the task reported failed and as it was', () => {
+      assert.strictEqual(r2.code, 0, r2.all);
+      assert.deepStrictEqual(j2.result.tasks.map((x) => [x.task, x.refreshed, x.code]), [['cart', false, 'failed']]);
+      assert.deepStrictEqual(Object.keys(readJson(path.join(ep, '.mcp.json')).mcpServers), ['shopdb']);
+      assert.deepStrictEqual(snap(task), taskBefore);
+    });
   }
 
   console.log('\nan owner\'s own .mcp.json in an epic without wsg\'s servers');
