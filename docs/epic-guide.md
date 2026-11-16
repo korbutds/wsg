@@ -117,6 +117,40 @@ A task made by wsg 0.6.0 or earlier has the epic's section copied once into its 
 `wsg check` keeps warning. wsg never edits that section: delete it, or keep only the task's own
 rules there, after the owner's "ok".
 
+## Context
+
+What the epic's tasks may need beyond `knowledge.md` — a spec, a brief, mockups, a runbook — is the
+epic's context, changed only through the commands below, from the epic session, after the owner's "ok":
+
+```bash
+wsg context add <url|path> [--id ID] [--title T] [--desc D] [--dry-run]
+wsg context note <id> (--text T | --from FILE | --from -) [--title T] [--desc D] [--replace] [--dry-run]
+wsg context remove <id> [--dry-run]
+wsg context list
+```
+
+An http(s) URL is kept as a link, a file is copied into `context/` (one already there is listed as
+it is), a note is written to `context/notes/<id>.md`. `wsg context remove` deletes from `context/`
+only what wsg wrote there — a file it copied in, a note; a file that was there already is only
+unlisted. A file or note edited by hand since wsg wrote it is neither removed nor rewritten by
+`wsg context note <id> --replace` without `--discard-edits`. A file in `context/notes/` is a note's:
+write a note with `wsg context note <id> --from <file>`, never list such a file with `add`. A directory is refused: attach it as a
+reference source (`wsg add <path> --reference`). The epic's `.claude/wsg.json` keeps the index, the
+paths relative to the epic. The index — not the bodies — is rendered in a
+`<!-- wsg:epic-context -->` block of the epic's `AGENTS.md` and of every task's, after the epic's
+Owner rules: one line per item with its type, title, description, `../context/<file>` or the URL,
+and its size. An agent opens an item only when its work touches the topic, so keep each
+description to one line that says when it is needed (at most 200 characters).
+
+Unlike the Owner rules, a change is rendered into every task at once, each under its own lock; a
+task that is busy is reported and catches up at its next `wsg refresh`, a done task is left as it
+is. Sessions already running keep the index they started with; the files are readable at once.
+Limits: a file above 1 MiB is a warning, above 20 MiB refused (add it as a link); the index block
+above 2 KiB is a warning, above 4 KiB refused. A binary file (PDF, image) is copied as it is and
+marked: Claude Code reads it, other agents may not. `wsg check` here fails on a listed file that is
+missing, and warns about a file in `context/` the index does not list and about tasks whose block is
+behind. Epics only in this version.
+
 ## Adding a repository
 
 From the epic session. A repository of an epic is a link to its shared checkout, with the defaults

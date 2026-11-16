@@ -5,8 +5,8 @@ stdout — the envelope — and nothing else there; stderr carries only diagnost
 messages, a crash's stack). This file describes `schemaVersion` 1, as `lib/json.js` and
 `bin/cli.js` produce it.
 
-Commands that take `--json`: `new`, `add`, `remove`, `check`, `list`, `status`, `close`, and
-`wsg --version --json`. Any other command given `--json` refuses it as an unknown flag, in the
+Commands that take `--json`: `new`, `add`, `remove`, `check`, `list`, `status`, `close`,
+`context add`, `context note`, `context remove`, `context list`, and `wsg --version --json`. Any other command given `--json` refuses it as an unknown flag, in the
 envelope (`invalid_input`). `--json` is read before anything else can refuse, so a flag error, a
 settings file that can't be read or an unknown command is an envelope too.
 
@@ -39,7 +39,7 @@ settings file that can't be read or an unknown command is an envelope too.
 | `schemaVersion` | `1`. Raised on any breaking change: a key removed or renamed, a meaning or a value changed. New keys may be added without a raise. |
 | `wsgVersion` | the wsg that printed it |
 | `ok` | `true` when the command did what was asked; `false` with `error` set |
-| `command` | the command (`check` for `--check` too); `null` for an unknown command, a global flag or `--version` |
+| `command` | the command (`check` for `--check` too); a two-word command is named by both words, separated by one space: `context add`, `context note`, `context remove`, `context list`; `null` for an unknown command (`context` alone, or with a word it doesn't have, included), a global flag or `--version` |
 | `dryRun` | `true` when the command ran with `--dry-run` (a command that has one) |
 | `result` | the command's outcome, below; on an error it may still hold the refused plan (a refused `add`, `new`, `remove`, `status`, `close`, a `check` that found errors), else `null` |
 | `error` | `null` on success, else the object below |
@@ -152,6 +152,36 @@ Only `.claude/wsg.json` and the epic's `tasks.md` block are written, in one tran
 or unpushed work and entries left under `## For the epic` are warnings, never refusals; so is done
 set for a task of an epic from inside its own workspace (a standalone task or a process gets no
 such warning: it has no epic session).
+
+### context add, context note, context remove
+
+An epic's context (epics only: a task or a process is `invalid_input`). The epic is written in one
+transaction under its lock, then every task of it is refreshed, each under its own lock; a task that
+can't be refreshed is reported in `tasks`, never a rollback of the epic's change. A stop signal
+during that refresh keeps the epic's change: `interrupted` with `rollback: "unknown"` and `result`
+present, the tasks left with `code` `interrupted`.
+A file or note edited by hand since wsg wrote it is refused by `context remove` and
+`context note --replace` (`invalid_input`) unless `--discard-edits` is given.
+
+`{workspace, item, files, restartNeeded, tasks}`
+
+| Key | Value |
+|---|---|
+| `workspace` | the epic |
+| `item` | the item added, rewritten or removed, as in `context list`; `null` when a refused plan got no further |
+| `files` | the epic's paths written or removed: the copied file or the note, `AGENTS.md`, `.claude/wsg.json`; `[]` when refused |
+| `restartNeeded` | whether the index block changed: a session already running keeps the `AGENTS.md` it started with (the files themselves are readable at once) |
+| `tasks` | `[{task, path, refreshed, code, reason}]`, one per task directory of the epic, by name (one whose state does not read included, as `failed`). `refreshed` `true` once its generated parts were rendered again, with `code` and `reason` `null`; otherwise `code` says why, a stable value: `done` (left as it is), `busy` (another wsg command holds it), `other_epic` (its state names another epic), `interrupted` (stopped before it), `failed`; `reason` says the same for people. A task not refreshed catches up at its next `wsg refresh`. In a dry run nothing is refreshed: `refreshed` `false` with `code` and `reason` `null` for each task a real run would refresh |
+
+### context list
+
+`{workspace, items, blockBytes}`. Read-only. `items`: `[{id, type, title, description, url, path,
+bytes, binary, copied}]` in their order; `type` `file`, `note` or `link`; `url` only for a link, `path`
+(absolute) and `bytes` only for a file or a note, else `null`; `binary` `true` for a file that is
+not UTF-8 text; `copied` `true` for a note and for a file wsg copied in — `context remove` deletes
+those — `false` for a link and for a file that was in `context/` already and was only listed, which a
+removal only unlists. `blockBytes`: the size of the `<!-- wsg:epic-context -->` block every task carries,
+markers included.
 
 ### --version
 

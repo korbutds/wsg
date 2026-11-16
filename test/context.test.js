@@ -917,6 +917,149 @@ const ITEMS = [
     }
   }
 
+  console.log('\nwsg check: the epic\'s context');
+  {
+    const { env, ep } = epicRoot('check-root');
+    for (const slug of ['cart', 'done-task']) wsg(['new', slug, '--epic', 'shop', '--no-launch'], { env });
+    wsg(['close', 'shop/done-task'], { env });
+    const cart = path.join(ep, 'cart');
+    const lines = (ws) => {
+      const r = wsg(['check', ws, '--json'], { env });
+      const j = jsonOf(r);
+      return { code: r.code, items: j.result.sections.flatMap((x) => x.items.map((i) => `${i.level} ${i.text}`)) };
+    };
+    const has = (c, re) => c.items.some((x) => re.test(x));
+    const c0 = lines(ep);
+    it('an epic without context: no context finding at all', () => assert.ok(!has(c0, /context\/|context index|context item|^ok context:/), c0.items.join('\n')));
+    const t0 = lines(cart);
+    it('a fresh task of it: no warning about the context block', () => assert.ok(!has(t0, /epic-context/), t0.items.join('\n')));
+
+    const src = path.join(tmp, 'check-spec.md');
+    fs.writeFileSync(src, 'spec\n');
+    wsg(['context', 'add', src, '--ws', 'shop'], { env });
+    wsg(['context', 'note', 'deploy', '--text', 'x', '--ws', 'shop'], { env });
+    const c1 = lines(ep);
+    it('the epic after wsg context: an ok line with the items and the block size', () => assert.ok(has(c1, /^ok context: 2 items, the index block \d+ B$/), c1.items.join('\n')));
+    it('the tasks are not called stale; the done one is not listed', () => assert.ok(!has(c1, /without the epic's context index/), c1.items.join('\n')));
+    const t1 = lines(cart);
+    it('the task: an ok line, the block as it is now', () => assert.ok(has(t1, /^ok AGENTS\.md has the epic's context index: 2 items$/), t1.items.join('\n')));
+
+    // A listed file gone, an unlisted one there.
+    fs.rmSync(path.join(ep, 'context', 'check-spec.md'));
+    fs.writeFileSync(path.join(ep, 'context', 'stray.txt'), 'x\n');
+    fs.writeFileSync(path.join(ep, 'context', 'notes', 'old.md'), 'x\n');
+    fs.writeFileSync(path.join(ep, 'context', '.DS_Store'), 'x');
+    fs.mkdirSync(path.join(ep, 'context', 'drafts'));
+    const c2 = lines(ep);
+    it('a listed file missing: FAIL, exit 1, with the fix', () => {
+      assert.strictEqual(c2.code, 1);
+      assert.ok(has(c2, /^fail context item check-spec: context\/check-spec\.md is missing .*wsg context remove check-spec/), c2.items.join('\n'));
+    });
+    it('an unlisted file, in context/ and in notes/: a warning each, with the fix; hidden ones not looked at', () => {
+      assert.ok(has(c2, /^warn context\/stray\.txt is in context\/ but not in the index: .*wsg context add .*context\/stray\.txt/));
+      assert.ok(has(c2, /^warn context\/notes\/old\.md is in context\/notes\/ but no note lists it: .*delete it, or move it out of context\/ and write it with wsg context note <id> --from <file>/));
+      assert.ok(has(c2, /^warn context\/drafts\/ is a directory in context\/.*wsg add <path> --reference/));
+      assert.ok(!has(c2, /DS_Store/));
+    });
+    // The advice, run as given: it lists the file.
+    const advice = c2.items.find((x) => /stray\.txt is in context/.test(x));
+    const cmd = /\(wsg (context add \S+)\)/.exec(advice);
+    const ran = wsg([...cmd[1].split(' '), '--ws', 'shop'], { env });
+    it('the advice for an unlisted file works as given', () => {
+      assert.strictEqual(ran.code, 0, ran.all);
+      assert.ok(JSON.parse(read(stateFile(ep))).context.some((x) => x.id === 'stray'));
+    });
+    it('the advice for a note\'s file is no add: an add from context/notes/ is refused', () => {
+      const r = wsg(['context', 'add', path.join(ep, 'context', 'notes', 'old.md'), '--ws', 'shop'], { env });
+      assert.strictEqual(r.code, 2, r.all);
+      assert.match(r.err, /is in context\/notes\/: listed as a file it would be a second copy of a note/);
+    });
+    wsg(['context', 'remove', 'stray', '--ws', 'shop'], { env });
+    fs.rmSync(path.join(ep, 'context', 'stray.txt'));
+    fs.rmSync(path.join(ep, 'context', 'drafts'), { recursive: true });
+    fs.writeFileSync(path.join(ep, 'context', 'check-spec.md'), 'spec\n');
+    fs.rmSync(path.join(ep, 'context', 'notes', 'old.md'));
+
+    // A task behind: its block edited away from the index.
+    const t = path.join(cart, 'AGENTS.md');
+    fs.writeFileSync(t, read(t).replace(/- \[note\] deploy/, '- [note] old'));
+    const c3 = lines(ep);
+    it('a task whose block is behind: named in the epic\'s check', () => assert.ok(has(c3, /^warn tasks without the epic's context index as it is now in their AGENTS\.md: cart — run wsg refresh in each$/), c3.items.join('\n')));
+    const t3 = lines(cart);
+    it('and in its own', () => assert.ok(has(t3, /^warn the <!-- wsg:epic-context --> block is not the epic's context index as it is now — run wsg refresh$/), t3.items.join('\n')));
+    fs.writeFileSync(t, read(t).replace(/<!-- wsg:epic-context -->\n[\s\S]*?<!-- \/wsg:epic-context -->\n/, ''));
+    const t4 = lines(cart);
+    it('a task without the block (made before 0.7): a warning, run wsg refresh', () => assert.ok(has(t4, /^warn AGENTS\.md has no <!-- wsg:epic-context --> block: .*run wsg refresh$/), t4.items.join('\n')));
+    wsg(['refresh', '--ws', cart], { env });
+    it('its refresh clears it', () => assert.ok(has(lines(cart), /^ok AGENTS\.md has the epic's context index: 2 items$/)));
+    const e = path.join(ep, 'AGENTS.md');
+    fs.writeFileSync(e, read(e).replace(/- \[note\] deploy/, '- [note] old'));
+    it('the epic\'s own block behind: a warning', () => assert.ok(has(lines(ep), /^warn the <!-- wsg:epic-context --> block in AGENTS\.md is not the index as it is now — run wsg refresh$/)));
+    wsg(['refresh', '--ws', ep], { env });
+
+    // An epic that can't be read from the task: the block keeps what it had, said once.
+    const good = read(stateFile(ep));
+    fs.writeFileSync(stateFile(ep), '{ broken');
+    const t5 = lines(cart);
+    it('an epic that can\'t be read: the task\'s check says the block keeps what it had', () => assert.ok(has(t5, /the epic's context index can't be rendered: .* keeps what it had|epic link broken/), t5.items.join('\n')));
+    fs.writeFileSync(stateFile(ep), good);
+
+    // Limits, as a hand edit could leave them.
+    fs.writeFileSync(path.join(ep, 'context', 'check-spec.md'), 'x'.repeat(1024 * 1024 + 1));
+    const c6 = lines(ep);
+    it('a listed file above 1 MiB: a warning', () => assert.ok(has(c6, /^warn context item check-spec: context\/check-spec\.md — 1048577 B, above 1048576 B/), c6.items.join('\n')));
+    fs.truncateSync(path.join(ep, 'context', 'check-spec.md'), 20 * 1024 * 1024 + 1);
+    it('above 20 MiB: FAIL', () => assert.ok(has(lines(ep), /^fail context item check-spec: .* — 20971521 B, ceiling 20971520 B/)));
+    fs.writeFileSync(path.join(ep, 'context', 'check-spec.md'), 'spec\n');
+    setState(ep, (st) => ({ ...st, context: [...st.context, ...Array.from({ length: 25 }, (_, i) => ({ id: `l${i}`, type: 'link', title: `Link ${i}`, description: 'd'.repeat(190), url: `https://example.com/${i}` }))] }));
+    const c7 = lines(ep);
+    it('an index block above 4 KiB (a hand edit): FAIL', () => assert.ok(has(c7, /^fail the context index block is \d+ B, ceiling 4096/), c7.items.join('\n')));
+    setState(ep, (st) => ({ ...st, context: st.context.slice(0, 2 + 10) }));
+    it('above 2 KiB: a warning', () => assert.ok(has(lines(ep), /^warn the context index block is \d+ B, target ≤ 2048/)));
+    setState(ep, (st) => ({ ...st, context: st.context.slice(0, 2) }));
+
+
+    // A file only listed (it was in context/ already) is the owner's to edit: a note, not a warning.
+    fs.writeFileSync(path.join(ep, 'context', 'own.md'), 'mine\n');
+    wsg(['context', 'add', path.join(ep, 'context', 'own.md'), '--ws', 'shop'], { env });
+    fs.writeFileSync(path.join(ep, 'context', 'own.md'), 'mine, edited\n');
+    const c9 = lines(ep);
+    it('an edited file that was only listed: an info line to re-list it, no warning', () => {
+      assert.ok(has(c9, /^info context item own: context\/own\.md changed since it was listed — the index shows the old size: remove and add it again/), c9.items.join('\n'));
+      assert.ok(!has(c9, /^warn context item own/));
+    });
+    wsg(['context', 'remove', 'own', '--ws', 'shop'], { env });
+    fs.rmSync(path.join(ep, 'context', 'own.md'));
+
+    // A hand edit of a listed file: the size in the index is stale.
+    fs.writeFileSync(path.join(ep, 'context', 'check-spec.md'), 'spec edited\n');
+    it('a listed file changed since wsg wrote it: a warning', () => assert.ok(has(lines(ep), /^warn context item check-spec: context\/check-spec\.md changed since wsg wrote it/)));
+    fs.writeFileSync(path.join(ep, 'context', 'check-spec.md'), 'spec\n');
+
+    // The last item removed while a task was busy: the empty index still names the task behind.
+    const lockFile = path.join(cart, '.claude', 'wsg.lock');
+    fs.writeFileSync(lockFile, JSON.stringify({ pid: process.pid, time: new Date().toISOString() }));
+    for (const id of JSON.parse(read(stateFile(ep))).context.map((x) => x.id)) wsg(['context', 'remove', id, '--ws', 'shop', '--discard-edits'], { env });
+    fs.rmSync(lockFile);
+    const c8 = lines(ep);
+    it('no items left, a task still listing some: named', () => assert.ok(has(c8, /^warn tasks without the epic's context index as it is now in their AGENTS\.md: cart/), c8.items.join('\n')));
+    wsg(['refresh', '--ws', cart], { env });
+    it('once refreshed, nothing is said', () => assert.ok(!has(lines(ep), /context index as it is now/)));
+
+    // A task made before 0.7 in an epic without context: no block, nothing missed, no warning.
+    const old = path.join(cart, 'AGENTS.md');
+    fs.writeFileSync(old, read(old).replace(/<!-- wsg:epic-context -->\n[\s\S]*?<!-- \/wsg:epic-context -->\n/, ''));
+    it('a pre-0.7 task of an epic without context: no warning about the block', () => assert.ok(!has(lines(cart), /epic-context/)));
+    it('nor in the epic', () => assert.ok(!has(lines(ep), /context index as it is now/)));
+    wsg(['refresh', '--ws', cart], { env });
+
+    // A task taken out of its epic keeps a dead block.
+    const plainRoot = path.join(tmp, 'check-root');
+    fs.renameSync(cart, path.join(plainRoot, 'cart'));
+    setState(path.join(plainRoot, 'cart'), (st) => { const { epic, ticket, ...rest } = st; return rest; });
+    it('a block in a workspace that is no task of an epic: a warning to delete it', () => assert.ok(has(lines(path.join(plainRoot, 'cart')), /^warn AGENTS\.md has a <!-- wsg:epic-context --> block, but this workspace is neither an epic nor a task of one/)));
+  }
+
   fs.rmSync(tmp, { recursive: true, force: true });
   console.log(failed === 0 ? '\nall checks passed\n' : `\nfailed: ${failed}\n`);
   finished = true;

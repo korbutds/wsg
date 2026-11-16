@@ -123,6 +123,7 @@ The commands the agent (or you) call:
 | `wsg list [--json]` | Lists every workspace in `WS_ROOT`, each epic's tasks under it, with the kind, a task's status marker, the ticket and the title; a 0.1 workspace and one whose state does not read are listed with what is wrong. Only reads, runs no git. `--json` gives each workspace's state, sources and the directories a session needs. |
 | `wsg status <task> [open\|review\|done] [--dry-run] [--json]` | Prints a task's or a process's status, or sets it: only `.claude/wsg.json` and the epic's `tasks.md` block change. The move to done warns about uncommitted or unpushed work and about entries left under `## For the epic`, and never refuses for them. The task is always named: a slug, `<epic>/<task>` or a path. |
 | `wsg close <task> [--dry-run] [--json]` | `wsg status <task> done`. Merges, pushes and removes nothing. |
+| `wsg context add <url\|path> [--id ID] [--title T] [--desc D]`, `wsg context note <id> (--text T\|--from FILE\|--from -) [--replace]`, `wsg context remove <id>`, `wsg context list` (each with `--ws E`, `--json`; the writes with `--dry-run`) | An epic's context: links, files copied into `context/`, notes. Its index — one line per item — is rendered into the epic's and every task's `AGENTS.md` in a `<!-- wsg:epic-context -->` block, at once; the agent opens an item only when it needs it. See [Epics](#epics). |
 | `wsg promote [slug\|path] --skill NAME` | Turns a task into a process. Not an epic or a task of one. |
 | `wsg guide [setup\|advisor\|teach\|epic]` | Prints a guide an agent follows: the setup dialogue, the advisor's procedure, teaching a team role a practice, or working in an epic. |
 | `wsg install-skills [--uninstall]` | Installs the `wsg-new` and `wsg-teach` skills into `~/.claude/skills` and the `wsg-advisor` agent into `~/.claude/agents` (or under `$CLAUDE_CONFIG_DIR`) and, when Codex is there, `~/.codex/agents` (or `$CODEX_HOME/agents`). Overwrites only files it wrote — they carry a marker — and refuses others with exit 1. `--uninstall` removes only its own files. |
@@ -224,6 +225,10 @@ $WS_ROOT/shop/
   `../knowledge.md` and `../tasks.md` and renders the epic's Owner rules in a
   `<!-- wsg:epic-rules -->` block: a rule added to the epic later reaches the task at its next
   `wsg refresh`; `wsg check` on the epic names the tasks that need one.
+- **Context.** Specs, briefs, mockups and runbooks the tasks may need go in with `wsg context add
+  <url|path>` and `wsg context note <id>` from the epic: links stay in the state, files and notes
+  live in the epic's `context/`. Every task's `AGENTS.md` gets only the index, in a
+  `<!-- wsg:epic-context -->` block, rendered into all open tasks at once; bodies are read on demand.
 - **Knowledge.** `knowledge.md` is the single source of truth, kept within 4 KiB and rewritten
   rather than appended to. A task never edits the epic's files: what the next task should know
   goes under `## For the epic` in the task's `notes.md`, dated, with evidence. When its work is

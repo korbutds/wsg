@@ -106,7 +106,7 @@ change. Every `wsg add` re-renders from it:
 
 | Where | What |
 |---|---|
-| `AGENTS.md` | `<!-- wsg:advisor -->` — the one-line rule that questions for the owner go through the advisor first; `<!-- wsg:team -->` — three lines pointing to the team, only after `wsg team`; `<!-- wsg:epic -->` — in a task of an epic, the pointers to the epic, from the task's own state; `<!-- wsg:epic-rules -->` — in a task of an epic, the epic's Owner rules, from `../AGENTS.md` (kept as they are, with a warning, when the epic can't be read); `<!-- wsg:layout -->` — the source lines of Layout; `<!-- wsg:verification -->` — the Verification bullets |
+| `AGENTS.md` | `<!-- wsg:advisor -->` — the one-line rule that questions for the owner go through the advisor first; `<!-- wsg:team -->` — three lines pointing to the team, only after `wsg team`; `<!-- wsg:epic -->` — in a task of an epic, the pointers to the epic, from the task's own state; `<!-- wsg:epic-rules -->` — in a task of an epic, the epic's Owner rules, from `../AGENTS.md` (kept as they are, with a warning, when the epic can't be read); `<!-- wsg:epic-context -->` — in an epic and in each task of it, the index of the epic's context (`wsg context add`, `note`, `remove`), from the epic's `.claude/wsg.json`; `<!-- wsg:layout -->` — the source lines of Layout; `<!-- wsg:verification -->` — the Verification bullets |
 | `CLAUDE.md` | `<!-- wsg:imports -->` — the `@<repo>/AGENTS.md` imports (`@AGENTS.md` itself stays outside) |
 | `README.md` | `<!-- wsg:sources -->` — the sources table and the launch commands |
 | `.claude/skills/<skill>/SKILL.md` | in a process workspace with a team: `<!-- wsg:team -->` — one pointer line to `team/workflow.md`, written by `wsg team` after the first `# ` heading |
