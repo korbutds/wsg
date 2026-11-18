@@ -263,6 +263,262 @@ process.on('exit', () => {
     });
   }
 
+  console.log('\nW.checklistCounts');
+  {
+    const c = (text) => W.checklistCounts(text);
+    for (const [name, text, want] of [
+      ['empty text', '', [0, 0]],
+      ['the template: only the FILL IN line', '# Checklist: x\n\n<!-- One `- [ ]` line per item -->\n\n- [ ] FILL IN: items from the Definition of done\n', [0, 0]],
+      ['- items, open and done', '- [ ] a\n- [x] b\n', [1, 2]],
+      ['* and + bullets', '* [ ] a\n+ [x] b\n', [1, 2]],
+      ['numbered 1. and 1)', '1. [x] a\n2) [ ] b\n10. [X] c\n', [2, 3]],
+      ['upper-case X is done', '- [X] a\n', [1, 1]],
+      ['any indent, nested items', '- [ ] a\n  - [x] b\n\t- [x] c\n        * [ ] d\n', [2, 4]],
+      ['an item with nothing after the box', '- [ ]\n- [x]\n', [1, 2]],
+      ['CRLF line ends', '- [x] a\r\n- [ ] b\r\n', [1, 2]],
+      ['not a box: no space after the bullet, [] empty, text glued to the box', '-[ ] a\n- [] b\n- [x]c\n- [y] d\n', [0, 0]],
+      ['not a box: prose and a heading', 'Tick [x] when done\n# [ ] heading\n', [0, 0]],
+      ['an HTML comment on one line', '<!-- - [ ] hidden -->\n- [ ] seen\n', [0, 1]],
+      ['an HTML comment over lines', '<!--\n- [x] hidden\n- [ ] hidden\n-->\n- [x] seen\n', [1, 1]],
+      ['text after a comment closes on the same line is read', '<!-- a\nb --> x\n- [ ] seen\n', [0, 1]],
+      ['a box with a trailing comment counts', '- [x] seen <!-- why -->\n', [1, 1]],
+      ['a fenced block with backticks', '```\n- [ ] in code\n```\n- [ ] seen\n', [0, 1]],
+      ['a fenced block with tildes and a language', '~~~md\n- [x] in code\n~~~\n- [x] seen\n', [1, 1]],
+      ['a fence closed only by its own kind and length', '````\n```\n- [ ] in code\n````\n- [ ] seen\n', [0, 1]],
+      ['an unclosed fence hides the rest', '```\n- [ ] a\n- [x] b\n', [0, 0]],
+      ['FILL IN lines are excluded, done or not', '- [ ] FILL IN: a\n- [x] FILL IN b\n- [ ] real\n', [0, 1]],
+      ['FILL IN later in the text is an item', '- [ ] do not FILL IN the form by hand\n- [x] see FILL IN rules\n', [1, 2]],
+      ['an inline code span hides <!--: no comment opens', '- [ ] the `<!--` marker is escaped\n- [x] next\n', [1, 2]],
+      ['an inline code span with a fence inside is no fence', '- [ ] run `\u0060\u0060\u0060 x`\n- [ ] next\n', [0, 2]],
+      ['an indented fence, any indent', '    ```\n- [ ] in code\n      ```\n- [ ] seen\n', [0, 1]],
+      ['a fence inside a list item', '- [ ] see:\n  ```sh\n  - [x] in code\n  ```\n', [0, 1]],
+      ['Cyrillic х and Х are done', '- [х] ru lower\n- [Х] ru upper\n- [ ] open\n', [2, 3]],
+    ]) {
+      it(name, () => {
+        const got = c(text);
+        assert.deepStrictEqual([got.done, got.total], want);
+        assert.deepStrictEqual(Object.keys(got), ['done', 'total']);
+      });
+    }
+    it('checklistScan says when a FILL IN line is there', () => {
+      assert.strictEqual(W.checklistScan('- [ ] FILL IN: x\n').fillIn, true);
+      assert.strictEqual(W.checklistScan('- [ ] x\n').fillIn, false);
+      assert.strictEqual(W.checklistScan('<!-- - [ ] FILL IN -->\n').fillIn, false);
+      assert.strictEqual(W.checklistScan('- [ ] not FILL IN here\n').fillIn, false);
+    });
+    it('spec.md, plan.md and checklist.md are reserved names', () => {
+      for (const n of ['spec.md', 'plan.md', 'checklist.md']) assert.ok(W.RESERVED.includes(n), n);
+    });
+  }
+
+  console.log('\nchecklist.md');
+  {
+    const r = json(['new', 'chk', '--title', 'Cart totals', '--no-launch']);
+    const ws = path.join(wsRoot, 'chk');
+    it('a new task gets checklist.md: the heading, the comment, one FILL IN line', () => {
+      assert.strictEqual(r.code, 0, r.all);
+      const text = read(ws, 'checklist.md');
+      assert.match(text, /^# Checklist: Cart totals\n\n<!-- One `- \[ \]` line per verifiable item of the Definition of done/);
+      assert.match(text, /Tick an item `- \[x\]` only with evidence/);
+      assert.match(text, /-->\n\n- \[ \] FILL IN: items from the Definition of done\n$/);
+      assert.strictEqual(text.match(/- \[ \]/g).length, 2);
+    });
+    it('AGENTS.md: Layout names checklist.md, the DoD says how it is ticked; no Stages, no spec.md', () => {
+      const a = read(ws, 'AGENTS.md');
+      assert.match(a, /- `checklist\.md` — the Definition of done as checkboxes/);
+      assert.match(a, /Each item is a line of `checklist\.md`, ticked only with evidence/);
+      assert.doesNotMatch(a, /## Stages/);
+      assert.ok(!fs.existsSync(path.join(ws, 'spec.md')) && !fs.existsSync(path.join(ws, 'plan.md')));
+      assert.strictEqual(readState(ws).spec, undefined);
+    });
+    assert.strictEqual(wsg(['new', 'chk-proc', '--kind', 'process', '--no-launch']).code, 0);
+    assert.strictEqual(wsg(['new', 'chk-epic', '--kind', 'epic', '--no-launch']).code, 0);
+    it('a process and an epic get none', () => {
+      assert.ok(!fs.existsSync(path.join(wsRoot, 'chk-proc', 'checklist.md')));
+      assert.ok(!fs.existsSync(path.join(wsRoot, 'chk-epic', 'checklist.md')));
+    });
+    const old = path.join(wsRoot, 'chk-old');
+    assert.strictEqual(wsg(['new', 'chk-old', '--no-launch']).code, 0);
+    fs.rmSync(path.join(old, 'checklist.md'));
+    const l = json(['list']);
+    const by = Object.fromEntries(l.doc.result.workspaces.map((w) => [w.slug, w]));
+    it('list --json: checklist {done, total} for a task, null for a process, an epic, a task without the file', () => {
+      assert.deepStrictEqual(by.chk.checklist, { done: 0, total: 0 });
+      assert.strictEqual(by['chk-proc'].checklist, null);
+      assert.strictEqual(by['chk-epic'].checklist, null);
+      assert.strictEqual(by['chk-old'].checklist, null);
+      assert.strictEqual(by.chk.spec, false);
+    });
+    // A checklist.md that is there but can't be read: said, never taken for a missing one.
+    if (!(process.getuid && process.getuid() === 0)) {
+      const locked = path.join(wsRoot, 'chk-locked');
+      assert.strictEqual(wsg(['new', 'chk-locked', '--no-launch']).code, 0);
+      fs.chmodSync(path.join(locked, 'checklist.md'), 0o000);
+      const items = checkItems(locked);
+      const entry = json(['list']).doc.result.workspaces.find((w) => w.slug === 'chk-locked');
+      fs.chmodSync(path.join(locked, 'checklist.md'), 0o644);
+      it('an unreadable checklist.md: check warns it can\'t be read, list says so in problems, checklist null', () => {
+        assert.ok(items.some((x) => /^warn checklist\.md is there but can't be read \(EACCES\)/.test(x)), items.join('\n'));
+        assert.ok(!items.some((x) => /no checklist\.md: a task made before/.test(x)));
+        assert.strictEqual(entry.checklist, null);
+        assert.ok(entry.problems.some((p) => /checklist\.md is there but can't be read/.test(p)), entry.problems.join('\n'));
+      });
+    } else skip('an unreadable checklist.md: running as root');
+    const oldCheck = checkItems(old);
+    it('check: a task without checklist.md is a note, never a warning', () => {
+      assert.ok(oldCheck.some((x) => /^info\s+no checklist\.md: a task made before wsg 0\.8/.test(x)), oldCheck.join('\n'));
+      assert.ok(!oldCheck.some((x) => /^warn.*checklist/.test(x)), oldCheck.join('\n'));
+    });
+    const before = checkItems(ws);
+    it('check: FILL IN while the setup is not finished is no separate warning', () => {
+      assert.ok(!before.some((x) => /checklist\.md still says FILL IN/.test(x)), before.join('\n'));
+    });
+    // The setup done: Why, and a repository.
+    fill(ws, 'Why', 'Cart totals are wrong for the shop.');
+    const repo = makeRepo();
+    assert.strictEqual(wsg(['add', repo, '--branch', 'feat/chk', '--ws', ws]).code, 0);
+    const after = checkItems(ws);
+    it('check: FILL IN left after the setup is a warning', () => {
+      assert.ok(after.some((x) => /^warn checklist\.md still says FILL IN/.test(x)), after.join('\n'));
+    });
+    const empty = json(['status', 'chk', 'review']);
+    it('review with only the FILL IN line: no checklist warning (wsg check says it), set', () => {
+      assert.strictEqual(empty.code, 0, empty.all);
+      assert.ok(!empty.doc.warnings.some((w) => /checklist/.test(w)), empty.doc.warnings.join('\n'));
+      assert.deepStrictEqual(empty.doc.result.checklist, { done: 0, total: 0 });
+    });
+    assert.strictEqual(wsg(['status', 'chk', 'open']).code, 0);
+    write(path.join(ws, 'checklist.md'), '# Checklist: Cart totals\n\n- [x] totals match the invoice\n- [ ] tests cover rounding\n  - [ ] a nested item\n');
+    const rv = json(['status', 'chk', 'review']);
+    it('review with unchecked items: "2 of 3 checklist items unchecked", exit 0, set', () => {
+      assert.strictEqual(rv.code, 0, rv.all);
+      assert.ok(rv.doc.warnings.some((w) => /^2 of 3 checklist items unchecked/.test(w)), rv.doc.warnings.join('\n'));
+      assert.strictEqual(readState(ws).status, 'review');
+      assert.deepStrictEqual(rv.doc.result.checklist, { done: 1, total: 3 });
+    });
+    const plainDone = wsg(['close', 'chk', '--dry-run']);
+    it('close --dry-run says it too', () => assert.match(plainDone.out, /2 of 3 checklist items unchecked/));
+    const read1 = json(['status', 'chk']);
+    it('status (read) gives checklist, no warning', () => {
+      assert.deepStrictEqual(read1.doc.result.checklist, { done: 1, total: 3 });
+      assert.ok(!read1.doc.warnings.some((w) => /checklist/.test(w)));
+    });
+    const dn = wsg(['close', 'chk']);
+    it('close with unchecked items: done all the same, the warning said', () => {
+      assert.strictEqual(dn.code, 0, dn.all);
+      assert.match(dn.all, /2 of 3 checklist items unchecked/);
+      assert.strictEqual(readState(ws).status, 'done');
+    });
+    const doneCheck = checkItems(ws);
+    it('check: a done task with unchecked items is a warning', () => {
+      assert.ok(doneCheck.some((x) => /^warn the task is done, but 2 of 3 checklist items are unchecked/.test(x)), doneCheck.join('\n'));
+    });
+    write(path.join(ws, 'checklist.md'), '- [x] a\n- [X] b\n');
+    const allCheck = checkItems(ws);
+    it('check: all checked is ok', () => assert.ok(allCheck.some((x) => x === 'ok checklist.md — 2 of 2 checked'), allCheck.join('\n')));
+    assert.strictEqual(wsg(['status', 'chk', 'open']).code, 0);
+    const clean = json(['status', 'chk', 'review']);
+    it('review with every item checked: no checklist warning', () => {
+      assert.ok(!clean.doc.warnings.some((w) => /checklist/.test(w)), clean.doc.warnings.join('\n'));
+    });
+  }
+
+  console.log('\nwsg new --spec');
+  {
+    const r = json(['new', 'refunds', '--spec', '--title', 'Shop refunds', '--no-launch']);
+    const ws = path.join(wsRoot, 'refunds');
+    it('made: spec true in --json and in the state', () => {
+      assert.strictEqual(r.code, 0, r.all);
+      assert.strictEqual(r.doc.result.spec, true);
+      assert.strictEqual(readState(ws).spec, true);
+      assert.strictEqual(W.stateProblem(readState(ws)), '');
+    });
+    it('spec.md and plan.md templates, and checklist.md built from the spec', () => {
+      assert.match(read(ws, 'spec.md'), /^# Spec: Shop refunds\n/);
+      assert.match(read(ws, 'spec.md'), /## Acceptance criteria/);
+      assert.match(read(ws, 'plan.md'), /^# Plan: Shop refunds\n/);
+      assert.match(read(ws, 'checklist.md'), /the acceptance criteria in spec\.md, written once the owner approves the spec/);
+      assert.match(read(ws, 'checklist.md'), /- \[ \] FILL IN: items from the acceptance criteria of spec\.md\n$/);
+      assert.match(read(ws, 'plan.md'), /## Files[\s\S]*## Tests/);
+    });
+    it('AGENTS.md: the Stages section, each stage after the owner\'s ok; Layout names spec.md and plan.md', () => {
+      const a = read(ws, 'AGENTS.md');
+      assert.match(a, /## Stages\n\nThis task goes spec first\. Each next stage starts only after the owner's "ok" on the one before:/);
+      assert.match(a, /1\. Spec: fill in `spec\.md`[^\n]*After the "ok", build `checklist\.md` from its acceptance criteria\./);
+      assert.match(a, /2\. Plan: from the approved spec, fill in `plan\.md`/);
+      assert.match(a, /3\. Implementation: follow the approved plan/);
+      assert.match(a, /4\. Checklist review: tick each item of `checklist\.md` with evidence, show the owner what is unchecked\./);
+      assert.match(a, /- `spec\.md`, `plan\.md` — the spec and the plan/);
+    });
+    const l = json(['list']);
+    it('list --json: spec true', () => assert.strictEqual(l.doc.result.workspaces.find((w) => w.slug === 'refunds').spec, true));
+    for (const kind of ['epic', 'process']) {
+      const x = wsg(['new', `spec-${kind}`, '--spec', '--kind', kind, '--no-launch']);
+      it(`refused for --kind ${kind}: exit 2, nothing made`, () => {
+        assert.strictEqual(x.code, 2, x.all);
+        assert.match(x.err, /--spec is only for a task/);
+        assert.ok(!fs.existsSync(path.join(wsRoot, `spec-${kind}`)));
+      });
+    }
+    const both = json(['new', 'spec-nc', '--spec', '--no-code', '--no-launch']);
+    it('--spec with --no-code: both', () => {
+      assert.strictEqual(both.code, 0, both.all);
+      assert.deepStrictEqual([both.doc.result.spec, both.doc.result.noCode], [true, true]);
+    });
+    it('--spec with --no-code: plan.md has no files or tests, no code starts; stage 3 is the work', () => {
+      const plan = read(wsRoot, 'spec-nc', 'plan.md');
+      assert.doesNotMatch(plan, /## Files|## Tests|code starts/);
+      assert.match(plan, /## Evidence/);
+      assert.match(plan, /the work starts after "ok"/);
+      assert.match(read(wsRoot, 'spec-nc', 'AGENTS.md'), /3\. Work: follow the approved plan/);
+    });
+    // The setup done: the checklist waits for the spec, and check says so in those words.
+    const refunds = path.join(wsRoot, 'refunds');
+    fill(refunds, 'Why', 'Refunds for the shop.');
+    assert.strictEqual(wsg(['add', makeRepo(), '--branch', 'feat/refunds', '--ws', refunds]).code, 0);
+    it('check: the FILL IN of a spec task\'s checklist points to the end of stage 1', () => {
+      assert.ok(checkItems(refunds).some((x) => /^warn checklist\.md still says FILL IN: it is built from the acceptance criteria of spec\.md once the owner approves the spec/.test(x)));
+    });
+    const pr = wsg(['promote', 'spec-nc', '--skill', 'shop-review']);
+    it('wsg promote of a --spec --no-code task: a process that reads, both marks gone and said, the files kept', () => {
+      assert.strictEqual(pr.code, 0, pr.all);
+      assert.match(pr.all, /a process has none — spec\.md, plan\.md and checklist\.md stay as plain files/);
+      assert.match(pr.all, /the task was without code \(noCode\)/);
+      const st = readState(path.join(wsRoot, 'spec-nc'));
+      assert.deepStrictEqual([st.kind, st.spec, st.noCode], ['process', undefined, undefined]);
+      assert.strictEqual(W.stateProblem(st), '');
+      for (const f of ['spec.md', 'plan.md', 'checklist.md']) assert.ok(fs.existsSync(path.join(wsRoot, 'spec-nc', f)), f);
+      assert.strictEqual(wsg(['list']).code, 0);
+    });
+    const base = { version: 2, kind: 'task', slug: 'x', title: 'x', status: 'open', personalRules: false, created: '2026-11-01', sources: [] };
+    it('the state: spec false refused, spec on a process refused', () => {
+      assert.match(W.stateProblem({ ...base, spec: false }), /"spec" belongs only to a task, as true/);
+      assert.match(W.stateProblem({ ...base, kind: 'process', skillName: 'x', spec: true }), /"spec"/);
+    });
+  }
+
+  console.log('\nthe close of a task of an epic reads checklist.md');
+  {
+    assert.strictEqual(wsg(['new', 'kiosk', '--kind', 'epic', '--no-launch']).code, 0);
+    assert.strictEqual(wsg(['new', 'k1', '--epic', 'kiosk', '--no-launch']).code, 0);
+    const a = read(wsRoot, 'kiosk', 'k1', 'AGENTS.md');
+    it('the epic block: go through checklist.md and show the unchecked items before review', () => {
+      assert.match(a, /Work finished: show the owner unchecked `checklist\.md` items, then `wsg status kiosk\/k1 review`/);
+    });
+    it('a task of an epic gets checklist.md too', () => assert.ok(fs.existsSync(path.join(wsRoot, 'kiosk', 'k1', 'checklist.md'))));
+    const guide = wsg(['guide', 'epic']).out;
+    it('the epic guide: Working and Closing read checklist.md and show the unchecked items', () => {
+      assert.match(guide, /When the work is finished, read `checklist\.md` and show the owner the items still unchecked/);
+      assert.match(guide, /Read its `checklist\.md` and show the owner the items still unchecked/);
+    });
+    const setup = wsg(['guide', 'setup']).out;
+    it('the setup guide fills checklist.md from the Definition of done', () => {
+      assert.match(setup, /Then write `checklist\.md` from it \(a task\s+with spec stages builds it later, from the spec — see below\): one\s+`- \[ \]` line per verifiable item/);
+      assert.match(setup.replace(/\s+/g, ' '), /it is built at the end of stage 1, from the spec's acceptance criteria, after the owner's "ok" on the spec; stage 4 is the checklist review/);
+      assert.match(setup.replace(/\s+/g, ' '), /With `wsg team`, the team workflow writes the sections of `plan\.md` it owns/);
+    });
+  }
+
   finished = true;
   console.log(failed === 0 ? `\n${passed} checks passed, ${skipped} blocks skipped\n` : `\nfailed: ${failed}, ${passed} passed, ${skipped} blocks skipped\n`);
   fs.rmSync(tmp, { recursive: true, force: true });

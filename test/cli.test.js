@@ -941,7 +941,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       assert.match(block, /`## For the epic` in `notes\.md`, dated, with evidence/);
     });
     it('the block: the task session sets review, done is the epic session\'s or the owner\'s', () => {
-      assert.match(block, /Work finished: `wsg status shop\/pay-fix review`\. `done` is set only by the epic session or the owner\./);
+      assert.match(block, /Work finished: show the owner unchecked `checklist\.md` items, then `wsg status shop\/pay-fix review`\. `done` is the epic session's or the owner's\./);
     });
     it('the block is plain text, small', () => {
       assert.doesNotMatch(block, /(^|\s)@/);
@@ -5184,7 +5184,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     const run = (args, opts = {}) => wsg(['new', ...args], { env, ...opts, env: { ...env, ...(opts.env || {}) } });
     const doc = (r) => { try { return JSON.parse(r.out); } catch { return null; } };
     const VERSION = require(path.join(ROOT, 'package.json')).version;
-    const RESULT_KEYS = ['workspace', 'kind', 'slug', 'title', 'epic', 'ticket', 'ticketText', 'status', 'noCode', 'sources', 'launched'];
+    const RESULT_KEYS = ['workspace', 'kind', 'slug', 'title', 'epic', 'ticket', 'ticketText', 'status', 'noCode', 'spec', 'sources', 'launched'];
     const SOURCE_KEYS = ['name', 'mode', 'path', 'workspacePath', 'branch', 'base', 'target', 'verify', 'note', 'carry', 'cloneNm', 'from', 'task'];
     const envelope = (r, what) => {
       const j = doc(r);
@@ -5218,7 +5218,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       const j = envelope(dry, 'dry');
       assert.deepStrictEqual([j.ok, j.dryRun], [true, true]);
       assert.deepStrictEqual(j.result, { workspace: path.join(root, 'first'), kind: 'task', slug: 'first', title: 'First task',
-        epic: null, ticket: 'ACME-123', ticketText: 'ACME-123', status: 'open', noCode: false, sources: [], launched: false });
+        epic: null, ticket: 'ACME-123', ticketText: 'ACME-123', status: 'open', noCode: false, spec: false, sources: [], launched: false });
       assert.ok(!fs.existsSync(path.join(root, 'first')));
     });
     // One rule for the ticket: the key parsed from what was given, or null; the text as given.
@@ -5527,7 +5527,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     const root = path.join(tmp, 'list-root');
     const env = { WS_ROOT: root };
     const VERSION = require(path.join(ROOT, 'package.json')).version;
-    const ENTRY_KEYS = ['slug', 'kind', 'path', 'title', 'ticket', 'status', 'closed', 'archived', 'noCode', 'forEpicPending', 'created', 'epic', 'legacy',
+    const ENTRY_KEYS = ['slug', 'kind', 'path', 'title', 'ticket', 'status', 'closed', 'archived', 'noCode', 'spec', 'checklist', 'forEpicPending', 'created', 'epic', 'legacy',
       'problems', 'extraDirs', 'sources', 'archivedSources', 'tasks'];
     const listJson = (extra = {}) => {
       const r = wsg(['list', '--json'], { env: { ...env, ...extra } });
@@ -5743,7 +5743,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     const env = { WS_ROOT: root };
     const VERSION = require(path.join(ROOT, 'package.json')).version;
     const today = require(path.join(ROOT, 'lib', 'templates.js')).today();
-    const RESULT_KEYS = ['workspace', 'task', 'epic', 'status', 'previous', 'closed', 'archived', 'changed', 'forEpicPending', 'sources', 'tasksMdUpdated'];
+    const RESULT_KEYS = ['workspace', 'task', 'epic', 'status', 'previous', 'closed', 'archived', 'changed', 'forEpicPending', 'checklist', 'sources', 'tasksMdUpdated'];
     const run = (args, opts = {}) => {
       const r = wsg(args, { env, ...opts });
       if (r.code !== 0) throw new Error(`${args.join(' ')}: ${r.all}`);
@@ -5797,7 +5797,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       const j = envelope(readJ, 'status');
       assert.deepStrictEqual([j.ok, j.dryRun, j.error, j.warnings], [true, false, null, []]);
       assert.deepStrictEqual(j.result, { workspace: pay, task: 'pay', epic: 'shop', status: 'open', previous: 'open', closed: null, archived: null, changed: false,
-        forEpicPending: false, sources: [{ name: 'st-api', mode: 'worktree', branch: 'acme/pay', dirty: null, unpushed: null }], tasksMdUpdated: false });
+        forEpicPending: false, checklist: { done: 0, total: 0 }, sources: [{ name: 'st-api', mode: 'worktree', branch: 'acme/pay', dirty: null, unpushed: null }], tasksMdUpdated: false });
     });
     setState(solo, {}, ['status']);
     it('a state without a status (an older wsg) reads as open', () => assert.strictEqual(wsg(['status', 'solo'], { env }).out, 'open\n'));

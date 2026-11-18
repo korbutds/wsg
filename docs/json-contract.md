@@ -78,11 +78,12 @@ settings file that can't be read or an unknown command is an envelope too.
 
 ### new
 
-`{workspace, kind, slug, title, epic, ticket, ticketText, status, noCode, sources, launched}`. `epic` is
+`{workspace, kind, slug, title, epic, ticket, ticketText, status, noCode, spec, sources, launched}`. `epic` is
 the epic's slug or `null`; `ticket` the parsed key, `ticketText` the text as given (a standalone
 task keeps its ticket only in `AGENTS.md`, not in its state, so `list` gives it `ticket: null`); `status` is
 `"open"` (`null` for an epic); `noCode` is `true` for `--no-code` (a task without a repository:
-it takes no source of its epic), else `false`; `sources` are the sources taken from the epic, as planned or
+it takes no source of its epic), else `false`; `spec` is `true` for `--spec` (`spec.md`, `plan.md`
+and the Stages section of `AGENTS.md`), else `false`; `sources` are the sources taken from the epic, as planned or
 attached; `launched` is always `false`.
 
 ### add
@@ -125,6 +126,8 @@ tasks and processes in `WS_ROOT` — each epic's tasks in its `tasks`. Each entr
 | `closed` | the UTC date it was closed, while done; else `null` |
 | `archived` | the UTC date `wsg archive` took it, an epic included; else `null` |
 | `noCode` | `true` for a task made with `wsg new --no-code` (no repository, no branch: `wsg add` takes `--link` and `--reference` only); `false` for any other workspace whose state reads; `null` for a 0.1 workspace and one whose state does not read |
+| `spec` | `true` for a task made with `wsg new --spec`; `false` for any other workspace whose state reads; `null` as for `noCode` |
+| `checklist` | a task's `checklist.md` counted: `{done, total}` — checkboxes in `-`, `*`, `+` or `1.` list items at any indent, `[x]` or `[X]` done; lines in HTML comments or fenced code blocks and lines that say FILL IN are not counted. `null` for a task without the file (made before wsg 0.8: none is added) and for anything but a task |
 | `forEpicPending` | for a task of an epic: `true` while `## For the epic` in its `notes.md` has entries (lines outside HTML comments), i.e. not merged into the epic yet; `null` for anything else |
 | `created` | the UTC date the workspace was made, from the state |
 | `epic` | the epic its state names, or `null` |
@@ -139,7 +142,7 @@ tasks and processes in `WS_ROOT` — each epic's tasks in its `tasks`. Each entr
 
 `wsg close <task>` is `wsg status <task> done`, with the same result. `wsg status <task>` reads.
 
-`{workspace, task, epic, status, previous, closed, archived, changed, forEpicPending, sources, tasksMdUpdated}`
+`{workspace, task, epic, status, previous, closed, archived, changed, forEpicPending, checklist, sources, tasksMdUpdated}`
 
 | Key | Value |
 |---|---|
@@ -151,6 +154,7 @@ tasks and processes in `WS_ROOT` — each epic's tasks in its `tasks`. Each entr
 | `archived` | the date `wsg archive` took it, while archived; else `null`. An archived task reads `archived`; setting any status is `invalid_input` (`wsg unarchive` puts back the one it had), and so is setting `archived`, which only `wsg archive` sets |
 | `changed` | `false` when reading, or setting the status it has (nothing written) |
 | `forEpicPending` | as in list |
+| `checklist` | as in list: `{done, total}` of the task's `checklist.md`, as it is before the change; `null` without one |
 | `sources` | `[{name, mode, branch, dirty, unpushed}]`. Git is asked only on a move to done, and only about worktrees: then `dirty` is the list of changed files as `git status --porcelain` shows them (`[]`: clean) and `unpushed` the number of commits not on the branch's upstream, or without one not on its base. `dirty: null` and `unpushed: null` mean git was not asked, or could not tell |
 | `tasksMdUpdated` | whether the epic's `tasks.md` block changed (planned, in a dry run) |
 
@@ -158,7 +162,8 @@ Only `.claude/wsg.json` and the epic's `tasks.md` block are written, in one tran
 done task of an epic is reopened, its other generated parts, so it gets what the epic changed while it
 was done (its context index, its MCP servers). A render refused at plan time (a broken marker, say) is a
 warning and the status is set anyway; a write that fails rolls the whole reopening back (`step_failed`). Uncommitted
-or unpushed work and entries left under `## For the epic` are warnings, never refusals; so is done
+or unpushed work, entries left under `## For the epic` and, on a move to review or done, unchecked
+items of `checklist.md` ("N of M checklist items unchecked") are warnings, never refusals; so is done
 set for a task of an epic from inside its own workspace (a standalone task or a process gets no
 such warning: it has no epic session).
 

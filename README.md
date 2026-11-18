@@ -114,7 +114,7 @@ The commands the agent (or you) call:
 
 | Command | What it does |
 |---|---|
-| `wsg new <slug> [--title T] [--kind task\|process\|epic] [--skill NAME] [--ticket X] [--epic E] [--sources a,b\|none] [--no-code] [--dry-run] [--json] [--no-launch]` | Creates the skeleton and starts the agent; `--no-launch` prints the next step instead. Only the slug is needed, and `--kind` for a process or an epic: the setup dialogue asks for the rest. `--epic E` makes a task inside the epic `E`, `--sources` picks the epic's repositories it takes (see [Epics](#epics)); `--no-code` makes a task without a repository (see [Tasks without code](#tasks-without-code)); `--dry-run` prints the plan as JSON; `--json` prints one JSON document, the outcome or the error, and never starts the agent. |
+| `wsg new <slug> [--title T] [--kind task\|process\|epic] [--skill NAME] [--ticket X] [--epic E] [--sources a,b\|none] [--no-code] [--spec] [--dry-run] [--json] [--no-launch]` | Creates the skeleton and starts the agent; `--no-launch` prints the next step instead. Only the slug is needed, and `--kind` for a process or an epic: the setup dialogue asks for the rest. `--epic E` makes a task inside the epic `E`, `--sources` picks the epic's repositories it takes (see [Epics](#epics)); `--no-code` makes a task without a repository (see [Tasks without code](#tasks-without-code)); `--spec` makes a task go spec first (see [Checklist and spec stages](#checklist-and-spec-stages)); `--dry-run` prints the plan as JSON; `--json` prints one JSON document, the outcome or the error, and never starts the agent. |
 | `wsg add <path> [--worktree\|--link\|--reference] [--branch B] [--base REF] [--reset-to-base] [--target T] [--verify CMD] [--carry all\|none\|a,b] [--[no-]clone-node-modules] [--note TEXT] [--branch-template T] [--dry-run] [--json] [--ws SLUG\|PATH]` | Attaches one source to the workspace you are in. An existing branch is attached as it is, one only on origin is continued; `--reset-to-base` starts it over (with a `backup/…`). Every check happens before anything is touched; a failure rolls back only this source. `--dry-run` prints the plan as JSON; `--json` prints one JSON document, the outcome or the error, and nothing else. In an epic, a link with the defaults its tasks reuse; in a task of an epic, `wsg add <name>` takes the epic's source of that name. |
 | `wsg remove <name> [--delete-ignored] [--dry-run] [--json] [--ws SLUG\|PATH]` | Detaches a source: a clean worktree (its branch is kept) or the symlink, its rule, and its generated parts. Ignored files that exist nowhere else (made in the worktree, or carried in and changed since) are deleted with the worktree only after `--delete-ignored`; a `node_modules` wsg cloned is not checked, so changes inside it are not protected. The way to fix a source attached with the wrong flags: remove, then add again. |
 | `wsg refresh [--tasks] [--dry-run] [--json] [--ws SLUG\|PATH]` | Brings the generated parts up to date with this wsg — e.g. adds the advisor block to a workspace made by 0.2 — and touches nothing else. `--tasks` in an epic: then every task of it, each under its own lock. `--dry-run` prints the files it would change as JSON; `--json` prints one JSON document. |
@@ -194,6 +194,23 @@ makes such a task (a task only: refused for a process or an epic), and its state
 | `wsg list --json`, `wsg new --json` | `noCode: false` | `noCode: true` |
 
 `wsg promote` of such a task makes an ordinary process: `noCode` goes from the state, and says so.
+
+### Checklist and spec stages
+
+Every task made by wsg 0.8 gets `checklist.md`: the Definition of done as checkboxes, written by the
+setup (`- [ ] FILL IN` until then) and ticked `- [x]` only with evidence. wsg counts the boxes —
+`-`, `*`, `+` or `1.` items at any indent; lines in HTML comments, in code blocks and FILL IN lines are
+not counted — and gives `checklist: {done, total}` in `wsg list --json` and `wsg status --json`.
+Moving a task to review or done warns "N of M checklist items unchecked", and never refuses;
+`wsg check` warns about a FILL IN left after the setup and about unchecked items on a done task.
+Processes and epics get none, and tasks made before 0.8 get none added (`wsg check` notes it).
+
+`wsg new <slug> --spec` (a task only) adds `spec.md` and `plan.md` templates and a `## Stages`
+section in `AGENTS.md`: the agent writes the spec first and waits for your "ok", then builds
+`checklist.md` from the spec's acceptance criteria and writes the plan for your "ok", then
+implements, then reviews the checklist — each item ticked with evidence, what is unchecked shown to
+you. With `--no-code`, `plan.md` has no files or tests. The state keeps `spec: true` (`wsg list --json` gives `spec`). Without `--spec` nothing
+of this is added.
 
 ## Epics
 

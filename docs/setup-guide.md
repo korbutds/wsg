@@ -36,7 +36,10 @@ Go through these in order. Each answer goes into its section of `AGENTS.md`, rep
    tracker prefix `WSG_TRACKER_URL` from `~/.config/wsg/config` (if it is set there) followed by
    the key, else the key alone.
 3. **Definition of done** — something checkable: "a session survives 24 h, renewal is covered by
-   tests, the MR is open" → `## Definition of done`.
+   tests, the MR is open" → `## Definition of done`. Then write `checklist.md` from it (a task
+   with spec stages builds it later, from the spec — see below): one
+   `- [ ]` line per verifiable item, replacing its `- [ ] FILL IN` line (a task made before wsg 0.8
+   has no `checklist.md`: don't create one). Items are ticked `- [x]` later, only with evidence.
 4. **Out of scope** — nearby things not to touch. None — remove the section.
 5. **Starting state** — one of: new feature; updating existing work (an open MR, a branch);
    understanding legacy code before changing it. Replace the `Starting state: FILL IN …` line.
@@ -69,6 +72,15 @@ its own. It attaches its repositories as links, with the defaults its tasks reus
 (`--branch-template` sets the branch every task gets a worktree on). Skip section 3: `wsg team`
 refuses an epic, a team belongs in a task. In section 5, the first step of the work is starting a
 task (`wsg guide epic` → Starting a task).
+
+**A task with spec stages** (`.claude/wsg.json` has `"spec": true`, made with `wsg new --spec`):
+its `AGENTS.md` has a `## Stages` section, and `spec.md` and `plan.md` are templates. The setup
+fills in only what section 1 asks; `spec.md` is the first stage of the work, not of the setup.
+Leave `checklist.md` at its FILL IN line: it is built at the end of stage 1, from the spec's
+acceptance criteria, after the owner's "ok" on the spec; stage 4 is the checklist review — each
+item ticked with evidence, what is unchecked shown to the owner. With `wsg team`, the team workflow
+writes the sections of `plan.md` it owns (the steps, the API contract, the ownership table); the
+spec stages still apply: the spec first, and each next stage after the owner's "ok".
 
 **A task without code** (`.claude/wsg.json` has `"noCode": true`, made with `wsg new --no-code`):
 a spec, a research, a decision — no repository, no branch. Go through section 1 as for a task, but
@@ -203,20 +215,22 @@ Roles left out are not remembered: a later `wsg team fullstack` without `--witho
 1. Run `wsg check`. Fix every FAIL; a WARN you can't fix, explain to the owner.
    "setup not finished" disappears once a git repository is attached and `## Why` is filled in
    (for a task without code, once `## Why` is filled in; its Definition of done must be too).
-2. Update `notes.md` → "Current context": remove "Setup not finished", write one line on where the
+2. Check `checklist.md` (a task): every item of the Definition of done is a `- [ ]` line, and no
+   `FILL IN` is left — `wsg check` warns otherwise.
+3. Update `notes.md` → "Current context": remove "Setup not finished", write one line on where the
    work stands and what the first step of the work is (usually: reconnaissance, no edits).
-3. Show the owner a short summary: the task in one line, the sources with their branches, the
+4. Show the owner a short summary: the task in one line, the sources with their branches, the
    verification command, the team — added (its roles, and that `/wsg-feature` runs it), declined,
    or not recommended and why — and anything left open, including the OWNER items the advisor left
    unresolved.
-4. Tell them whether to restart the session. It is needed when `wsg add` printed
+5. Tell them whether to restart the session. It is needed when `wsg add` printed
    "settings.json changed: restart…" — linked directories become readable only in a new session —
    and always after `wsg team` added roles: they are usable only in a new session.
    Worktrees are inside the workspace and need no restart. To restart: `ws <slug>` (if the `ws`
    function is set up; `ws <epic>/<task>` for a task of an epic) or `cd <workspace> && claude`.
-5. When no restart is needed, end with one direct question: start the work now? Name the first
+6. When no restart is needed, end with one direct question: start the work now? Name the first
    step — the reconnaissance from `notes.md`, then a plan for the implementation (with a team:
-   `/wsg-feature`). The work goes on in this session: don't call it "the next session". When a
+   `/wsg-feature`; with spec stages: `spec.md`). The work goes on in this session: don't call it "the next session". When a
    restart is needed, don't offer to start here: say what to run first in the new session. Either
    way, then wait for the owner's answer.
 

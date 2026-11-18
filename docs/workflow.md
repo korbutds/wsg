@@ -17,6 +17,7 @@ $WS_ROOT/<slug>/
 ├── AGENTS.md          task rules; the only source for Codex
 ├── README.md          task card: problem, sources, links, how to launch
 ├── notes.md           current context, code map, open questions
+├── checklist.md       the Definition of done as checkboxes (a task, wsg 0.8+)
 ├── SETUP.md           how to run the setup again
 ├── mr-target-branch.txt
 ├── repo -> <main repository: the first worktree, else the first git source>
@@ -92,7 +93,12 @@ the task's settings, rules and memory won't load, and history goes to the reposi
    One or two architect passes over the plan.
 3. **Implementation** — with a strong model, edit → commit on top, with an "ok" for each step.
 4. **Self-review**, then **independent review** by a subagent in a fresh context, not a fork.
-5. **Presentation** — once no findings remain, the history is rebuilt once.
+5. **Presentation** — once no findings remain, the history is rebuilt once. Go through
+   `checklist.md` first: tick each item with evidence, show the owner what is unchecked.
+
+A task made with `wsg new --spec` adds two stages in front, each after the owner's "ok": `spec.md`,
+with `checklist.md` built from its acceptance criteria once it is approved, then `plan.md` from it;
+the last stage is the checklist review.
 
 The plan is written twice: before implementation and before review. Between unrelated tasks, `/clear`.
 Research that reads many files goes through subagents so it doesn't clog the main context.

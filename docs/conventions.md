@@ -132,7 +132,7 @@ Workspaces created by wsg 0.1 have no `wsg.json`: `wsg check` reports on them as
 
 A source can't take a name the workspace uses itself — the template would be written through its
 symlink, over a file outside the workspace: `CLAUDE.md`, `AGENTS.md`, `README.md`, `notes.md`,
-`SETUP.md`, `journal.md`, `runs`, `mr-target-branch.txt`, `requirements.md`, `design.md`, `plan.md`,
+`SETUP.md`, `journal.md`, `runs`, `checklist.md`, `spec.md`, `mr-target-branch.txt`, `requirements.md`, `design.md`, `plan.md`,
 `review.md`, `team`, `tasks.md`, `decisions.md`, `knowledge.md`, `.claude`, `.claude-memory`,
 `.learnings`, `.git` (compared case-insensitively). `repo` is allowed: the pointer is not created
 then. A task inside an epic can't take these names either, nor the name of one of the epic's
@@ -165,6 +165,8 @@ process skill has its pointer line.
 | Rules of a specific repository | its own `AGENTS.md`, via import | every session |
 | Specifics of working with the repo in this task | `.claude/rules/<repo>.md` with `paths:` | when reading the repo's files |
 | State, code map, open questions | `notes.md` | on demand |
+| The Definition of done as checkboxes, ticked with evidence | a task's `checklist.md` (wsg 0.8+) | on demand |
+| The spec and the plan of a task with stages (`wsg new --spec`) | `spec.md`, `plan.md` | on demand |
 | What every task of an epic must know | the epic's `knowledge.md` | on demand, through the always-on pointer rule |
 | Multi-step procedures | `.claude/skills/<name>/SKILL.md` | on demand |
 | Lessons and failures | `.learnings/` | on demand |

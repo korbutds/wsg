@@ -220,6 +220,9 @@ async function cmdNew(args) {
   // --sources none says the same, a list of them is refused.
   const noCode = !!flags['--no-code'];
   if (noCode && kind !== 'task') invalid(t('cli.noCodeKind', { kind }));
+  // Spec first: spec.md, plan.md and the Stages section; a task only.
+  const spec = !!flags['--spec'];
+  if (spec && kind !== 'task') invalid(t('cli.specKind', { kind }));
   if (noCode && flags['--sources'] !== undefined && flags['--sources'].trim().toLowerCase() !== 'none') invalid(t('cli.noCodeSources'));
   // A task of an epic: the epic is named, never taken from the current directory. It is a workspace
   // right in WS_ROOT, where `<epic>/<task>` resolves; one elsewhere is refused.
@@ -265,6 +268,7 @@ async function cmdNew(args) {
     // The digest of the owner's rules goes in whenever the file exists: the agent fills it during setup.
     personalRules: !!(cfg.WSG_GLOBAL_MEMORY && fs.existsSync(cfg.WSG_GLOBAL_MEMORY)),
     ...(noCode ? { noCode: true } : {}),
+    ...(spec ? { spec: true } : {}),
   };
   const generate = lib('generate');
   const json = J.active();
@@ -337,6 +341,7 @@ async function cmdNew(args) {
     ticketText: (flags['--ticket'] || '').trim() || null,
     status: kind === 'epic' ? null : 'open',
     noCode,
+    spec,
     sources: sources.map((x) => sourceResult(target, x)),
     launched: false,
   });
@@ -981,6 +986,7 @@ async function statusCommand(given, value, flags, needTask) {
     archived: W.archivedOn(state),
     changed: plan.changed,
     forEpicPending: plan.forEpicPending,
+    checklist: plan.checklist,
     sources: plan.sources,
     tasksMdUpdated: done ? done.tasksMdUpdated : plan.tasksMdUpdated,
   });

@@ -50,8 +50,9 @@ In the task's own session.
 3. What the next task of the epic should know — a decision, a repository fact, a pitfall — goes
    into the task's `notes.md` under `## For the epic`: dated, with the evidence (a file and line,
    a commit, a link). Never edit the epic's files from a task: they are merged at close.
-4. When the work is finished, show the owner `wsg status <epic>/<task> review` and run it after
-   "ok": the task is ready for the epic's closing. Only review is the task session's to set; done
+4. When the work is finished, read `checklist.md` and show the owner the items still unchecked
+   (a task made before wsg 0.8 has none), then show `wsg status <epic>/<task> review` and run it after
+   "ok": the task is ready for the epic's closing. Unchecked items are a warning, never a refusal. Only review is the task session's to set; done
    is set by the epic session (Closing) or by the owner.
 
 ## Closing
@@ -66,7 +67,8 @@ rendered from it, and the free-text `## Status` section of `tasks.md` is a summa
 `wsg status <epic>/<task>` prints it; `wsg list` shows every task with its marker.
 
 1. Read the task's `notes.md` → `## For the epic`, its `.learnings/`, its invariants, and
-   `git log` of its branches.
+   `git log` of its branches. Read its `checklist.md` and show the owner the items still unchecked:
+   `wsg close` warns about them too ("N of M checklist items unchecked"), and never refuses.
 2. Draft one diff:
    - `knowledge.md` rewritten, not appended to, within 4 KiB;
    - facts of one repository to `.claude/rules/<repo>.md`;
