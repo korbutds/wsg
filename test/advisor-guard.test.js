@@ -291,6 +291,9 @@ const BYPASS = [
   [bash(`${W} archive --ws --dry-run`), false, '--ws swallows --dry-run'],
   [bash(`${W} archive a b --dry-run`), false, 'a second workspace'],
   [bash(`${W} archive shop/cart # --dry-run`), false, '# comments out --dry-run'],
+  [bash(`${W} unarchive shop/cart --dry-run --json`), true, 'unarchive --dry-run: a plan'],
+  [bash(`${W} unarchive shop/cart`), false, 'unarchive without --dry-run attaches worktrees'],
+  [bash(`${W} unarchive --ws --dry-run`), false, '--ws swallows --dry-run'],
   [bash(`${W} add [-][-] --dry-run`), false, 'a glob could become --'],
   // wsg new: only a dry run, read as the CLI reads it.
   [bash(`${W} new pay --epic shop`), false, 'new without --dry-run'],

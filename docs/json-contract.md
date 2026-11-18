@@ -163,7 +163,7 @@ such warning: it has no epic session).
 ### archive
 
 `wsg archive [<task>]`: a task, a process or an epic with its tasks. Everything is checked before the
-first change; anything that refuses — a worktree with changes, untracked files, edits hidden by
+first change (`wsg unarchive` brings it back); anything that refuses — a worktree with changes, untracked files, edits hidden by
 skip-worktree or assume-unchanged, ignored files that exist nowhere else (without
 `--delete-ignored`), a detached commit no local branch has, a lock (`git worktree lock`), a
 submodule checked out, something in place of a worktree that is not one wsg made (a symlink
@@ -201,6 +201,38 @@ unlinked; rules, notes, memory, `.learnings/`, knowledge and context stay as the
 
 Unpushed commits, a branch with no upstream, a `node_modules` wsg cloned and commits only the
 worktree's HEAD reflog has (on no branch: they become unreachable) are warnings, never refusals.
+
+### unarchive
+
+`wsg unarchive [<task>]`: every source of the archive record attached again — a worktree on its branch
+as it is, a link made again, a rule file the archive kept adopted as it is — and the status and closing
+date it had put back; the record and the `<!-- wsg:archive -->` block go. A source that can't come
+back (its checkout or its branch gone, the branch checked out in another worktree, its name taken in
+the workspace) is `invalid_input` with `result` present, nothing changed. An epic brings back its
+links and the tasks its archive took (the record's cascade) that are still archived by it, the tasks
+first, the epic last: a task that fails is rolled back alone (`step_failed`, `result` `{done, failedTask,
+reason}` as in archive), the ones before it stay unarchived, and the epic keeps its record so a run
+again goes on. A task of an archived epic is not unarchived alone (`invalid_input`): it comes back
+with its epic. The record goes only once every source is back, so a run killed half-way keeps it,
+and a run again attaches what is missing; the sources still attached are left as they are, one listed
+but gone from the workspace is attached again (a warning), and a worktree there on the recorded
+branch but not listed (a run killed after `git worktree add`) is adopted as it is. A stop signal
+during the plan is `interrupted`, "Cancelled, nothing changed." The
+worktree comes back on the branch the record names: the one checked out when it was archived. Not archived: a no-op, `changed`
+`false`. Ignored files deleted with `--delete-ignored` and copies made when the worktree was first
+created do not come back; carried files and a cloned `node_modules` are copied again as the source
+says.
+
+`{workspace, kind, slug, epic, status, closed, archived, changed, restores, tasks, tasksMdUpdated}`
+
+| Key | Value |
+|---|---|
+| `status`, `closed` | the status after, and its closing date while done; `null` for an epic |
+| `archived` | the date it had been archived; `null` when it was not |
+| `changed` | `false` when it was not archived: nothing written |
+| `restores` | `[{name, mode, source, path, branch}]`, the sources attached again; `branch` `null` for a link |
+| `tasks` | an epic's tasks it brings back: `[{task, workspace, status, closed, changed, restores}]` |
+| `tasksMdUpdated` | whether a `tasks.md` block changed (planned, in a dry run) |
 
 ### context add, context note, context remove
 

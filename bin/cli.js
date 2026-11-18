@@ -1163,6 +1163,88 @@ async function cmdArchive(args) {
   return 0;
 }
 
+// `wsg unarchive`: lib/archive.js. Every source of the record must come back, or nothing changes.
+async function cmdUnarchive(args) {
+  const { flags, pos } = parse(args, FLAGS.unarchive, 1);
+  const ws = archiveTarget(pos, flags);
+  currentWs = ws;
+  const W = lib('workspace');
+  const A = lib('archive');
+  const ui = lib('ui');
+  const readState = (dir) => {
+    try {
+      return W.readState(dir);
+    } catch (e) {
+      return invalid(e.message);
+    }
+  };
+  const dryRun = !!flags['--dry-run'];
+  let state = readState(ws);
+  if (!dryRun) state = archiveLocks(ws, state, readState);
+  let plan;
+  try {
+    plan = A.planUnarchive(ws, state);
+  } catch (e) {
+    // Ctrl+C while git was asked: only read so far, nothing changed.
+    if (e && e.name === 'Interrupted') {
+      if (J.active()) return J.fail('interrupted', t('cli.archiveCancelled'), { rollback: 'none' });
+      process.stderr.write(`\n${t('cli.archiveCancelled')}\n`);
+      return 130;
+    }
+    throw e;
+  }
+  const json = J.active();
+  const result = (done = null) => A.unarchiveResult(plan, { done });
+  const name = wsName(ws, state);
+  if (json && plan.errors.length) return J.fail('invalid_input', plan.errors[0], { details: plan.errors, result: result(), warnings: plan.warnings });
+  if (dryRun && json) return J.succeed(result(), { warnings: plan.warnings });
+  if (dryRun) {
+    process.stdout.write(`${JSON.stringify({ ...result(), errors: plan.errors, warnings: plan.warnings }, null, 2)}\n`);
+    return plan.errors.length ? INVALID : 0;
+  }
+  if (plan.errors.length) {
+    for (const e of plan.errors) process.stderr.write(`wsg: ${e}\n`);
+    return INVALID;
+  }
+  if (!json) for (const w of plan.warnings) ui.warn(w);
+  if (!A.changes(plan)) {
+    if (json) return J.succeed(result(), { warnings: plan.warnings });
+    ui.ok(t('cli.unarchiveSame', { name }));
+    return 0;
+  }
+  guardPlatform();
+  const between = stopBetweenSteps();
+  let done;
+  try {
+    done = await A.applyUnarchive(plan, cfg, { stop: between.stop });
+  } catch (e) {
+    const partial = e && e.partial ? t('cli.unarchivePartial', { list: e.done.join(', ') }) : '';
+    const what = (msg) => (e && e.failedTask ? t('cli.unarchiveTaskFailed', { task: e.failedTask, msg }) : msg) + (partial ? `\n${partial}` : '');
+    const stopped = (reason) => ({ done: (e && e.done) || [], failedTask: (e && e.failedTask) || null, reason });
+    if (e && e.name === 'Interrupted') {
+      if (json) return J.fail('interrupted', what(cancelled(e)), { ...J.rollbackOf(e, ws), warnings: plan.warnings, result: stopped('interrupted') });
+      process.stderr.write(`${what(cancelled(e))}\n`);
+      return 130;
+    }
+    if (e && e.rollback) {
+      if (json) return J.fail('step_failed', what(String(e.message)), { ...J.rollbackOf(e, ws), warnings: plan.warnings, result: stopped(String(e.message)) });
+      process.stderr.write(`wsg: ${what(String(e.message))}\n`);
+      return 1;
+    }
+    throw e;
+  } finally {
+    between.done();
+  }
+  if (json) return J.succeed(result(done), { warnings: plan.warnings });
+  const r = result(done);
+  ui.head(r.status ? t('cli.unarchived', { name, status: r.status }) : t('cli.unarchivedEpic', { name, n: r.tasks.length }));
+  for (const x of [r, ...r.tasks]) {
+    for (const s of x.restores.filter((m) => m.branch)) ui.info(t('cli.unarchivedWorktree', { name: s.name, branch: s.branch }));
+  }
+  if (done.tasksMdUpdated && plan.epicWs) ui.info(t('cli.statusTasksMd', { file: path.join(plan.epicWs, 'tasks.md') }));
+  return 0;
+}
+
 // Every task of the epic refreshed after its change is written (generate.refreshEpicTasks), each under
 // its own lock; the caller holds the epic's. From here a stop signal stops only the refresh of the
 // tasks, and says so — the epic is not put back (lib/lock.js's handler would say it was). The tasks
@@ -1574,6 +1656,7 @@ const COMMANDS = {
   context: cmdContext,
   mcp: cmdMcp,
   archive: cmdArchive,
+  unarchive: cmdUnarchive,
   'install-skills': cmdInstallSkills,
   // The 0.1 spellings, kept for one release.
   '--check': cmdCheck,

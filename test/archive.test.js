@@ -856,9 +856,6 @@ function task(slug, sources = [], extra = []) {
     });
   }
 
-  // STEP2
-
-
   console.log('\nwsg archive and remove: what git status does not show');
   {
     for (const [flag, tag] of [['--skip-worktree', 'S'], ['--assume-unchanged', 'h']]) {
@@ -1132,7 +1129,6 @@ function task(slug, sources = [], extra = []) {
     });
   }
 
-
   console.log('\nwsg archive and remove: a big repository');
   {
     // Over 1 MiB of index listing: the listings must not be cut (a cut one reads as Ctrl+C).
@@ -1259,7 +1255,370 @@ function task(slug, sources = [], extra = []) {
     });
   }
 
-  // STEP3
+  const UNRESULT_KEYS = ['workspace', 'kind', 'slug', 'epic', 'status', 'closed', 'archived', 'changed', 'restores', 'tasks', 'tasksMdUpdated'];
+  // The rendered files a round trip must give back byte for byte.
+  const rendered = (ws) => Object.fromEntries(['AGENTS.md', 'CLAUDE.md', 'README.md', path.join('.claude', 'settings.json'), 'mr-target-branch.txt']
+    .filter((f) => fs.existsSync(path.join(ws, f))).map((f) => [f, read(ws, f)]));
+  // The state's sources without how the branch started: unarchive attaches an existing branch as it is.
+  const sourcesOf = (st) => st.sources.map(({ start: _s, ...rest }) => rest);
+
+  console.log('\nwsg unarchive: a task back as it was');
+  {
+    const api = makeRepo();
+    const docs = path.join(tmp, 'docs-back');
+    fs.mkdirSync(docs);
+    fs.writeFileSync(path.join(docs, 'brief.md'), 'brief\n');
+    const ws = task('back', [[api, ['--branch', 'feat/back']], [docs, ['--reference']]]);
+    const wt = path.join(ws, path.basename(api));
+    fs.writeFileSync(path.join(wt, 'c.ts'), 'c\n');
+    git(wt, ['add', 'c.ts']);
+    git(wt, ['commit', '-qm', 'work']);
+    assert.strictEqual(wsg(['status', 'back', 'review']).code, 0);
+    fs.appendFileSync(path.join(ws, '.claude', 'rules', `${path.basename(api)}.md`), '\nThe owner\'s line.\n');
+    fs.writeFileSync(path.join(ws, '.claude-memory', 'MEMORY.md'), '- remembered\n');
+    const before = { rendered: rendered(ws), state: readState(ws), refs: refs(api), kept: kept(ws), tip: git(wt, ['rev-parse', 'HEAD']) };
+    assert.strictEqual(wsg(['archive', 'back']).code, 0);
+    const dry = json(['unarchive', 'back', '--dry-run']);
+    it('--dry-run --json: the plan, every key, nothing changed, no lock', () => {
+      assert.strictEqual(dry.code, 0, dry.all);
+      assert.deepStrictEqual(Object.keys(dry.doc.result), UNRESULT_KEYS);
+      assert.strictEqual(dry.doc.result.status, 'review');
+      assert.strictEqual(dry.doc.result.changed, true);
+      assert.deepStrictEqual(dry.doc.result.restores.map((r) => [r.name, r.mode, r.branch]), [[path.basename(api), 'worktree', 'feat/back'], ['docs-back', 'reference', null]]);
+      assert.strictEqual(readState(ws).status, 'archived');
+      assert.ok(!fs.existsSync(path.join(ws, '.claude', 'wsg.lock')));
+    });
+    const r = json(['unarchive', 'back']);
+    it('unarchive --json: ok, status review, changed', () => {
+      assert.strictEqual(r.code, 0, r.all);
+      assert.deepStrictEqual(Object.keys(r.doc.result), UNRESULT_KEYS);
+      assert.strictEqual(r.doc.result.status, 'review');
+      assert.strictEqual(r.doc.result.changed, true);
+    });
+    it('the worktree is back on the same branch, at the same commit, clean', () => {
+      assert.strictEqual(git(wt, ['branch', '--show-current']), 'feat/back');
+      assert.strictEqual(git(wt, ['rev-parse', 'HEAD']), before.tip);
+      assert.strictEqual(git(wt, ['status', '--porcelain']), '');
+      assert.strictEqual(refs(api), before.refs);
+    });
+    it('the reference link is back', () => assert.strictEqual(fs.readlinkSync(path.join(ws, 'docs-back')), docs));
+    it('the state: the status it had, no record, the sources as they were', () => {
+      const st = readState(ws);
+      assert.strictEqual(st.status, 'review');
+      assert.strictEqual(st.archive, undefined);
+      assert.deepStrictEqual(sourcesOf(st), sourcesOf(before.state));
+      assert.strictEqual(st.sources[0].start, 'attach');
+    });
+    it('AGENTS.md, CLAUDE.md, README.md, settings.json and mr-target-branch.txt byte-identical to before the archive', () => assert.deepStrictEqual(rendered(ws), before.rendered));
+    it('the kept rule adopted as it was, memory and notes byte-identical', () => assert.deepStrictEqual(kept(ws), before.kept));
+    const snap = tree(ws, { into: false });
+    const again = json(['unarchive', 'back']);
+    it('unarchive again: exit 0, changed false, nothing written', () => {
+      assert.strictEqual(again.code, 0, again.all);
+      assert.strictEqual(again.doc.result.changed, false);
+      assert.deepStrictEqual(tree(ws, { into: false }), snap);
+    });
+    it('the plain unarchive of a workspace not archived says so', () => assert.match(wsg(['unarchive', 'back']).out, /is not archived: nothing to do/));
+    // done, archived, unarchived: done again with its date.
+    assert.strictEqual(wsg(['close', 'back']).code, 0);
+    const closed = readState(ws).closed;
+    assert.strictEqual(wsg(['archive', 'back']).code, 0);
+    assert.strictEqual(wsg(['unarchive', 'back']).code, 0);
+    it('a done task comes back done, with the date it was closed', () => {
+      assert.strictEqual(readState(ws).status, 'done');
+      assert.strictEqual(readState(ws).closed, closed);
+    });
+  }
+
+  console.log('\nwsg unarchive: what refuses it, with nothing touched');
+  {
+    const make = (slug) => {
+      const repo = makeRepo();
+      const ws = task(slug, [[repo, ['--branch', `feat/${slug}`]]]);
+      assert.strictEqual(wsg(['archive', slug]).code, 0);
+      return { repo, ws };
+    };
+    const cases = [
+      ['the branch is gone', (x) => git(x.repo, ['branch', '-D', `feat/${x.slug}`]), /branch feat\/\S+ is gone/],
+      ['the branch is checked out in another worktree', (x) => git(x.repo, ['worktree', 'add', '-q', path.join(tmp, `other-${x.slug}`), `feat/${x.slug}`]), /checked out in another worktree/],
+      ['the checkout is gone', (x) => fs.renameSync(x.repo, `${x.repo}-moved`), /is not there any more/],
+      ['the name is taken in the workspace', (x) => fs.mkdirSync(path.join(x.ws, path.basename(x.repo))), /is taken in the workspace/],
+    ];
+    for (const [what, spoil, re] of cases) {
+      const slug = `un-${repoN + 1}`;
+      const x = { ...make(slug), slug };
+      spoil(x);
+      const before = tree(x.ws);
+      const r = json(['unarchive', slug]);
+      it(`${what}: refused, exit 2, invalid_input, nothing changed`, () => {
+        assert.strictEqual(r.code, 2, r.all);
+        assert.strictEqual(r.doc.error.code, 'invalid_input');
+        assert.match(r.doc.error.message, re);
+        assert.deepStrictEqual(Object.keys(r.doc.result), UNRESULT_KEYS);
+        assert.deepStrictEqual(tree(x.ws), before);
+        assert.strictEqual(readState(x.ws).status, 'archived');
+      });
+    }
+    // An owner's rule kept by the archive does not block it.
+    const x = make('ownrule');
+    const rule = path.join(x.ws, '.claude', 'rules', `${path.basename(x.repo)}.md`);
+    fs.writeFileSync(rule, '# my own notes on this repo\n');
+    const r = wsg(['unarchive', 'ownrule']);
+    it('a rule file of the owner\'s, kept by the archive: adopted as it is, not refused', () => {
+      assert.strictEqual(r.code, 0, r.all);
+      assert.strictEqual(fs.readFileSync(rule, 'utf8'), '# my own notes on this repo\n');
+    });
+    // A busy workspace.
+    const y = make('unbusy');
+    fs.writeFileSync(path.join(y.ws, '.claude', 'wsg.lock'), JSON.stringify({ pid: process.pid, time: new Date().toISOString() }));
+    const b = tree(y.ws);
+    const busy = json(['unarchive', 'unbusy']);
+    it('a workspace another command holds: exit 2, busy, nothing changed', () => {
+      assert.strictEqual(busy.code, 2, busy.all);
+      assert.strictEqual(busy.doc.error.code, 'busy');
+      assert.deepStrictEqual(tree(y.ws), b);
+    });
+    it('the advisor guard: unarchive only with --dry-run', () => {
+      const G = require(path.join(ROOT, 'lib', 'advisor-guard.js'));
+      assert.strictEqual(G.bashAllowed(`node "${CLI}" unarchive shop/cart --dry-run`), true);
+      assert.strictEqual(G.bashAllowed(`node "${CLI}" unarchive shop/cart`), false);
+    });
+  }
+
+  console.log('\nwsg unarchive: an epic brings back only the tasks its archive took');
+  {
+    const repo = makeRepo();
+    const ep = task('arcade', [], ['--kind', 'epic', '--title', 'Arcade']);
+    assert.strictEqual(wsg(['add', repo, '--ws', ep, '--branch-template', 'arcade/{slug}']).code, 0);
+    const a1 = task('a1', [], ['--epic', 'arcade']);
+    const a2 = task('a2', [], ['--epic', 'arcade']);
+    const a3 = task('a3', [], ['--epic', 'arcade']);
+    assert.strictEqual(wsg(['status', 'arcade/a2', 'review']).code, 0);
+    assert.strictEqual(wsg(['archive', 'arcade/a3']).code, 0);
+    const before = { ep: rendered(ep), a1: rendered(a1), a2: rendered(a2), tasks: read(ep, 'tasks.md'), refs: refs(repo) };
+    const keptAll = () => ({ ep: kept(ep), a1: kept(a1), a2: kept(a2), a3: kept(a3) });
+    const k0 = keptAll();
+    assert.strictEqual(wsg(['archive', 'arcade']).code, 0);
+    assert.deepStrictEqual(readState(ep).archive.cascade, ['a1', 'a2']);
+    // A task of the cascade whose unarchive fails half-way: README.md that can't be written.
+    fs.chmodSync(path.join(a2, 'README.md'), 0o444);
+    const half = json(['unarchive', 'arcade']);
+    fs.chmodSync(path.join(a2, 'README.md'), 0o644);
+    it('a task that fails: step_failed naming it, the tasks before it kept unarchived', () => {
+      assert.strictEqual(half.code, 1, half.all);
+      assert.match(half.doc.error.message, /task a2 could not be unarchived/);
+      assert.match(half.doc.error.message, /a1/);
+      assert.deepStrictEqual(half.doc.result.done, ['a1']);
+      assert.strictEqual(half.doc.result.failedTask, 'a2');
+      assert.strictEqual(readState(a1).status, 'open');
+      assert.strictEqual(readState(a2).status, 'archived');
+      assert.ok(readState(ep).archive, 'the epic keeps its record until the last task is back');
+      assert.ok(!fs.existsSync(path.join(a2, path.basename(repo))));
+    });
+    const r = json(['unarchive', 'arcade']);
+    it('run again: the rest back, ok', () => {
+      assert.strictEqual(r.code, 0, r.all);
+      assert.deepStrictEqual(r.doc.result.tasks.map((x) => [x.task, x.status]), [['a2', 'review']]);
+      assert.strictEqual(r.doc.result.status, null);
+    });
+    it('the cascade back: a1 open, a2 review, each on its worktree; a3, archived on its own, stays archived', () => {
+      assert.strictEqual(readState(a1).status, 'open');
+      assert.strictEqual(readState(a2).status, 'review');
+      assert.strictEqual(git(path.join(a1, path.basename(repo)), ['branch', '--show-current']), 'arcade/a1');
+      assert.strictEqual(git(path.join(a2, path.basename(repo)), ['branch', '--show-current']), 'arcade/a2');
+      assert.strictEqual(readState(a3).status, 'archived');
+    });
+    it('the epic: no record, its link back, the branches the same', () => {
+      assert.strictEqual(readState(ep).archive, undefined);
+      assert.strictEqual(fs.readlinkSync(path.join(ep, path.basename(repo))), repo);
+      assert.strictEqual(refs(repo), before.refs);
+    });
+    it('the generated files of the epic and of the tasks byte-identical to before; tasks.md too', () => {
+      assert.deepStrictEqual(rendered(ep), before.ep);
+      assert.deepStrictEqual(rendered(a1), before.a1);
+      assert.deepStrictEqual(rendered(a2), before.a2);
+      assert.strictEqual(read(ep, 'tasks.md'), before.tasks);
+    });
+    it('knowledge, notes, memory, rules byte-identical through the round trip', () => assert.deepStrictEqual(keptAll(), k0));
+  }
+
+
+  console.log('\nwsg unarchive: the branch the work was on');
+  {
+    const repo = makeRepo();
+    const ws = task('umoved', [[repo, ['--branch', 'feat/umoved']]]);
+    const wt = path.join(ws, path.basename(repo));
+    git(wt, ['switch', '-q', '-c', 'feat/umoved-2']);
+    fs.writeFileSync(path.join(wt, 'w.ts'), 'w\n');
+    git(wt, ['add', 'w.ts']);
+    git(wt, ['commit', '-qm', 'work']);
+    const tip = git(wt, ['rev-parse', 'HEAD']);
+    git(repo, ['branch', '-D', 'feat/umoved']);
+    assert.strictEqual(wsg(['archive', 'umoved']).code, 0);
+    const r = json(['unarchive', 'umoved']);
+    it('the attached branch deleted, work on another: back on the one checked out at the archive', () => {
+      assert.strictEqual(r.code, 0, r.all);
+      assert.strictEqual(git(wt, ['branch', '--show-current']), 'feat/umoved-2');
+      assert.strictEqual(git(wt, ['rev-parse', 'HEAD']), tip);
+      assert.strictEqual(readState(ws).sources[0].branch, 'feat/umoved-2');
+      assert.strictEqual(readState(ws).version, 2);
+    });
+    const repo2 = makeRepo();
+    const ws2 = task('umoved2', [[repo2, ['--branch', 'feat/one']]]);
+    const wt2 = path.join(ws2, path.basename(repo2));
+    git(wt2, ['switch', '-q', '-c', 'feat/two']);
+    const before = refs(repo2);
+    assert.strictEqual(wsg(['archive', 'umoved2']).code, 0);
+    const r2 = json(['unarchive', 'umoved2']);
+    it('the attached branch there, work on another: back on the other, both branches as they were', () => {
+      assert.strictEqual(r2.code, 0, r2.all);
+      assert.strictEqual(git(wt2, ['branch', '--show-current']), 'feat/two');
+      assert.strictEqual(refs(repo2), before);
+    });
+  }
+
+  console.log('\nwsg unarchive: a record that is off, a run that stopped');
+  {
+    // A record whose status was edited by hand: a warning, and unarchive still works.
+    const repo = makeRepo();
+    const ws = task('edited', [[repo, ['--branch', 'feat/edited']]]);
+    assert.strictEqual(wsg(['archive', 'edited']).code, 0);
+    const st = readState(ws);
+    writeState(ws, { ...st, status: 'open' });
+    const r = json(['unarchive', 'edited']);
+    it('status edited away from archived: unarchive brings it back all the same', () => {
+      assert.strictEqual(r.code, 0, r.all);
+      assert.strictEqual(readState(ws).status, 'open');
+      assert.strictEqual(readState(ws).archive, undefined);
+      assert.ok(fs.existsSync(path.join(ws, path.basename(repo), 'a.ts')));
+    });
+  }
+  {
+    // A kill between two attaches: the record is still there; a run again attaches the rest.
+    const one = makeRepo();
+    const two = makeRepo();
+    const ws = task('ukill', [[one, ['--branch', 'feat/ukill']], [two, ['--branch', 'feat/ukill2']]]);
+    const before = rendered(ws);
+    assert.strictEqual(wsg(['archive', 'ukill']).code, 0);
+    const plan = await quiet(() => A.planUnarchive(ws, W.readState(ws)));
+    const realAttach = generate.attachSource;
+    let calls = 0;
+    let seen = null;
+    generate.attachSource = (...args) => {
+      if (++calls === 2) {
+        seen = read(ws, '.claude', 'wsg.json');
+        throw new Error('killed');
+      }
+      return realAttach(...args);
+    };
+    try {
+      await quiet(async () => { try { await A.applyUnarchive(plan, {}); } catch { /* rolled back */ } });
+    } finally {
+      generate.attachSource = realAttach;
+    }
+    const mid = JSON.parse(seen);
+    it('after the first attach the state still holds the record, both sources in it', () => {
+      assert.deepStrictEqual(mid.archive.sources.map((s) => s.name), [path.basename(one), path.basename(two)]);
+      assert.deepStrictEqual(mid.sources.map((s) => s.name), [path.basename(one)]);
+      assert.strictEqual(W.stateProblem(mid), '');
+    });
+    // What a kill would have left: that state, the first worktree attached.
+    git(one, ['worktree', 'add', '-q', path.join(ws, path.basename(one)), 'feat/ukill']);
+    writeState(ws, mid);
+    const again = json(['unarchive', 'ukill']);
+    it('wsg unarchive again: the second attached, the first left as it is, the record gone', () => {
+      assert.strictEqual(again.code, 0, again.all);
+      const st = readState(ws);
+      assert.strictEqual(st.archive, undefined);
+      assert.deepStrictEqual(st.sources.map((s) => s.name), [path.basename(one), path.basename(two)]);
+      assert.strictEqual(git(path.join(ws, path.basename(two)), ['branch', '--show-current']), 'feat/ukill2');
+      assert.deepStrictEqual(rendered(ws), before);
+    });
+  }
+
+  console.log('\nwsg unarchive: a task of an archived epic');
+  {
+    const repo = makeRepo();
+    const ep = task('bazaar', [], ['--kind', 'epic']);
+    assert.strictEqual(wsg(['add', repo, '--ws', ep, '--branch-template', 'bazaar/{slug}']).code, 0);
+    const b1 = task('b1', [], ['--epic', 'bazaar']);
+    assert.strictEqual(wsg(['archive', 'bazaar']).code, 0);
+    const before = tree(b1);
+    const r = json(['unarchive', 'bazaar/b1']);
+    it('alone: refused, exit 2, names the epic, nothing changed', () => {
+      assert.strictEqual(r.code, 2, r.all);
+      assert.match(r.doc.error.message, /its epic bazaar is archived: .*wsg unarchive bazaar/);
+      assert.deepStrictEqual(tree(b1), before);
+    });
+    const e = json(['unarchive', 'bazaar']);
+    it('with its epic: back', () => {
+      assert.strictEqual(e.code, 0, e.all);
+      assert.strictEqual(readState(b1).status, 'open');
+    });
+  }
+
+  console.log('\nwsg unarchive: what a killed run left');
+  {
+    // Listed as attached, but gone from the workspace.
+    const one = makeRepo();
+    const two = makeRepo();
+    const ws = task('ugone', [[one, ['--branch', 'feat/ugone']], [two, ['--branch', 'feat/ugone2']]]);
+    const before = rendered(ws);
+    assert.strictEqual(wsg(['archive', 'ugone']).code, 0);
+    const st = readState(ws);
+    writeState(ws, { ...st, sources: [st.archive.sources[0]] });
+    const r = json(['unarchive', 'ugone']);
+    it('a source listed but gone: attached again, with a warning', () => {
+      assert.strictEqual(r.code, 0, r.all);
+      assert.ok(r.doc.warnings.some((w) => /listed as attached, but not in the workspace/.test(w)), JSON.stringify(r.doc.warnings));
+      assert.strictEqual(git(path.join(ws, path.basename(one)), ['branch', '--show-current']), 'feat/ugone');
+      assert.strictEqual(git(path.join(ws, path.basename(two)), ['branch', '--show-current']), 'feat/ugone2');
+      assert.deepStrictEqual(readState(ws).sources.map((s) => s.name), [path.basename(one), path.basename(two)]);
+      assert.deepStrictEqual(rendered(ws), before);
+    });
+    // There, but not listed: a kill right after git worktree add.
+    const repo = makeRepo();
+    const ws2 = task('uadopt', [[repo, ['--branch', 'feat/uadopt']]]);
+    const before2 = rendered(ws2);
+    assert.strictEqual(wsg(['archive', 'uadopt']).code, 0);
+    git(repo, ['worktree', 'add', '-q', path.join(ws2, path.basename(repo)), 'feat/uadopt']);
+    fs.writeFileSync(path.join(ws2, path.basename(repo), 'scratch.txt'), 'kept\n');
+    const r2 = json(['unarchive', 'uadopt']);
+    it('a worktree there on the recorded branch, not listed: adopted as it is, not refused', () => {
+      assert.strictEqual(r2.code, 0, r2.all);
+      assert.strictEqual(read(ws2, path.basename(repo), 'scratch.txt'), 'kept\n');
+      assert.deepStrictEqual(readState(ws2).sources.map((s) => s.name), [path.basename(repo)]);
+      assert.strictEqual(readState(ws2).archive, undefined);
+      assert.deepStrictEqual(rendered(ws2), before2);
+    });
+    // There, but on another branch: not adopted, refused as taken.
+    const repo3 = makeRepo();
+    const ws3 = task('unot', [[repo3, ['--branch', 'feat/unot']]]);
+    assert.strictEqual(wsg(['archive', 'unot']).code, 0);
+    git(repo3, ['worktree', 'add', '-q', '-b', 'feat/other', path.join(ws3, path.basename(repo3))]);
+    const r3 = json(['unarchive', 'unot']);
+    it('a worktree there on another branch: refused as taken', () => {
+      assert.strictEqual(r3.code, 2, r3.all);
+      assert.match(r3.doc.error.message, /is taken in the workspace/);
+    });
+  }
+
+  console.log('\nwsg unarchive: Ctrl+C while the plan asks git');
+  {
+    const repo = makeRepo();
+    task('ustop', [[repo, ['--branch', 'feat/ustop']]]);
+    assert.strictEqual(wsg(['archive', 'ustop']).code, 0);
+    const fake = path.join(tmp, 'int-git-unplan');
+    fs.mkdirSync(fake);
+    const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+    fs.writeFileSync(path.join(fake, 'git'), `#!/bin/sh\ncase " $* " in *" show-ref "*) kill -INT $$; sleep 2;; esac\nexec ${JSON.stringify(realGit)} "$@"\n`, { mode: 0o755 });
+    const plain = wsg(['unarchive', 'ustop'], { env: { PATH: `${fake}:${ENV.PATH}` } });
+    it('exit 130, "Cancelled, nothing changed.", still archived', () => {
+      assert.strictEqual(plain.code, 130, plain.all);
+      assert.match(plain.err, /Cancelled, nothing changed\./);
+      assert.strictEqual(readState(path.join(wsRoot, 'ustop')).status, 'archived');
+    });
+  }
 
   finished = true;
   console.log(failed ? `\n${failed} failed, ${passed} passed` : `\nall ${passed} checks passed`);
