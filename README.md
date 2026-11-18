@@ -281,10 +281,13 @@ $WS_ROOT/shop/
   `decisions.md` and `tasks.md`, after your "ok", and then marks it done with
   `wsg close shop/cart-fix`, the last write. The status lives in the task's `.claude/wsg.json`; `tasks.md` and `wsg list`
   show it as `[review]` or `[done <date>]`. `/wsg-epic-sync` reads
-  the epic's other tasks from the tracker, with any read tool the agent has, into `tasks.md`;
-  nothing is ever written to the tracker. To start a task, ask in the epic session
-  (`/wsg-epic-task <ticket>`). The procedures are in [docs/epic-guide.md](docs/epic-guide.md)
-  (`wsg guide epic`), so any agent can follow them; the skills only point there.
+  the epic's other tasks from the tracker, with any read tool the agent has, into `tasks.md`:
+  every child issue without a task directory is a line under "Other tasks", by its key, in the
+  order kept, new ones appended; nothing is ever written to the tracker. To start a task, ask in the epic session
+  (`/wsg-epic-task <ticket>`). A tracker task without a repository is never skipped by the agent:
+  it asks you — create it with `--no-code`, attach a repository, or do not start it. The procedures are in [docs/epic-guide.md](docs/epic-guide.md)
+  (`wsg guide epic`), so any agent can follow them; the skills only point there. The skill files
+  are written once, when the epic is made: an older epic keeps its own, and gets new rules through the guide.
 - **Check.** `wsg check` in the epic checks `knowledge.md` (a warning over 4 KiB, an error over
   8 KiB), the pointer rule, the `tasks.md` block, the skills and the tasks inside — a task whose
   state does not read, a done task whose `## For the epic` still has entries — and, with MCP

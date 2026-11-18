@@ -10,20 +10,38 @@ Every procedure here is a proposal first: show the owner what you are about to r
 run or write it only after "ok". Questions for the owner go through the advisor first, as
 AGENTS.md says. Never write to the tracker.
 
+Never skip a tracker task silently. Every child issue of the epic is accounted for in `tasks.md`:
+one with a task directory here is in the `<!-- wsg:tasks -->` block, every other one is a line under
+`## Other tasks` (see Syncing). A task without a repository to change — a spec, a research, a
+decision — is never left out or set aside by you on your own: it becomes a question to the owner
+when it is to be started, with three answers — create it without code (`wsg new <slug> --epic <epic> --no-code`), attach a
+repository (`--sources <name>`, or `wsg add` in the task later), or do not start it.
+
+The epic's skills (`/wsg-epic-task`, `/wsg-epic-sync`, `/wsg-epic-close`) are written once, when the
+epic is made, and only point here: an epic made by an older wsg keeps its skill files as they were,
+and gets these rules through this guide.
+
 ## Starting a task
 
 From the epic session, when the owner asks to start work on a ticket.
 
 1. Sync first (section Syncing): a task that already exists elsewhere is not started twice.
 2. Read the ticket with any tracker MCP read tool you have; without one, ask the owner for its
-   summary. Pick a slug: kebab-case, not a name the epic uses (`knowledge.md`, `tasks.md`, a
+   summary. A ticket with no code to change (a spec, a research, a decision), or none of whose
+   repositories the epic has: do not skip it and do not pick for the owner — ask, through the
+   advisor: create it with `--no-code`, attach a repository (`wsg add <path>` in the epic first,
+   then `--sources <name>`), or do not start it. Pick a slug: kebab-case, not a name the epic uses (`knowledge.md`, `tasks.md`, a
    source's name).
 3. If the `wsg-advisor` agent is available, send it the command and the dry-run first. Then show
    the owner the command and wait for "ok":
 
    ```bash
-   wsg new <slug> --epic <epic> --ticket <KEY> [--title T] [--sources a,b|none]
+   wsg new <slug> --epic <epic> --ticket <KEY> [--title T] [--sources a,b|none] [--no-code] [--spec]
    ```
+
+   `--no-code` (the owner's answer above): no repository, no branch, `--sources` refused but for
+   `none`; material to read is attached later with `wsg add <name> --link`. `--spec` when the
+   owner wants the spec and the plan approved before any code (`spec.md`, `plan.md`).
 
    Without `--sources` the task gets no repository, unless the epic has exactly one with a branch
    template. A source with a template becomes the task's own worktree on the branch it gives
@@ -94,11 +112,20 @@ From the epic session (`/wsg-epic-sync` in Claude Code), and as step 1 of Starti
 1. With any tracker MCP read tool, read the epic's child issues and linked issues: key, summary,
    status, assignee, updated.
 2. Rewrite only the "Other tasks" section of `tasks.md`, under the heading
-   `## Other tasks (synced <date> via <tool>)`. The `<!-- wsg:tasks -->` block lists the tasks in
-   this directory and is wsg's: `wsg refresh` renders it.
-3. A tracker change that looks like a decision (a scope cut, a new dependency) is shown to the
+   `## Other tasks (synced <date> via <tool>)`. Every child issue the tracker has whose key is not on
+   a line of the `<!-- wsg:tasks -->` block is listed there — none is left out, whatever its status, assignee or
+   whether it has a repository: one list item per task, starting with its key
+   (`- KEY-12 summary — status, assignee`). Keep the order the items already have, update them in
+   place, and append new ones at the end; no table, no other bullets in the section. The
+   `<!-- wsg:tasks -->` block lists the tasks in this directory and is wsg's: `wsg refresh` renders it.
+3. A child issue without a repository to change (a spec, a research) is listed like any other. When
+   the owner wants it started, it is a question, never your call: `--no-code`, a repository, or not
+   now (Starting a task).
+4. A tracker change that looks like a decision (a scope cut, a new dependency) is shown to the
    owner as a candidate for `knowledge.md`, never written without "ok".
-4. No tracker tool: report `SKIPPED tracker: no tool available` and change nothing.
+5. Only when there is no tracker tool at all: report `SKIPPED tracker: no tool available` and change
+   nothing. With a tool, nothing is skipped: an issue you can't place is listed all the same, and
+   said to the owner.
 
 ## Owner rules
 

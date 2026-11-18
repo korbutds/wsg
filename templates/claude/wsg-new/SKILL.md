@@ -14,7 +14,9 @@ allowed-tools: Bash(wsg *)
 2. Pass a one-line title (`--title "…"`) or a ticket key or URL (`--ticket …`) only if the person
    gave one. For a repeatable engineering procedure (a release, a dependency upgrade) add
    `--kind process`: its skill is named after the slug; `--skill <name>` only if the person wants
-   another name.
+   another name. For a task with no code to change (a spec, a research, a decision) add
+   `--no-code`: no repository, no branch. Add `--spec` only when the person wants the spec and the
+   plan approved before any code: `spec.md` and `plan.md` come with the task.
 3. Run `wsg new <slug> --no-launch` with those flags. Exit code 2 means the input was rejected and
    nothing was created: show the message and do what it asks — agree on another slug, or pass
    `--skill <name>`.

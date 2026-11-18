@@ -55,6 +55,9 @@ workspaces in directories of the epic. Beyond what a task has, the epic holds:
 
 An epic has no `repo` pointer and no `mr-target-branch.txt`: those belong to its tasks. The
 procedures are in `wsg guide epic`, so any agent can follow them; the skills only point there.
+They are written once, when the epic is made: wsg never rewrites the skill files of an existing
+epic, and a rule added later (every tracker task listed under "Other tasks", a task without a
+repository put to the owner, never skipped) reaches old epics through the guide.
 
 A task of the epic is made with `wsg new <slug> --epic <epic>`, in `<epic>/<slug>/`, and the
 epic's `tasks.md` lists it. Its `wsg.json` links it to the epic (`"epic": { "slug": … }`) and keeps

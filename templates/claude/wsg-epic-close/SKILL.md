@@ -1,6 +1,6 @@
 ---
 name: wsg-epic-close
-description: Close a task of this epic — bring what it learned into knowledge.md, the repository rules, decisions.md and tasks.md, move the merged entries in its notes.md, then mark it done with wsg close — following the wsg epic guide.
+description: Close a task of this epic — show the owner what its checklist.md leaves unchecked, bring what it learned into knowledge.md, the repository rules, decisions.md and tasks.md, move the merged entries in its notes.md, then mark it done with wsg close — following the wsg epic guide.
 disable-model-invocation: true
 argument-hint: "<task directory>"
 allowed-tools: Bash(wsg *)

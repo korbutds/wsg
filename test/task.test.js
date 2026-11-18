@@ -519,6 +519,69 @@ process.on('exit', () => {
     });
   }
 
+  console.log('\nthe epic guide and the skills: no tracker task skipped silently');
+  {
+    const guide = wsg(['guide', 'epic']).out;
+    const flat = (x) => x.replace(/\s+/g, ' ');
+    const g = flat(guide);
+    const section = (name) => flat(guide.slice(guide.indexOf(`## ${name}\n`), guide.indexOf('\n## ', guide.indexOf(`## ${name}\n`) + 3)));
+    it('the rule up front: never skip a tracker task silently; a task without a repository is a question with three answers', () => {
+      assert.ok(g.includes('Never skip a tracker task silently.'));
+      assert.ok(g.includes('is never left out or set aside by you on your own: it becomes a question to the owner when it is to be started, with three answers — create it without code (`wsg new <slug> --epic <epic> --no-code`), attach a repository (`--sources <name>`, or `wsg add` in the task later), or do not start it.'));
+    });
+    it('Starting a task: a ticket without code is asked about, never skipped; --no-code and --spec in the command', () => {
+      const p = section('Starting a task');
+      assert.ok(p.includes('do not skip it and do not pick for the owner — ask, through the advisor: create it with `--no-code`, attach a repository (`wsg add <path>` in the epic first, then `--sources <name>`), or do not start it.'), p);
+      assert.ok(p.includes('[--sources a,b|none] [--no-code] [--spec]'), p);
+    });
+    it('Syncing: every child issue listed under Other tasks, one item each starting with its key, order kept, new ones appended', () => {
+      const p = section('Syncing');
+      assert.ok(p.includes('Every child issue the tracker has whose key is not on a line of the `<!-- wsg:tasks -->` block is listed there — none is left out'), p);
+      assert.ok(p.includes('one list item per task, starting with its key (`- KEY-12 summary — status, assignee`). Keep the order the items already have, update them in place, and append new ones at the end; no table, no other bullets in the section.'), p);
+    });
+    it('Syncing: SKIPPED tracker only without a tracker tool; with one nothing is skipped', () => {
+      const p = section('Syncing');
+      assert.ok(p.includes('Only when there is no tracker tool at all: report `SKIPPED tracker: no tool available` and change nothing. With a tool, nothing is skipped'), p);
+      assert.ok(!/^\d\. No tracker tool: report/m.test(guide));
+    });
+    it('the guide says old epics keep their skill files and get the rules through it', () => {
+      assert.ok(g.includes('an epic made by an older wsg keeps its skill files as they were, and gets these rules through this guide.'));
+    });
+    assert.strictEqual(wsg(['new', 'old-epic-probe', '--kind', 'epic', '--no-launch']).code, 0);
+    const desc = (name) => /^description: (.+)$/m.exec(fs.readFileSync(path.join(ROOT, 'templates', 'claude', name, 'SKILL.md'), 'utf8'))[1];
+    it('wsg-epic-task: a ticket without a repository is never skipped, it is a question', () => assert.match(desc('wsg-epic-task'), /a ticket without a repository is never skipped, it is a question to the owner \(--no-code, a repository, or not now\)/));
+    it('wsg-epic-sync: every child issue listed, none skipped silently', () => assert.match(desc('wsg-epic-sync'), /every child issue listed by its key, none skipped silently/));
+    it('wsg-epic-close: the unchecked checklist items first', () => assert.match(desc('wsg-epic-close'), /show the owner what its checklist\.md leaves unchecked/));
+    it('the skills are still one-line wrappers over the guide', () => {
+      for (const [name, sct] of [['wsg-epic-task', 'Starting a task'], ['wsg-epic-sync', 'Syncing'], ['wsg-epic-close', 'Closing']]) {
+        assert.ok(fs.readFileSync(path.join(ROOT, 'templates', 'claude', name, 'SKILL.md'), 'utf8').includes(`Run \`wsg guide epic\`, section "${sct}", for: $ARGUMENTS`), name);
+      }
+    });
+    it('tasks.md and the epic\'s Layout: every tracker child issue without a task directory, one item per task, key first', () => {
+      const tm = read(wsRoot, 'old-epic-probe', 'tasks.md');
+      assert.match(tm, /<!-- every tracker child issue without a task directory here, one item per task, key first: `wsg guide epic` → Syncing/);
+      assert.doesNotMatch(tm, /other participants/);
+      assert.match(read(wsRoot, 'old-epic-probe', 'AGENTS.md'), /- `tasks\.md` — the epic's tasks: the ones in this directory, and every tracker child issue without a task directory here\./);
+    });
+    const newSkill = fs.readFileSync(path.join(ROOT, 'templates', 'claude', 'wsg-new', 'SKILL.md'), 'utf8');
+    it('wsg-new names --no-code and --spec', () => {
+      assert.match(newSkill, /`--no-code`: no repository, no branch/);
+      assert.match(newSkill, /Add `--spec` only when the person wants the spec and the\s+plan approved before any code/);
+    });
+    const conv = flat(fs.readFileSync(path.join(ROOT, 'docs', 'conventions.md'), 'utf8'));
+    it('conventions: wsg never rewrites an existing epic\'s skill files; the guide reaches old epics', () => {
+      assert.ok(conv.includes('wsg never rewrites the skill files of an existing epic'));
+      assert.ok(conv.includes('reaches old epics through the guide'));
+    });
+    // An epic made now gets the new skill text; nothing rewrites an older one's.
+    assert.strictEqual(wsg(['new', 'old-epic', '--kind', 'epic', '--no-launch']).code, 0);
+    const own = path.join(wsRoot, 'old-epic', '.claude', 'skills', 'wsg-epic-sync', 'SKILL.md');
+    it('a new epic gets the template', () => assert.strictEqual(read(own), fs.readFileSync(path.join(ROOT, 'templates', 'claude', 'wsg-epic-sync', 'SKILL.md'), 'utf8')));
+    write(own, 'an older skill text\n');
+    assert.strictEqual(wsg(['refresh', '--ws', path.join(wsRoot, 'old-epic')]).code, 0);
+    it('wsg refresh leaves an older epic\'s skill file as it is', () => assert.strictEqual(read(own), 'an older skill text\n'));
+  }
+
   finished = true;
   console.log(failed === 0 ? `\n${passed} checks passed, ${skipped} blocks skipped\n` : `\nfailed: ${failed}, ${passed} passed, ${skipped} blocks skipped\n`);
   fs.rmSync(tmp, { recursive: true, force: true });
