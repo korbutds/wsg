@@ -5528,7 +5528,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     const env = { WS_ROOT: root };
     const VERSION = require(path.join(ROOT, 'package.json')).version;
     const ENTRY_KEYS = ['slug', 'kind', 'path', 'title', 'ticket', 'status', 'closed', 'archived', 'noCode', 'spec', 'checklist', 'forEpicPending', 'created', 'epic', 'legacy',
-      'problems', 'extraDirs', 'sources', 'archivedSources', 'tasks'];
+      'problems', 'extraDirs', 'sources', 'archivedSources', 'tasks', 'trackerTasks'];
     const listJson = (extra = {}) => {
       const r = wsg(['list', '--json'], { env: { ...env, ...extra } });
       let j = null;

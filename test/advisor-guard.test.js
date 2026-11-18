@@ -298,6 +298,11 @@ const BYPASS = [
   [bash(`${W} unarchive shop/cart --dry-run --json`), true, 'unarchive --dry-run: a plan'],
   [bash(`${W} unarchive shop/cart`), false, 'unarchive without --dry-run attaches worktrees'],
   [bash(`${W} unarchive --ws --dry-run`), false, '--ws swallows --dry-run'],
+  [bash(`${W} reorder cart --to 1 --ws shop --dry-run --json`), true, 'reorder --dry-run: a plan'],
+  [bash(`${W} reorder ACME-2 --before ACME-1 --dry-run`), true, 'reorder of a tracker task --dry-run: a plan'],
+  [bash(`${W} reorder cart --to 1 --ws shop`), false, 'reorder without --dry-run writes the epic'],
+  [bash(`${W} reorder cart --before --dry-run`), false, '--before swallows --dry-run'],
+  [bash(`${W} reorder cart --bogus --dry-run`), false, 'an unknown flag'],
   [bash(`${W} add [-][-] --dry-run`), false, 'a glob could become --'],
   // wsg new: only a dry run, read as the CLI reads it.
   [bash(`${W} new pay --epic shop`), false, 'new without --dry-run'],

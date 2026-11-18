@@ -1259,6 +1259,89 @@ async function cmdUnarchive(args) {
   return 0;
 }
 
+// `wsg reorder <item> (--before X | --after X | --to N)`: lib/reorder.js. The epic --ws names, else the
+// one you are in — or the epic of the task you are in. Planned with nothing touched, then the epic's
+// state and its tasks.md written in one transaction under the epic's lock; a refused plan is the same
+// document with --dry-run and without.
+async function cmdReorder(args) {
+  const { flags, pos } = parse(args, FLAGS.reorder, 1);
+  if (pos[0] === undefined || pos[0] === '') invalid(t('reorder.needItem'));
+  if (['--before', '--after', '--to'].filter((f) => flags[f] !== undefined).length !== 1) invalid(t('reorder.needWhere'));
+  const found = targetWs(flags['--ws']);
+  if (!found) invalid(t('cli.notInWorkspace'));
+  if (found.legacy) invalid(t('cli.legacyWorkspace', { ws: found.ws }));
+  const W = lib('workspace');
+  const R = lib('reorder');
+  const ui = lib('ui');
+  const read = (dir) => {
+    try {
+      return W.readState(dir);
+    } catch (e) {
+      return invalid(e.message);
+    }
+  };
+  let ws = fs.realpathSync(found.ws);
+  const st = read(ws);
+  if (st.kind === 'task' && st.epic) {
+    ws = W.epicOf(ws, st);
+    try {
+      W.epicState(ws);
+    } catch (e) {
+      invalid(e.message);
+    }
+  } else if (st.kind !== 'epic') invalid(t('reorder.epicOnly', { ws, kind: st.kind }));
+  currentWs = ws;
+  const dryRun = !!flags['--dry-run'];
+  if (!dryRun) lock(ws);
+  const state = read(ws);
+  const plan = R.planReorder(ws, state, pos[0], { before: flags['--before'], after: flags['--after'], to: flags['--to'] });
+  const json = J.active();
+  const result = (done = null) => ({
+    workspace: ws,
+    item: plan.item,
+    group: plan.group,
+    from: plan.from,
+    to: plan.to,
+    order: plan.order,
+    changed: plan.changed,
+    tasksMdUpdated: done ? done.tasksMdUpdated : plan.tasksMdUpdated,
+  });
+  if (json && plan.errors.length) return J.fail('invalid_input', plan.errors[0], { details: plan.errors, result: result(), warnings: plan.warnings });
+  if (dryRun && json) return J.succeed(result(), { warnings: plan.warnings });
+  if (dryRun) {
+    process.stdout.write(`${JSON.stringify({ ...result(), errors: plan.errors, warnings: plan.warnings }, null, 2)}\n`);
+    return plan.errors.length ? INVALID : 0;
+  }
+  if (plan.errors.length) {
+    for (const e of plan.errors) process.stderr.write(`wsg: ${e}\n`);
+    return INVALID;
+  }
+  if (!json) for (const w of plan.warnings) ui.warn(w);
+  if (!plan.changed) {
+    if (json) return J.succeed(result(), { warnings: plan.warnings });
+    ui.ok(t('reorder.same', { item: plan.item, to: plan.to }));
+    return 0;
+  }
+  let done;
+  try {
+    done = await R.applyReorder(ws, plan);
+  } catch (e) {
+    if (e && e.name === 'Interrupted') {
+      if (json) return J.fail('interrupted', cancelled(e), { ...J.rollbackOf(e, ws), warnings: plan.warnings });
+      process.stderr.write(`${cancelled(e)}\n`);
+      return 130;
+    }
+    // A write that failed: put back as far as it went (guarded() in lib/generate.js).
+    if (json && e && e.rollback) return J.fail('step_failed', String(e.message), { ...J.rollbackOf(e, ws), warnings: plan.warnings });
+    throw e;
+  }
+  if (json) return J.succeed(result(done), { warnings: plan.warnings });
+  ui.head(t('reorder.moved', { item: plan.item, from: plan.from, to: plan.to, n: plan.order.length }));
+  ui.info(t('reorder.order', { list: plan.order.join(', ') }));
+  if (done.tasksMdUpdated) ui.info(t(plan.group === 'tracker' ? 'reorder.trackerUpdated' : 'cli.statusTasksMd', { file: path.join(ws, 'tasks.md') }));
+  return 0;
+}
+
 // Every task of the epic refreshed after its change is written (generate.refreshEpicTasks), each under
 // its own lock; the caller holds the epic's. From here a stop signal stops only the refresh of the
 // tasks, and says so — the epic is not put back (lib/lock.js's handler would say it was). The tasks
@@ -1671,6 +1754,7 @@ const COMMANDS = {
   mcp: cmdMcp,
   archive: cmdArchive,
   unarchive: cmdUnarchive,
+  reorder: cmdReorder,
   'install-skills': cmdInstallSkills,
   // The 0.1 spellings, kept for one release.
   '--check': cmdCheck,
