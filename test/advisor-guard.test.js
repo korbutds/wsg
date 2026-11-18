@@ -18,8 +18,12 @@ const CLI = path.join(ROOT, 'bin', 'cli.js');
 const W = `node "${CLI}"`;
 
 let failed = 0;
+let passed = 0;
+let skipped = 0;
+// A block that can't run here (as root, a checkout without the tags, a file system without copy-on-write): said, and counted in the last line.
+const skip = (why) => { skipped++; console.log(`  skip  ${why}`); };
 const it = (name, fn) => {
-  try { fn(); console.log(`  ok    ${name}`); }
+  try { fn(); passed++; console.log(`  ok    ${name}`); }
   catch (e) { failed++; console.log(`  FAIL  ${name}\n        ${e.message}`); }
 };
 
@@ -306,6 +310,9 @@ const BYPASS = [
   [bash(`${W} new pay --bogus --dry-run`), false, 'unknown flag'],
   ...['--epic', '--sources', '--ticket', '--title', '--kind', '--skill'].map((f) => [bash(`${W} new pay ${f} --dry-run`), false, `${f} swallows --dry-run`]),
   [bash(`${W} new pay --epic shop # --dry-run`), false, '# comments out --dry-run'],
+  [bash(`${W} new spec-a --no-code`), false, 'new --no-code without --dry-run'],
+  [bash(`${W} new spec-a --no-code --dry-run`), true, 'new --no-code --dry-run: a plan'],
+  [bash(`${W} new spec-a --no-code=1 --dry-run`), false, '--no-code takes no value'],
   [bash(`${W} new pay --title "a & b" --dry-run`), false, 'a quoted operator only in add --verify and --note'],
   [bash(`${W} new pay --title "Pay fix" --dry-run`), true, 'a quoted title without an operator'],
   [bash(`${W} new pay --sources {api,web} --dry-run`), false, 'a brace only in add --branch-template'],
@@ -861,5 +868,5 @@ it('a guard in another package allows that package\'s CLI, not this one', () => 
 });
 it('JSON that is not an object: exit 2', () => assert.strictEqual(run('42').code, 2));
 
-console.log(failed === 0 ? '\nall checks passed\n' : `\nfailed: ${failed}\n`);
+console.log(failed === 0 ? `\n${passed} checks passed, ${skipped} blocks skipped\n` : `\nfailed: ${failed}, ${passed} passed, ${skipped} blocks skipped\n`);
 process.exit(failed === 0 ? 0 : 1);

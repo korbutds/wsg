@@ -92,8 +92,12 @@ const branches = (dir) => git(dir, ['for-each-ref', '--format=%(refname:short)',
 const worktrees = (dir) => git(dir, ['worktree', 'list', '--porcelain']).split('\n').filter((l) => l.startsWith('worktree ')).length;
 
 let failed = 0;
+let passed = 0;
+let skipped = 0;
+// A block that can't run here (as root, a checkout without the tags, a file system without copy-on-write): said, and counted in the last line.
+const skip = (why) => { skipped++; console.log(`  skip  ${why}`); };
 const it = (name, fn) => {
-  try { fn(); console.log(`  ok    ${name}`); }
+  try { fn(); passed++; console.log(`  ok    ${name}`); }
   catch (e) { failed++; console.log(`  FAIL  ${name}\n        ${e.message}`); }
 };
 const quietAsync = async (fn) => {
@@ -2084,7 +2088,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       assert.match(r.out, /OK +part of epic shop, the directory above/);
       assert.strictEqual(budget(r.out).epic, budget(cp.out).epic, r.out);
     });
-    if (process.getuid && process.getuid() === 0) console.log('  skip  an unreadable epic rules directory (running as root)');
+    if (process.getuid && process.getuid() === 0) skip('an unreadable epic rules directory (running as root)');
     else {
       it('an unreadable epic rules directory: WARN, the check goes on', () => {
         const dir = path.join(ep, '.claude', 'rules');
@@ -3533,7 +3537,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     fs.mkdirSync(old);
     const archive = spawnSync('sh', ['-c', `git -C "$1" archive v0.4.1 bin lib templates package.json | tar -x -C "$2"`, 'sh', ROOT, old], { encoding: 'utf8' });
     if (archive.status !== 0 || !fs.existsSync(path.join(old, 'bin', 'cli.js'))) {
-      console.log('  skip  0.4.1 is not in this checkout\'s history');
+      skip('0.4.1 is not in this checkout\'s history');
     } else {
       const oldWsg = (args) => {
         const r = spawnSync(process.execPath, [path.join(old, 'bin', 'cli.js'), ...args], { cwd: tmp, encoding: 'utf8', env: ENV });
@@ -3669,7 +3673,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     // On a case-insensitive file system (APFS by default) SAFE is the same directory as safe.
     const recased = path.join(path.dirname(wsS), path.basename(wsS).toUpperCase());
     if (fs.existsSync(recased)) self.push(['the workspace itself in other case', recased]);
-    else console.log('  skip  the workspace in other case: the file system is case-sensitive');
+    else skip('the workspace in other case: the file system is case-sensitive');
     for (const [name, dir] of self) {
       const r = add([dir, '--reference']);
       it(`${name} is not a source: exit 2`, () => {
@@ -4295,7 +4299,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       });
       it('and the plan says changes inside it are not protected', () =>
         assert.match(nmPlan().warnings.join('\n'), /node_modules wsg cloned into nm-repo is not checked/));
-    } else console.log('  skip  a cloned node_modules: copy-on-write cloning is macOS only');
+    } else skip('a cloned node_modules: copy-on-write cloning is macOS only');
     fs.mkdirSync(path.join(wsX, 'nm-repo', 'pkg', 'node_modules'), { recursive: true });
     fs.writeFileSync(path.join(wsX, 'nm-repo', 'pkg', 'node_modules', 'y.js'), '\n');
     it('one installed later does', () => assert.deepStrictEqual(nmPlan().ignored, ['pkg/node_modules/']));
@@ -5180,7 +5184,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     const run = (args, opts = {}) => wsg(['new', ...args], { env, ...opts, env: { ...env, ...(opts.env || {}) } });
     const doc = (r) => { try { return JSON.parse(r.out); } catch { return null; } };
     const VERSION = require(path.join(ROOT, 'package.json')).version;
-    const RESULT_KEYS = ['workspace', 'kind', 'slug', 'title', 'epic', 'ticket', 'ticketText', 'status', 'sources', 'launched'];
+    const RESULT_KEYS = ['workspace', 'kind', 'slug', 'title', 'epic', 'ticket', 'ticketText', 'status', 'noCode', 'sources', 'launched'];
     const SOURCE_KEYS = ['name', 'mode', 'path', 'workspacePath', 'branch', 'base', 'target', 'verify', 'note', 'carry', 'cloneNm', 'from', 'task'];
     const envelope = (r, what) => {
       const j = doc(r);
@@ -5214,7 +5218,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       const j = envelope(dry, 'dry');
       assert.deepStrictEqual([j.ok, j.dryRun], [true, true]);
       assert.deepStrictEqual(j.result, { workspace: path.join(root, 'first'), kind: 'task', slug: 'first', title: 'First task',
-        epic: null, ticket: 'ACME-123', ticketText: 'ACME-123', status: 'open', sources: [], launched: false });
+        epic: null, ticket: 'ACME-123', ticketText: 'ACME-123', status: 'open', noCode: false, sources: [], launched: false });
       assert.ok(!fs.existsSync(path.join(root, 'first')));
     });
     // One rule for the ticket: the key parsed from what was given, or null; the text as given.
@@ -5523,7 +5527,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     const root = path.join(tmp, 'list-root');
     const env = { WS_ROOT: root };
     const VERSION = require(path.join(ROOT, 'package.json')).version;
-    const ENTRY_KEYS = ['slug', 'kind', 'path', 'title', 'ticket', 'status', 'closed', 'archived', 'forEpicPending', 'created', 'epic', 'legacy',
+    const ENTRY_KEYS = ['slug', 'kind', 'path', 'title', 'ticket', 'status', 'closed', 'archived', 'noCode', 'forEpicPending', 'created', 'epic', 'legacy',
       'problems', 'extraDirs', 'sources', 'archivedSources', 'tasks'];
     const listJson = (extra = {}) => {
       const r = wsg(['list', '--json'], { env: { ...env, ...extra } });
@@ -7468,7 +7472,7 @@ wait`;
     fs.mkdirSync(old);
     const archive = spawnSync('sh', ['-c', `git -C "$1" archive c9d9fc7 lib | tar -x -C "$2"`, 'sh', ROOT, old], { encoding: 'utf8' });
     if (archive.status !== 0 || !fs.existsSync(path.join(old, 'lib', 'generate.js'))) {
-      console.log('  skip  0.1.4 is not in this checkout\'s history');
+      skip('0.1.4 is not in this checkout\'s history');
     } else {
       const oldGen = require(path.join(old, 'lib', 'generate.js'));
       const oldCheck = require(path.join(old, 'lib', 'check.js'));
@@ -7517,7 +7521,7 @@ wait`;
   }
   fs.rmSync(tmp, { recursive: true, force: true });
 
-  console.log(failed === 0 ? '\nall checks passed\n' : `\nfailed: ${failed}\n`);
+  console.log(failed === 0 ? `\n${passed} checks passed, ${skipped} blocks skipped\n` : `\nfailed: ${failed}, ${passed} passed, ${skipped} blocks skipped\n`);
   finished = true;
   process.exit(failed === 0 ? 0 : 1);
 })().catch((e) => {

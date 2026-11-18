@@ -228,7 +228,9 @@ For each `wsg add`, `wsg remove` or `wsg new … --epic` command in the brief:
   of its own, and always for a subdirectory of a repository or in a process workspace.
   `--reference` is only for a directory **not** under git (specs, exports, designs): wsg refuses it
   for a git repository and refuses a directory outside git without it. At least one git repository
-  is required.
+  is required — except in a task without code (`wsg new --no-code`, `"noCode": true` in its state):
+  no repository, no branch; `--worktree` is refused there, `--link` and `--reference` attach
+  material to read, and its Definition of done is what the owner checks instead of a command.
 - **Branches.** An existing local branch is attached as it is, with its commits; one only on origin
   is continued from `origin/<branch>` and tracks it; `--dry-run` shows which (`start`) and warns
   when local and origin differ. `--reset-to-base` starts the branch over — the old head is saved in

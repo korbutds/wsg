@@ -87,6 +87,9 @@ const writeState = (ws, st) => fs.writeFileSync(path.join(ws, '.claude', 'wsg.js
 const read = (...p) => fs.readFileSync(path.join(...p), 'utf8');
 
 let failed = 0;
+let skipped = 0;
+// A block that can't run here (as root, a checkout without the tags, a file system without copy-on-write): said, and counted in the last line.
+const skip = (why) => { skipped++; console.log(`  skip  ${why}`); };
 let passed = 0;
 const it = (name, fn) => {
   try { fn(); passed++; console.log(`  ok    ${name}`); }
@@ -1041,7 +1044,11 @@ function task(slug, sources = [], extra = []) {
   console.log('\nwsg archive: a stop in the middle of git\'s removal');
   {
     const gitLib = require(path.join(ROOT, 'lib', 'git.js'));
-    for (const [what, alsoGit, rollback] of [['tracked files deleted', false, 'done'], ['its .git deleted too', true, 'incomplete']]) {
+    for (const [what, alsoGit, rollback] of [
+      ['tracked files deleted', false, 'done'],
+      ['its .git file deleted too', 'file', 'done'],
+      ['its .git file and git\'s directory for it deleted', 'admin', 'incomplete'],
+    ]) {
       const repo = makeRepo();
       const slug = `stop-${repoN}`;
       const ws = task(slug, [[repo, ['--branch', `feat/${slug}`]]]);
@@ -1054,7 +1061,11 @@ function task(slug, sources = [], extra = []) {
           // git was half-way through deleting the worktree when Ctrl+C came.
           fs.rmSync(path.join(wt, 'a.ts'));
           fs.rmSync(path.join(wt, 'pkg'), { recursive: true });
-          if (alsoGit) fs.rmSync(path.join(wt, '.git'));
+          if (alsoGit) {
+            const admin = fs.readFileSync(path.join(wt, '.git'), 'utf8').replace(/^gitdir: /, '').trim();
+            fs.rmSync(path.join(wt, '.git'));
+            if (alsoGit === 'admin') fs.rmSync(admin, { recursive: true });
+          }
           return { ok: false, out: '', stdout: '', status: null, signal: 'SIGINT' };
         }
         return realRun(dir, args);
@@ -1071,9 +1082,17 @@ function task(slug, sources = [], extra = []) {
       });
       it(`a stop with ${what}: the state as it was`, () => assert.strictEqual(read(ws, '.claude', 'wsg.json'), stateBefore));
       if (rollback === 'done') {
-        it('the deleted tracked files are back, the worktree clean', () => {
+        it(`a stop with ${what}: the deleted tracked files are back, the worktree clean`, () => {
           assert.ok(fs.existsSync(path.join(wt, 'a.ts')) && fs.existsSync(path.join(wt, 'pkg', 'index.ts')));
           assert.strictEqual(git(wt, ['status', '--porcelain']), '');
+          assert.strictEqual(git(wt, ['branch', '--show-current']), `feat/${slug}`);
+        });
+      }
+      if (alsoGit === 'file') {
+        it('the .git file points at git\'s directory again: git lists the worktree, prune keeps it', () => {
+          git(repo, ['worktree', 'prune']);
+          assert.strictEqual(worktreeCount(repo), 2);
+          assert.strictEqual(fs.realpathSync(git(wt, ['rev-parse', '--show-toplevel'])), fs.realpathSync(wt));
         });
       }
     }
@@ -1183,6 +1202,19 @@ function task(slug, sources = [], extra = []) {
     it('a skip-worktree file made executable: refused, the bit is an edit', () => {
       assert.strictEqual(x.code, 2, x.all);
       assert.deepStrictEqual(x.doc.result.blockers.dirty[0].changes, ['S  a.ts']);
+    });
+    // git itself ignores the executable bit with core.fileMode false (a FAT or a shared volume).
+    git(wt, ['config', 'core.fileMode', 'false']);
+    const fm = json(['archive', 'amend', '--dry-run']);
+    it('core.fileMode false: the bit alone is no edit, the plan goes', () => {
+      assert.strictEqual(fm.code, 0, fm.all);
+      assert.deepStrictEqual(fm.doc.result.blockers.dirty, []);
+    });
+    fs.appendFileSync(path.join(wt, 'a.ts'), 'edited\n');
+    const fe = json(['archive', 'amend', '--dry-run']);
+    it('core.fileMode false: changed bytes are still an edit', () => {
+      assert.strictEqual(fe.code, 2, fe.all);
+      assert.deepStrictEqual(fe.doc.result.blockers.dirty[0].changes, ['S  a.ts']);
     });
   }
 
@@ -1621,7 +1653,7 @@ function task(slug, sources = [], extra = []) {
   }
 
   finished = true;
-  console.log(failed ? `\n${failed} failed, ${passed} passed` : `\nall ${passed} checks passed`);
+  console.log(failed === 0 ? `\n${passed} checks passed, ${skipped} blocks skipped\n` : `\nfailed: ${failed}, ${passed} passed, ${skipped} blocks skipped\n`);
   fs.rmSync(tmp, { recursive: true, force: true });
   process.exitCode = failed ? 1 : 0;
 })().catch((e) => {

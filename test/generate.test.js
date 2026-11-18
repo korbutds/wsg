@@ -49,8 +49,12 @@ const wsZsh = path.join(tmp, 'wsg.zsh');
 fs.writeFileSync(wsZsh, renderWs('en'));
 
 let failed = 0;
+let passed = 0;
+let skipped = 0;
+// A block that can't run here (as root, a checkout without the tags, a file system without copy-on-write): said, and counted in the last line.
+const skip = (why) => { skipped++; console.log(`  skip  ${why}`); };
 const it = (name, fn) => {
-  try { fn(); console.log(`  ok    ${name}`); }
+  try { fn(); passed++; console.log(`  ok    ${name}`); }
   catch (e) { failed++; console.log(`  FAIL  ${name}\n        ${e.message}`); }
 };
 // Generator output is noise in a test run — it gets in the way of reading results.
@@ -1326,7 +1330,7 @@ process.on('exit', () => {
   try { execFileSync('git', ['-C', repo, 'worktree', 'remove', '--force', path.join(ws, 'api')], { stdio: 'ignore' }); } catch {}
   fs.rmSync(tmp, { recursive: true, force: true });
 
-  console.log(failed === 0 ? '\nall checks passed\n' : `\nfailed: ${failed}\n`);
+  console.log(failed === 0 ? `\n${passed} checks passed, ${skipped} blocks skipped\n` : `\nfailed: ${failed}, ${passed} passed, ${skipped} blocks skipped\n`);
   finished = true;
   process.exit(failed === 0 ? 0 : 1);
 })().catch((e) => {

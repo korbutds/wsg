@@ -70,6 +70,15 @@ its own. It attaches its repositories as links, with the defaults its tasks reus
 refuses an epic, a team belongs in a task. In section 5, the first step of the work is starting a
 task (`wsg guide epic` → Starting a task).
 
+**A task without code** (`.claude/wsg.json` has `"noCode": true`, made with `wsg new --no-code`):
+a spec, a research, a decision — no repository, no branch. Go through section 1 as for a task, but
+the **Definition of done** must be something the owner can check by hand: "the spec is approved by
+the owner", "the decision and its options are in `notes.md`", "the question is answered with
+evidence". It replaces the verification command: `wsg check` warns while it says `FILL IN`. Skip
+section 2 and section 3: material to read is attached with `wsg add <path> --link` (a repository) or
+`wsg add <dir> --reference` (a directory outside git) after "ok"; `--worktree` is refused. The
+Verification block says "None" by design: leave it.
+
 **A task of an epic** (`AGENTS.md` has a `<!-- wsg:epic -->` block) is set up like any task, but
 read `../knowledge.md` first: it may answer questions before you ask them. The ticket may already
 be there, the epic's Owner rules are in the `<!-- wsg:epic-rules -->` block (wsg renders it; never
@@ -82,7 +91,8 @@ sets it to review (`wsg status <epic>/<task> review`); done is the epic session'
 
 ## 2. Sources
 
-At least one git repository is required; setup is not finished without one. For each repository
+At least one git repository is required; setup is not finished without one (a task without code
+skips this section). For each repository
 the owner names:
 
 1. **Inspect it first:**
@@ -191,7 +201,8 @@ Roles left out are not remembered: a later `wsg team fullstack` without `--witho
 ## 5. Finishing
 
 1. Run `wsg check`. Fix every FAIL; a WARN you can't fix, explain to the owner.
-   "setup not finished" disappears once a git repository is attached and `## Why` is filled in.
+   "setup not finished" disappears once a git repository is attached and `## Why` is filled in
+   (for a task without code, once `## Why` is filled in; its Definition of done must be too).
 2. Update `notes.md` → "Current context": remove "Setup not finished", write one line on where the
    work stands and what the first step of the work is (usually: reconnaissance, no edits).
 3. Show the owner a short summary: the task in one line, the sources with their branches, the

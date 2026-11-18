@@ -39,8 +39,12 @@ const wsg = (args, { cwd = tmp, env = {}, input = '' } = {}) => {
 const jsonOf = (r) => { try { return JSON.parse(r.out); } catch { return null; } };
 
 let failed = 0;
+let passed = 0;
+let skipped = 0;
+// A block that can't run here (as root, a checkout without the tags, a file system without copy-on-write): said, and counted in the last line.
+const skip = (why) => { skipped++; console.log(`  skip  ${why}`); };
 const it = (name, fn) => {
-  try { fn(); console.log(`  ok    ${name}`); } catch (e) { failed++; console.log(`  FAIL  ${name}\n        ${e.message}`); }
+  try { fn(); passed++; console.log(`  ok    ${name}`); } catch (e) { failed++; console.log(`  FAIL  ${name}\n        ${e.message}`); }
 };
 let finished = false;
 process.on('exit', () => {
@@ -627,7 +631,7 @@ const MCP = { servers: [STDIO, HTTP], disabled: { claude: ['github', 'plugin:acm
   }
 
   console.log('\nwsg mcp: a failed write is rolled back');
-  if (asRoot) console.log('  skip  running as root: a read-only file does not stop a write');
+  if (asRoot) skip('running as root: a read-only file does not stop a write');
   else {
     const { env, ep } = epicRoot('rollback-root');
     newTask(env, 'cart');
@@ -759,7 +763,7 @@ const MCP = { servers: [STDIO, HTTP], disabled: { claude: ['github', 'plugin:acm
   }
 
   fs.rmSync(tmp, { recursive: true, force: true });
-  console.log(failed === 0 ? '\nall checks passed\n' : `\nfailed: ${failed}\n`);
+  console.log(failed === 0 ? `\n${passed} checks passed, ${skipped} blocks skipped\n` : `\nfailed: ${failed}, ${passed} passed, ${skipped} blocks skipped\n`);
   finished = true;
   process.exit(failed === 0 ? 0 : 1);
 })().catch((e) => {

@@ -78,7 +78,10 @@ conversion — there's no use case for it.
 ## Sources
 
 A source is what the task works with, attached by `wsg add`. A workspace needs at least one git
-repository: until it has one, `wsg check` warns that setup is not finished.
+repository: until it has one, `wsg check` warns that setup is not finished. A task without code
+(`wsg new --no-code`, `"noCode": true` in its state) is the exception: it has no repository and no
+branch — `--worktree` is refused, a linked repository gets a read-only rule, and there is no `repo`
+pointer and no `mr-target-branch.txt`; `wsg check` asks for its Definition of done instead.
 
 | Type | Attached as |
 |---|---|

@@ -37,8 +37,12 @@ const wsg = (args, { cwd = tmp, env = {}, input = '' } = {}) => {
 const jsonOf = (r) => { try { return JSON.parse(r.out); } catch { return null; } };
 
 let failed = 0;
+let passed = 0;
+let skipped = 0;
+// A block that can't run here (as root, a checkout without the tags, a file system without copy-on-write): said, and counted in the last line.
+const skip = (why) => { skipped++; console.log(`  skip  ${why}`); };
 const it = (name, fn) => {
-  try { fn(); console.log(`  ok    ${name}`); } catch (e) { failed++; console.log(`  FAIL  ${name}\n        ${e.message}`); }
+  try { fn(); passed++; console.log(`  ok    ${name}`); } catch (e) { failed++; console.log(`  FAIL  ${name}\n        ${e.message}`); }
 };
 let finished = false;
 process.on('exit', () => {
@@ -674,7 +678,7 @@ const ITEMS = [
       assert.match(read(path.join(ep, 'held', 'AGENTS.md')), /\[link\] example\.com\/spec/);
     });
 
-    if (asRoot) console.log('  skip  the read-only rollback tests: running as root');
+    if (asRoot) skip('the read-only rollback tests: running as root');
     else {
       // A failure after the copy (the epic's AGENTS.md can't be written): everything put back.
       const src = path.join(tmp, 'rollback-spec.md');
@@ -861,7 +865,7 @@ const ITEMS = [
         assert.strictEqual(r18.code, 0, r18.all);
         assert.strictEqual(read(path.join(ep, 'context', 'notes', 'fifo.md')), 'from a fifo\n');
       });
-    } else console.log('  skip  no mkfifo here');
+    } else skip('no mkfifo here');
     if (!asRoot) {
       const nf = path.join(ep, 'context', 'notes', 'deploy.md');
       fs.chmodSync(nf, 0o000);
@@ -896,7 +900,7 @@ const ITEMS = [
     fs.rmSync(path.join(ep, 'broken'), { recursive: true });
 
     // Rollback of remove and of note --replace: the epic's AGENTS.md can't be written.
-    if (asRoot) console.log('  skip  the read-only rollback tests: running as root');
+    if (asRoot) skip('the read-only rollback tests: running as root');
     else {
       const snap = tree(ep);
       fs.chmodSync(path.join(ep, 'AGENTS.md'), 0o444);
@@ -1061,7 +1065,7 @@ const ITEMS = [
   }
 
   fs.rmSync(tmp, { recursive: true, force: true });
-  console.log(failed === 0 ? '\nall checks passed\n' : `\nfailed: ${failed}\n`);
+  console.log(failed === 0 ? `\n${passed} checks passed, ${skipped} blocks skipped\n` : `\nfailed: ${failed}, ${passed} passed, ${skipped} blocks skipped\n`);
   finished = true;
   process.exit(failed === 0 ? 0 : 1);
 })().catch((e) => {

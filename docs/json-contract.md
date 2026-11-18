@@ -78,10 +78,11 @@ settings file that can't be read or an unknown command is an envelope too.
 
 ### new
 
-`{workspace, kind, slug, title, epic, ticket, ticketText, status, sources, launched}`. `epic` is
+`{workspace, kind, slug, title, epic, ticket, ticketText, status, noCode, sources, launched}`. `epic` is
 the epic's slug or `null`; `ticket` the parsed key, `ticketText` the text as given (a standalone
 task keeps its ticket only in `AGENTS.md`, not in its state, so `list` gives it `ticket: null`); `status` is
-`"open"` (`null` for an epic); `sources` are the sources taken from the epic, as planned or
+`"open"` (`null` for an epic); `noCode` is `true` for `--no-code` (a task without a repository:
+it takes no source of its epic), else `false`; `sources` are the sources taken from the epic, as planned or
 attached; `launched` is always `false`.
 
 ### add
@@ -123,6 +124,7 @@ tasks and processes in `WS_ROOT` — each epic's tasks in its `tasks`. Each entr
 | `status` | `open`, `review`, `done`, `archived` for a task or a process — or a value a later wsg wrote, as it is (`problems` says so); `null` for an epic, a 0.1 workspace and one whose state does not read |
 | `closed` | the UTC date it was closed, while done; else `null` |
 | `archived` | the UTC date `wsg archive` took it, an epic included; else `null` |
+| `noCode` | `true` for a task made with `wsg new --no-code` (no repository, no branch: `wsg add` takes `--link` and `--reference` only); `false` for any other workspace whose state reads; `null` for a 0.1 workspace and one whose state does not read |
 | `forEpicPending` | for a task of an epic: `true` while `## For the epic` in its `notes.md` has entries (lines outside HTML comments), i.e. not merged into the epic yet; `null` for anything else |
 | `created` | the UTC date the workspace was made, from the state |
 | `epic` | the epic its state names, or `null` |

@@ -92,8 +92,12 @@ const block = (text, name) => {
 const withoutBlock = (text, name) => text.replace(new RegExp(`^<!-- wsg:${name} -->\\n[\\s\\S]*?\\n<!-- /wsg:${name} -->\\n`, 'm'), '');
 
 let failed = 0;
+let passed = 0;
+let skipped = 0;
+// A block that can't run here (as root, a checkout without the tags, a file system without copy-on-write): said, and counted in the last line.
+const skip = (why) => { skipped++; console.log(`  skip  ${why}`); };
 const it = (name, fn) => {
-  try { fn(); console.log(`  ok    ${name}`); }
+  try { fn(); passed++; console.log(`  ok    ${name}`); }
   catch (e) { failed++; console.log(`  FAIL  ${name}\n        ${e.message}`); }
 };
 
@@ -507,7 +511,7 @@ try {
     const r = wsg(['team', 'fullstack'], { cwd: ws });
     fs.chmodSync(path.join(ws, 'AGENTS.md'), 0o644);
     if (process.getuid && process.getuid() === 0) {
-      console.log('  skip  running as root: a read-only file is still writable');
+      skip('running as root: a read-only file is still writable');
     } else {
       it('the run fails and rolls back', () => {
         assert.strictEqual(r.code, 1, r.all);
@@ -908,5 +912,5 @@ try {
   fs.rmSync(tmp, { recursive: true, force: true });
 }
 
-console.log(failed === 0 ? '\nall checks passed\n' : `\nfailed: ${failed}\n`);
+console.log(failed === 0 ? `\n${passed} checks passed, ${skipped} blocks skipped\n` : `\nfailed: ${failed}, ${passed} passed, ${skipped} blocks skipped\n`);
 process.exit(failed === 0 ? 0 : 1);

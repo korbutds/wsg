@@ -216,6 +216,11 @@ async function cmdNew(args) {
   }
   const dryRun = !!flags['--dry-run'];
   if (flags['--sources'] !== undefined && flags['--epic'] === undefined) invalid(t('cli.sourcesNeedEpic'));
+  // A task without code: no repository, no branch. In an epic it takes none of the epic's sources;
+  // --sources none says the same, a list of them is refused.
+  const noCode = !!flags['--no-code'];
+  if (noCode && kind !== 'task') invalid(t('cli.noCodeKind', { kind }));
+  if (noCode && flags['--sources'] !== undefined && flags['--sources'].trim().toLowerCase() !== 'none') invalid(t('cli.noCodeSources'));
   // A task of an epic: the epic is named, never taken from the current directory. It is a workspace
   // right in WS_ROOT, where `<epic>/<task>` resolves; one elsewhere is refused.
   let epicWs = '';
@@ -259,6 +264,7 @@ async function cmdNew(args) {
     skillName: flags['--skill'] || (kind === 'process' ? pos[0] : ''),
     // The digest of the owner's rules goes in whenever the file exists: the agent fills it during setup.
     personalRules: !!(cfg.WSG_GLOBAL_MEMORY && fs.existsSync(cfg.WSG_GLOBAL_MEMORY)),
+    ...(noCode ? { noCode: true } : {}),
   };
   const generate = lib('generate');
   const json = J.active();
@@ -278,14 +284,14 @@ async function cmdNew(args) {
   const taken = { specs: [], plans: [], warnings: [], notes: [] };
   if (epic && planned) {
     const vars = { slug: meta.slug, ticket: generate.ticketKey(meta), given: (flags['--ticket'] || '').trim() };
-    let names = epicSourcesOf(epic, flags['--sources']);
+    let names = noCode ? [] : epicSourcesOf(epic, flags['--sources']);
     // The one taken by default, when its branch needs a ticket the task has none of: left for later,
     // not a refusal of a task nobody asked a source for. Asked for by name, it is refused.
     if (flags['--sources'] === undefined && names.length && !vars.ticket && S.epicSource(epic, names[0]).task.branch.includes('{ticket}')) {
       taken.warnings.push(t(vars.given ? 'cli.epicDefaultTicketNoKey' : 'cli.epicDefaultNeedsTicket', { name: names[0], ticket: vars.given }));
       names = [];
     }
-    const state = { kind: 'task', epic: { slug: epic.slug }, sources: [] };
+    const state = { kind: 'task', epic: { slug: epic.slug }, sources: [], ...(noCode ? { noCode: true } : {}) };
     // The task is not made yet: its real path is the epic's, and its name.
     const home = path.join(fs.realpathSync.native(epicWs), meta.slug);
     for (const name of names) {
@@ -330,6 +336,7 @@ async function cmdNew(args) {
     ticket: generate.ticketKey(meta) || null,
     ticketText: (flags['--ticket'] || '').trim() || null,
     status: kind === 'epic' ? null : 'open',
+    noCode,
     sources: sources.map((x) => sourceResult(target, x)),
     launched: false,
   });
@@ -383,6 +390,7 @@ async function cmdNew(args) {
   // Under --json no agent is started: stdout is the envelope, and the caller starts it.
   if (json) return J.succeed(result(W.readState(ws).sources));
   ui.head(t(epicWs && taken.specs.length ? 'cli.createdWithSources' : 'cli.created', { ws }));
+  if (noCode) ui.info(t('cli.noCodeNext'));
   if (epicWs) {
     ui.info(t('cli.epicTaskNext', { epic: path.basename(epicWs) }));
     // As attached: a worktree on the branch it got, a link, a reference.
@@ -390,7 +398,7 @@ async function cmdNew(args) {
     const shown = got.map((s) => t(`cli.epicAs.${s.reference ? 'reference' : s.mode}`, { name: s.name, branch: s.branch }));
     if (got.length) ui.info(t('cli.epicAttached', { list: shown.join(', ') }));
     // Without a git repository the task is not set up: check says so until one is attached.
-    if (!got.some((s) => !s.reference)) ui.info(t('cli.epicNoGit', { list: epic.sources.map((s) => s.name).join(', ') || '—' }));
+    if (!noCode && !got.some((s) => !s.reference)) ui.info(t('cli.epicNoGit', { list: epic.sources.map((s) => s.name).join(', ') || '—' }));
   }
 
   const L = lib('launch');
