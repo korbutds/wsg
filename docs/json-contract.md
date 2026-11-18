@@ -136,7 +136,8 @@ tasks and processes in `WS_ROOT` — each epic's tasks in its `tasks`. Each entr
 | `extraDirs` | the directories a session reads besides its own: the epic's for a task of one, then its link and reference paths |
 | `sources` | Source objects; `[]` while archived |
 | `archivedSources` | while archived, the Source objects as they were attached, which `wsg unarchive` attaches again; else `[]` |
-| `tasks` | an epic's tasks, entries like this one; `[]` for anything else |
+| `tasks` | an epic's tasks, entries like this one, in the epic's order: the slugs its `taskOrder` names first (`wsg reorder`), the rest by name; `[]` for anything else |
+| `trackerTasks` | an epic's tracker tasks: the list items under `## Other tasks` in its `tasks.md` (not in a fenced block), in their order, `[{id, text}]` — `id` the tracker key the item starts with (`ACME-12`, `#12`), or `null` for an item without one; `text` the item's first line, its bullet dropped. A table or other text there gives no items; a `tasks.md` without the section, or none, gives `[]`, as does anything but an epic |
 
 ### status and close
 
@@ -240,6 +241,39 @@ says.
 | `restores` | `[{name, mode, source, path, branch}]`, the sources attached again; `branch` `null` for a link |
 | `tasks` | an epic's tasks it brings back: `[{task, workspace, status, closed, changed, restores}]` |
 | `tasksMdUpdated` | whether a `tasks.md` block changed (planned, in a dry run) |
+
+### reorder
+
+`wsg reorder <item> (--before X | --after X | --to N)`: an epic's tasks, in two groups that never mix.
+The task directories are ordered by `taskOrder` in the epic's `.claude/wsg.json` (a list of slugs,
+each once; a slug no task has any more is ignored, a task it does not name comes after the ones it
+does, by name), which the `<!-- wsg:tasks -->` block of `tasks.md`, `wsg list` and `wsg check` follow.
+The tracker tasks are the list items under `## Other tasks` (the heading in any case, a `(synced …)`
+or a `:` after it) in `tasks.md`, each named by the key it starts with, case ignored, and moved with its indented lines; the rest of the section (blank lines,
+comments at column 0) stays where it is. In a task of an epic, its epic is the one acted on. The state
+and `tasks.md` are written in one transaction under the epic's lock (`busy` when another command holds
+it; a dry run takes none). Refused, `invalid_input` with `result` present, the same document with
+`--dry-run` and without: an item or a target the epic has in neither group; a task directory whose
+name is no slug (renamed by hand: the others are ordered without it, and a warning names it); the two in different groups; a move relative to itself; `--to` outside
+1..the group's size; an archived epic; for a tracker task, no section, a section with an item
+without a key, a key twice, a table, other text (a fenced block at column 0 too) or a comment or a
+fence still open where the section ends (there is no `#N` addressing by position: `#12` is a key).
+Refused before the plan, `invalid_input` with `result` `null`: no item, not exactly one of
+`--before`, `--after`, `--to`, an unknown flag, a workspace that is not an epic or a task of one.
+Moving a task where it is already is a no-op, `changed` `false`. The section's line ends are kept:
+each line keeps its own, a line moved off the end gets the file's, and the file ends as it did.
+
+`{workspace, item, group, from, to, order, changed, tasksMdUpdated}`
+
+| Key | Value |
+|---|---|
+| `workspace` | the epic |
+| `item` | the task's slug, or the tracker key as `tasks.md` writes it; as given while the plan is refused before it is found |
+| `group` | `task` or `tracker`; `null` when the item was not found |
+| `from`, `to` | its position in its group before and after, from 1; `null` when refused before they are known |
+| `order` | the group's order after the move: slugs or keys; `[]` when refused before it is known |
+| `changed` | `false` when it is there already: nothing written |
+| `tasksMdUpdated` | whether `tasks.md` changed (planned, in a dry run): the block for a task, the section for a tracker task |
 
 ### context add, context note, context remove
 

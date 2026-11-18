@@ -118,6 +118,10 @@ From the epic session (`/wsg-epic-sync` in Claude Code), and as step 1 of Starti
    (`- KEY-12 summary — status, assignee`). Keep the order the items already have, update them in
    place, and append new ones at the end; no table, no other bullets in the section. The
    `<!-- wsg:tasks -->` block lists the tasks in this directory and is wsg's: `wsg refresh` renders it.
+   The owner sets the order of either list with `wsg reorder` (`wsg reorder <task> --to 1`,
+   `wsg reorder ACME-12 --before ACME-7`): keep it — never re-sort the items, and do not edit the
+   block by hand. It reads the items by their keys, so an item without a key, a key twice, a table
+   or other text in the section makes it refuse.
 3. A child issue without a repository to change (a spec, a research) is listed like any other. When
    the owner wants it started, it is a question, never your call: `--no-code`, a repository, or not
    now (Starting a task).

@@ -118,7 +118,7 @@ change. Every `wsg add` re-renders from it:
 | `.claude/skills/<skill>/SKILL.md` | in a process workspace with a team: `<!-- wsg:team -->` — one pointer line to `team/workflow.md`, written by `wsg team` after the first `# ` heading |
 | `.claude/settings.json` | `permissions.additionalDirectories`; in an epic and each task of it, `enabledMcpjsonServers` (the epic's MCP servers) and `deniedMcpServers` (the global ones it turns off), from the epic's `.claude/wsg.json` (`wsg mcp`), the owner's own entries kept after wsg's — `mcpRendered` in each workspace's state records which are wsg's; every other key stays |
 | `.mcp.json` | in an epic: the epic's MCP servers, secrets as `${VAR}`; the owner's own servers and keys stay |
-| `tasks.md` | in an epic: `<!-- wsg:tasks -->` — the epic's tasks in its directory, each with its status marker |
+| `tasks.md` | in an epic: `<!-- wsg:tasks -->` — the epic's tasks in its directory, each with its status marker, in the order `taskOrder` in its state keeps (`wsg reorder`) |
 | whole files | `.claude/rules/<name>.md` (written when its source is attached), `mr-target-branch.txt`, the `repo` pointer (not in an epic) |
 
 Text that people and agents write — why, definition of done, out of scope, invariants, links, the

@@ -103,7 +103,7 @@ process.on('exit', () => {
     it('AGENTS.md: no repository by design, Verification is None, the DoD asks what the owner checks', () => {
       const a = read(ws, 'AGENTS.md');
       assert.match(a, /task workspace without code \(`wsg new --no-code`\)/);
-      assert.match(a, /<!-- wsg:verification -->\n- None: no code in this task; done is what the owner can check - see Definition of done\.\n<!-- \/wsg:verification -->/);
+      assert.match(a, /<!-- wsg:verification -->\n- None: no code in this task; done is what the owner can check — see Definition of done\.\n<!-- \/wsg:verification -->/);
       assert.match(a, /## Definition of done\n\nFILL IN: what the owner can check/);
     });
     it('README: no sources by design', () => assert.match(read(ws, 'README.md'), /None: no code in this task/));
@@ -222,6 +222,33 @@ process.on('exit', () => {
     });
   }
 
+  console.log('\nwsg promote of a task without code: the read-only rule');
+  {
+    const T = require(path.join(ROOT, 'lib', 'templates.js'));
+    const repo = makeRepo('shop-docs');
+    for (const slug of ['nc-rule', 'nc-edited']) {
+      assert.strictEqual(wsg(['new', slug, '--no-code', '--no-launch']).code, 0);
+      assert.strictEqual(wsg(['add', repo, '--link', '--ws', slug]).code, 0);
+    }
+    const rule = (slug) => path.join(wsRoot, slug, '.claude', 'rules', 'shop-docs.md');
+    write(rule('nc-edited'), `${read(rule('nc-edited'))}- my own note\n`);
+    const edited = read(rule('nc-edited'));
+    const p1 = wsg(['promote', 'nc-rule', '--skill', 'shop-sync']);
+    it('wsg\'s own unedited read-only rule becomes an ordinary link\'s rule', () => {
+      assert.strictEqual(p1.code, 0, p1.all);
+      const text = read(rule('nc-rule'));
+      assert.doesNotMatch(text, /read only: this task changes no code/);
+      assert.strictEqual(text, T.ruleMd(readState(path.join(wsRoot, 'nc-rule')).sources[0]));
+      assert.match(p1.all, /\.claude\/rules\/shop-docs\.md: the read-only rule of the task without code is now the rule of a shared checkout/);
+    });
+    const p2 = wsg(['promote', 'nc-edited', '--skill', 'shop-sync2']);
+    it('an edited one is kept as it is, and named', () => {
+      assert.strictEqual(p2.code, 0, p2.all);
+      assert.strictEqual(read(rule('nc-edited')), edited);
+      assert.match(p2.all, /\.claude\/rules\/shop-docs\.md was edited and still may say the repository is read only/);
+    });
+  }
+
   console.log('\nthe state');
   {
     const base = { version: 2, kind: 'task', slug: 'x', title: 'x', status: 'open', personalRules: false, created: '2026-11-01', sources: [] };
@@ -290,6 +317,10 @@ process.on('exit', () => {
       ['FILL IN later in the text is an item', '- [ ] do not FILL IN the form by hand\n- [x] see FILL IN rules\n', [1, 2]],
       ['an inline code span hides <!--: no comment opens', '- [ ] the `<!--` marker is escaped\n- [x] next\n', [1, 2]],
       ['an inline code span with a fence inside is no fence', '- [ ] run `\u0060\u0060\u0060 x`\n- [ ] next\n', [0, 2]],
+      ['a double-backtick span holding a single backtick hides <!--', '- [ ] the `` a`<!-- b `` span\n- [x] next\n', [1, 2]],
+      ['a backtick inside a comment over lines hides no -->', '<!--\n`x --> `\n- [ ] seen\n', [0, 1]],
+      ['a code span inside a comment on one line is no span', '<!-- `--> -->\n- [ ] seen\n', [0, 1]],
+      ['an unclosed backtick run is text', '- [ ] a ` b\n- [x] c\n', [1, 2]],
       ['an indented fence, any indent', '    ```\n- [ ] in code\n      ```\n- [ ] seen\n', [0, 1]],
       ['a fence inside a list item', '- [ ] see:\n  ```sh\n  - [x] in code\n  ```\n', [0, 1]],
       ['Cyrillic х and Х are done', '- [х] ru lower\n- [Х] ru upper\n- [ ] open\n', [2, 3]],

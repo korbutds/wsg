@@ -4,7 +4,7 @@
 #   ws                  list workspaces
 #   ws <slug>           jump in and start the agent from WSG_AGENT
 #   ws <epic>/<task>    the same for a task inside an epic
-#                       (claude continues the previous session, if any)
+#                       (claude resumes the last session with a message, if any)
 #   ws <slug> --new     jump in and start a new session
 #   ws <slug> --cd      only jump in
 #   ws <slug> --codex   jump in and start codex, whatever WSG_AGENT says
@@ -133,7 +133,29 @@ _ws_kind_of() {               # task|process|epic
 
 _ws_sessions_dir() {          # Claude Code history directory for a path
   local esc="${1//[^a-zA-Z0-9]/-}"
-  print -r -- "$HOME/.claude/projects/$esc"
+  print -r -- "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/$esc"
+}
+
+# The session to resume for a path: the newest <uuid>.jsonl with a user message in it, its id in REPLY;
+# _WS_SESSION_RECENT set when that file changed in the last minute (the session may be open elsewhere).
+# Not claude --continue: it skips sessions started through the Agent SDK (by an app, for example), so a
+# task worked on there would start over. Other files (agent-*.jsonl) are no sessions to resume.
+# Returns 1 when there is none.
+_ws_last_session() {
+  REPLY=""
+  typeset -g _WS_SESSION_RECENT=""
+  local f id
+  local -a recent
+  for f in "$(_ws_sessions_dir "$1")"/*.jsonl(N.om); do
+    id="${${f:t}%.jsonl}"
+    [[ "$id" =~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' ]] || continue
+    grep -qF '"type":"user"' "$f" 2>/dev/null || continue
+    REPLY="$id"
+    recent=($f(N.mm-1))
+    (( ${#recent} )) && _WS_SESSION_RECENT=1
+    return 0
+  done
+  return 1
 }
 
 # First run without WSG_AGENT: ask for the command and append it to the config; no questions afterwards.
@@ -252,7 +274,7 @@ ws() {
   local root="$WS_ROOT"
   local slug="$1" mode="${2:---session}"
   # A completed directory keeps its slash: without stripping it, the session would be named
-  # cart/ and looked up under a path that ends in -, so --continue would never fire.
+  # cart/ and looked up under a path that ends in -, so no session would ever be resumed.
   while [[ "$slug" == ?*/ ]]; do slug="${slug%/}"; done
 
   if [ -z "$slug" ]; then
@@ -311,9 +333,15 @@ ws() {
   case "$REPLY" in
     claude)
       # claude with extra flags (a model, permissions) keeps session handling
-      local -a jf; jf=("$(_ws_sessions_dir "$dir")"/*.jsonl(N))
-      if [ "$mode" != --new ] && [ ${#jf} -gt 0 ]; then
-        eval "$line --continue"
+      if [ "$mode" != --new ] && _ws_last_session "$dir"; then
+        local id="$REPLY" rc
+        [ -n "$_WS_SESSION_RECENT" ] && print -r -u2 -- "@@ws.resume.recent@@"
+        eval "$line --resume ${(q)id}"
+        rc=$?
+        # Non-zero: the resume failed, or the session it opened exited so. Never a new session in its
+        # place on its own: that is ws <slug> --new.
+        (( rc )) && print -r -u2 -- "@@ws.resume.failed@@"
+        return $rc
       else
         eval "$line -n ${(q)slug}"
       fi

@@ -42,6 +42,9 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
 // PATH and no WSG_AGENT, so the advisor agent is not judged here (cli.test.js does that).
 const CHECK_ENV = { HOME: path.join(tmp, 'home'), PATH: '' };
 
+// ws reads Claude Code's sessions from CLAUDE_CONFIG_DIR when it is set: the machine's own must not leak in.
+delete process.env.CLAUDE_CONFIG_DIR;
+
 // ws as the user gets it: rendered by `wsg shell-init zsh`, placeholders replaced.
 const renderWs = (lang) => execFileSync(process.execPath, [path.join(ROOT, 'bin', 'cli.js'), 'shell-init', 'zsh'],
   { encoding: 'utf8', env: { ...process.env, WSG_LANG: lang, WSG_CONFIG: path.join(tmp, 'no-config') } });
@@ -649,7 +652,7 @@ process.on('exit', () => {
     // A session of the task, under its own path: the epic's count stays 0.
     const cartSessions = path.join(epicHome, '.claude', 'projects', path.join(epicRoot, 'checkout-v2', 'cart').replace(/[^a-zA-Z0-9]/g, '-'));
     fs.mkdirSync(cartSessions, { recursive: true });
-    fs.writeFileSync(path.join(cartSessions, 's.jsonl'), '{}\n');
+    fs.writeFileSync(path.join(cartSessions, '0000000a-0000-4000-8000-00000000000a.jsonl'), '{"type":"summary"}\n{"type":"user","message":{}}\n');
     const epicCfg = path.join(tmp, 'ws-epics-config');
     fs.writeFileSync(epicCfg, 'WSG_AGENT=claude\n');
     const ez = (script) => require('node:child_process').spawnSync('zsh', ['-f', '-c',
@@ -683,8 +686,8 @@ process.on('exit', () => {
       assert.match(out, /^claude \[-n\] \[checkout-v2\/pay-fix\]$/m);
       assert.match(out, /pwd=.*\/checkout-v2\/pay-fix$/m);
     });
-    it('ws <epic>/<task> continues the task\'s own session', () =>
-      assert.match(jump('checkout-v2/cart'), /^claude \[--continue\]$/m));
+    it('ws <epic>/<task> resumes the task\'s own session', () =>
+      assert.match(jump('checkout-v2/cart'), /^claude \[--resume\] \[0000000a-0000-4000-8000-00000000000a\]$/m));
     it('a bare task name finds the task when one epic has it', () => {
       const out = jump('cart --cd');
       assert.match(out, /→ checkout-v2\/cart/);
@@ -708,9 +711,71 @@ process.on('exit', () => {
     it('a name nothing has: the usual message', () =>
       assert.match(jump('nope --cd'), /no workspace 'nope'/));
     it('a trailing slash is dropped: the session is the task\'s own', () => {
-      assert.match(jump('checkout-v2/cart/'), /^claude \[--continue\]$/m);
+      assert.match(jump('checkout-v2/cart/'), /^claude \[--resume\] \[0000000a-0000-4000-8000-00000000000a\]$/m);
       assert.match(jump('checkout-v2/pay-fix//'), /^claude \[-n\] \[checkout-v2\/pay-fix\]$/m);
     });
+    // The session ws resumes: the newest file with a user message, as sessions started through the Agent SDK
+    // (by an app, for example) are files claude --continue skips. Times set by hand: the newest by mtime, not by name.
+    {
+      const payDir = path.join(epicRoot, 'checkout-v2', 'pay-fix');
+      const sessions = path.join(epicHome, '.claude', 'projects', payDir.replace(/[^a-zA-Z0-9]/g, '-'));
+      fs.mkdirSync(sessions, { recursive: true });
+      const at = (name, body, secs) => {
+        const f = path.join(sessions, `${name}.jsonl`);
+        fs.writeFileSync(f, body);
+        fs.utimesSync(f, secs, secs);
+      };
+      const user = '{"type":"user","message":{"role":"user","content":"hi"},"entrypoint":"sdk-ts"}\n';
+      at('aaaaaaaa-0000-4000-8000-000000000001', user, 1000);
+      at('bbbbbbbb-0000-4000-8000-000000000002', `{"type":"queue-operation"}\n${user}`, 2000);
+      at('cccccccc-0000-4000-8000-000000000003', '{"type":"summary","summary":"x"}\n', 3000);
+      it('ws resumes the newest session with a user message, an Agent SDK one included', () =>
+        assert.match(jump('checkout-v2/pay-fix'), /^claude \[--resume\] \[bbbbbbbb-0000-4000-8000-000000000002\]$/m));
+      it('a newer session file without a user message is skipped', () =>
+        assert.doesNotMatch(jump('checkout-v2/pay-fix'), /cccccccc-0000-4000-8000-000000000003/));
+      it('--new still starts a named session', () =>
+        assert.match(jump('checkout-v2/pay-fix --new'), /^claude \[-n\] \[checkout-v2\/pay-fix\]$/m));
+      fs.utimesSync(path.join(sessions, 'aaaaaaaa-0000-4000-8000-000000000001.jsonl'), 4000, 4000);
+      it('the newest by time, not by name', () =>
+        assert.match(jump('checkout-v2/pay-fix'), /^claude \[--resume\] \[aaaaaaaa-0000-4000-8000-000000000001\]$/m));
+      it('_ws_last_session: the id in REPLY, 1 without a session', () => {
+        assert.match(ez(`_ws_last_session ${JSON.stringify(payDir)}; print -r -- "rc=$? id=$REPLY"`).stdout, /^rc=0 id=aaaaaaaa-0000-4000-8000-000000000001$/m);
+        assert.match(ez(`_ws_last_session ${JSON.stringify(path.join(epicRoot, 'nowhere'))}; print -r -- "rc=$? id=$REPLY"`).stdout, /^rc=1 id=$/m);
+      });
+      // CLAUDE_CONFIG_DIR moves Claude Code's history: ws reads it there.
+      const other = path.join(tmp, 'other-claude-config');
+      const moved = path.join(other, 'projects', payDir.replace(/[^a-zA-Z0-9]/g, '-'));
+      fs.mkdirSync(moved, { recursive: true });
+      fs.writeFileSync(path.join(moved, 'dddddddd-0000-4000-8000-000000000004.jsonl'), user);
+      const withDir = require('node:child_process').spawnSync('zsh', ['-f', '-c',
+        `source ${JSON.stringify(wsZsh)}; ws checkout-v2/pay-fix`],
+      { encoding: 'utf8', input: '', env: { ...process.env, HOME: epicHome, PATH: `${fakeBin}:${process.env.PATH}`,
+        WS_ROOT: epicRoot, WSG_CONFIG: epicCfg, WSG_AGENT: '', WSG_TEST_X: '', CLAUDE_CONFIG_DIR: other } });
+      it('CLAUDE_CONFIG_DIR: the sessions are read there', () =>
+        assert.match(withDir.stdout, /^claude \[--resume\] \[dddddddd-0000-4000-8000-000000000004\]$/m));
+      // Only <uuid>.jsonl is a session: a subagent's agent-*.jsonl and other names are skipped.
+      at('agent-a1b2c3', user, 5000);
+      at('notes', user, 5001);
+      it('agent-*.jsonl and names that are no UUID are skipped', () =>
+        assert.match(jump('checkout-v2/pay-fix'), /^claude \[--resume\] \[aaaaaaaa-0000-4000-8000-000000000001\]$/m));
+      it('a session changed long ago: no warning', () => assert.doesNotMatch(jump('checkout-v2/pay-fix'), /less than a minute ago/));
+      fs.utimesSync(path.join(sessions, 'aaaaaaaa-0000-4000-8000-000000000001.jsonl'), new Date(), new Date());
+      it('a session changed in the last minute: resumed, with a warning that it may be open elsewhere', () => {
+        const out = jump('checkout-v2/pay-fix');
+        assert.match(out, /^claude \[--resume\] \[aaaaaaaa-0000-4000-8000-000000000001\]$/m);
+        assert.match(out, /session aaaaaaaa-0000-4000-8000-000000000001 changed less than a minute ago: it may be open in another window or app/);
+      });
+      // A resume that fails: said, its exit code returned, no new session started in its place.
+      const failing = ez('claude() { print -r -- "CALLED $*"; return 3; }; ws checkout-v2/pay-fix; print -r -- "rc=$?"');
+      it('claude exiting non-zero after --resume: one hint with the code, the code returned, no new session', () => {
+        const out = failing.stdout + failing.stderr;
+        assert.match(out, /^CALLED --resume aaaaaaaa-0000-4000-8000-000000000001$/m);
+        assert.match(out, /claude exited with 3; if the session did not open, ws checkout-v2\/pay-fix --new starts a new one/);
+        assert.match(out, /^rc=3$/m);
+        assert.strictEqual((out.match(/^CALLED/gm) || []).length, 1);
+      });
+      fs.rmSync(sessions, { recursive: true, force: true });
+    }
     // A source of the epic, as wsg links one: a symlink to a checkout outside.
     fs.symlinkSync(repo, path.join(epicRoot, 'checkout-v2', 'shared-api'));
     it('ws <epic>/<source> still goes into the shared checkout', () =>
