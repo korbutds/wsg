@@ -120,22 +120,24 @@ tasks and processes in `WS_ROOT` — each epic's tasks in its `tasks`. Each entr
 | `path` | the workspace, as `WS_ROOT` gives it (a symlinked `WS_ROOT` is kept) |
 | `title` | from the state |
 | `ticket` | the key a task of an epic keeps in its state; `null` for anything else, a standalone task with a ticket included (it keeps it only in `AGENTS.md`) |
-| `status` | `open`, `review`, `done` for a task or a process — or a value a later wsg wrote, as it is (`problems` says so); `null` for an epic, a 0.1 workspace and one whose state does not read |
+| `status` | `open`, `review`, `done`, `archived` for a task or a process — or a value a later wsg wrote, as it is (`problems` says so); `null` for an epic, a 0.1 workspace and one whose state does not read |
 | `closed` | the UTC date it was closed, while done; else `null` |
+| `archived` | the UTC date `wsg archive` took it, an epic included; else `null` |
 | `forEpicPending` | for a task of an epic: `true` while `## For the epic` in its `notes.md` has entries (lines outside HTML comments), i.e. not merged into the epic yet; `null` for anything else |
 | `created` | the UTC date the workspace was made, from the state |
 | `epic` | the epic its state names, or `null` |
 | `legacy` | `true` for a wsg 0.1 workspace (no `.claude/wsg.json`) |
 | `problems` | text: why the state does not read, a status this wsg doesn't know, a source entry that is no source, a task in the wrong place |
 | `extraDirs` | the directories a session reads besides its own: the epic's for a task of one, then its link and reference paths |
-| `sources` | Source objects |
+| `sources` | Source objects; `[]` while archived |
+| `archivedSources` | while archived, the Source objects as they were attached, which `wsg unarchive` attaches again; else `[]` |
 | `tasks` | an epic's tasks, entries like this one; `[]` for anything else |
 
 ### status and close
 
 `wsg close <task>` is `wsg status <task> done`, with the same result. `wsg status <task>` reads.
 
-`{workspace, task, epic, status, previous, closed, changed, forEpicPending, sources, tasksMdUpdated}`
+`{workspace, task, epic, status, previous, closed, archived, changed, forEpicPending, sources, tasksMdUpdated}`
 
 | Key | Value |
 |---|---|
@@ -144,6 +146,7 @@ tasks and processes in `WS_ROOT` — each epic's tasks in its `tasks`. Each entr
 | `epic` | its epic's slug, or `null` |
 | `status`, `previous` | the status after and before; equal when reading |
 | `closed` | the UTC date it was closed, `YYYY-MM-DD` as `created`, while done; else `null` |
+| `archived` | the date `wsg archive` took it, while archived; else `null`. An archived task reads `archived`; setting any status is `invalid_input` (`wsg unarchive` puts back the one it had), and so is setting `archived`, which only `wsg archive` sets |
 | `changed` | `false` when reading, or setting the status it has (nothing written) |
 | `forEpicPending` | as in list |
 | `sources` | `[{name, mode, branch, dirty, unpushed}]`. Git is asked only on a move to done, and only about worktrees: then `dirty` is the list of changed files as `git status --porcelain` shows them (`[]`: clean) and `unpushed` the number of commits not on the branch's upstream, or without one not on its base. `dirty: null` and `unpushed: null` mean git was not asked, or could not tell |
@@ -156,6 +159,48 @@ warning and the status is set anyway; a write that fails rolls the whole reopeni
 or unpushed work and entries left under `## For the epic` are warnings, never refusals; so is done
 set for a task of an epic from inside its own workspace (a standalone task or a process gets no
 such warning: it has no epic session).
+
+### archive
+
+`wsg archive [<task>]`: a task, a process or an epic with its tasks. Everything is checked before the
+first change; anything that refuses — a worktree with changes, untracked files, edits hidden by
+skip-worktree or assume-unchanged, ignored files that exist nowhere else (without
+`--delete-ignored`), a detached commit no local branch has, a lock (`git worktree lock`), a
+submodule checked out, something in place of a worktree that is not one wsg made (a symlink
+included), a render that can't be done, a task of the epic that does not read — is `invalid_input` with `result` present and `rollback` `"none"`, the same document
+with `--dry-run` and without. Another wsg command holding the workspace, or one of the epic's tasks,
+is `busy`; a dry run takes no lock. Archiving again is a no-op, `changed` `false`. An epic's tasks
+are archived first, each in its own transaction, the epic last: a task that fails is rolled back alone
+(`step_failed`, its `rollback`), the ones before it stay archived and the message names them; a
+run again goes on. Then `result` is `{done, failedTask, reason}`: the tasks this run archived, the
+task that failed (`null` when the epic itself did, or for a stop signal between two steps —
+`interrupted`, `reason` `"interrupted"`), and why. The record is written before the first removal,
+so a run killed half-way leaves a state that says what was there; `wsg archive` again goes on from it.
+An epic archived already archives a task in it that is not, and adds it to its cascade. The record
+keeps each worktree's branch as it is checked out at the archive (the attached one when its HEAD is
+detached), and an archived state is version 4, which wsg 0.7 and earlier refuse to read. Branches are never deleted; worktrees are removed without `--force`, links only
+unlinked; rules, notes, memory, `.learnings/`, knowledge and context stay as they are.
+
+`{workspace, kind, slug, epic, status, previous, archived, changed, deleteIgnored, removes, keeps, blockers, tasks, bytes, files, tasksMdUpdated}`
+
+| Key | Value |
+|---|---|
+| `workspace`, `kind`, `slug` | the workspace, its kind and directory name |
+| `epic` | a task's epic, or `null` |
+| `status` | `archived`; `null` for an epic, which has no status |
+| `previous` | `{status, closed}` before the archive, kept in the record for `wsg unarchive`; `null` for an epic |
+| `archived` | the date of the archive: today, or the date it was archived before |
+| `changed` | `false` when it was archived already: nothing written |
+| `deleteIgnored` | whether `--delete-ignored` was given |
+| `removes` | what goes from the workspace itself: `[{name, mode, source, path, branch, sha, bytes, files, ignored, unpushed}]` — `source` the repository or directory, `path` the worktree or link in the workspace, `branch` and `sha` the worktree's branch and its tip (`null` for a link), `bytes` and `files` what the worktree holds (its files' apparent size and number, symlinks not followed; `0` for a link or a worktree already gone — an upper bound: copy-on-write clones free less), `ignored` the ignored files that go with it (absolute), `unpushed` the commits not on the branch's upstream, or without one not on its base (`null`: could not tell) |
+| `keeps` | `{folder, notes, memory, rules, context, branches}`: the workspace, its `notes.md` and `.claude-memory/` (`null` when there are none), its rule files (absolute), an epic's `context/` (`null` otherwise), and `branches` `[{task, name, repo, branch, sha}]` — every branch kept, the epic's tasks' included (`task` `null` for the workspace's own); `sha` is `null` for a workspace archived before (its record keeps no tip) |
+| `blockers` | `{dirty, ignored, detached}`, each `[{task, source, …}]`: `changes` (as `git status --porcelain` shows them), `files` (absolute) or `commit`; `task` the epic's task it is in, else `null`. Empty lists when nothing refuses |
+| `tasks` | an epic's tasks it takes: `[{task, workspace, status, previous, changed, removes, bytes, files}]`; a task archived on its own before is not taken (its record stays its own). `[]` for a task or a process |
+| `bytes`, `files` | the totals of every `removes`, the tasks' included: what is freed |
+| `tasksMdUpdated` | whether a `tasks.md` block changed (planned, in a dry run) |
+
+Unpushed commits, a branch with no upstream, a `node_modules` wsg cloned and commits only the
+worktree's HEAD reflog has (on no branch: they become unreachable) are warnings, never refusals.
 
 ### context add, context note, context remove
 
@@ -175,7 +220,7 @@ A file or note edited by hand since wsg wrote it is refused by `context remove` 
 | `item` | the item added, rewritten or removed, as in `context list`; `null` when a refused plan got no further |
 | `files` | the epic's paths written or removed: the copied file or the note, `AGENTS.md`, `.claude/wsg.json`; `[]` when refused |
 | `restartNeeded` | whether the index block changed: a session already running keeps the `AGENTS.md` it started with (the files themselves are readable at once) |
-| `tasks` | `[{task, path, refreshed, code, reason}]`, one per task directory of the epic, by name (one whose state does not read included, as `failed`). `refreshed` `true` once its generated parts were rendered again, with `code` and `reason` `null`; otherwise `code` says why, a stable value: `done` (left as it is), `busy` (another wsg command holds it), `other_epic` (its state names another epic), `interrupted` (stopped before it), `failed`; `reason` says the same for people. A task not refreshed catches up at its next `wsg refresh`. In a dry run nothing is refreshed: `refreshed` `false` with `code` and `reason` `null` for each task a real run would refresh |
+| `tasks` | `[{task, path, refreshed, code, reason}]`, one per task directory of the epic, by name (one whose state does not read included, as `failed`). `refreshed` `true` once its generated parts were rendered again, with `code` and `reason` `null`; otherwise `code` says why, a stable value: `done` (left as it is), `archived` (left as it is), `busy` (another wsg command holds it), `other_epic` (its state names another epic), `interrupted` (stopped before it), `failed`; `reason` says the same for people. A task not refreshed catches up at its next `wsg refresh`. In a dry run nothing is refreshed: `refreshed` `false` with `code` and `reason` `null` for each task a real run would refresh |
 
 ### context list
 

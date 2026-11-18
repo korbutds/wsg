@@ -282,6 +282,15 @@ const BYPASS = [
   [bash(`${W} remove x --json`), false, 'remove --json without --dry-run removes'],
   [bash(`${W} remove x --json --ws /tmp/ws`), false, 'remove --json --ws without --dry-run'],
   [bash(`${W} remove x --json=1 --dry-run`), false, '--json takes no value'],
+  // wsg archive removes worktrees: only a dry run.
+  [bash(`${W} archive shop/cart --dry-run`), true, 'archive --dry-run: a plan'],
+  [bash(`${W} archive --dry-run --json --ws /tmp/ws`), true, 'archive --dry-run --json --ws: a plan, in the envelope'],
+  [bash(`${W} archive shop/cart --delete-ignored --dry-run`), true, 'archive --delete-ignored --dry-run: a plan'],
+  [bash(`${W} archive shop/cart`), false, 'archive without --dry-run removes worktrees'],
+  [bash(`${W} archive shop/cart --json`), false, 'archive --json without --dry-run'],
+  [bash(`${W} archive --ws --dry-run`), false, '--ws swallows --dry-run'],
+  [bash(`${W} archive a b --dry-run`), false, 'a second workspace'],
+  [bash(`${W} archive shop/cart # --dry-run`), false, '# comments out --dry-run'],
   [bash(`${W} add [-][-] --dry-run`), false, 'a glob could become --'],
   // wsg new: only a dry run, read as the CLI reads it.
   [bash(`${W} new pay --epic shop`), false, 'new without --dry-run'],

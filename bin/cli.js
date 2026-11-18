@@ -231,11 +231,15 @@ async function cmdNew(args) {
     if (path.dirname(real(given)) !== real(cfg.WS_ROOT)) invalid(t('cli.epicOutsideRoot', { ws: given, root: cfg.WS_ROOT }));
     epicWs = path.join(cfg.WS_ROOT, path.basename(real(given)));
     const readEpic = () => {
+      let st;
       try {
-        return W.epicState(epicWs);
+        st = W.epicState(epicWs);
       } catch (e) {
         return invalid(e.message);
       }
+      // An archived epic takes no new task: its sources are detached, its tasks archived.
+      if (st.archive) invalid(t('cli.archivedWs', { ws: epicWs, name: path.basename(epicWs) }));
+      return st;
     };
     epic = readEpic();
     // Held from the checks to the tasks.md write: a task made or a source added meanwhile is seen,
@@ -480,6 +484,14 @@ async function cmdAdd(args) {
     return S.epicSource(epic, pos[0]) ? { epicWs, epic } : null;
   };
   let state = readState(ws);
+  // An archived workspace has its sources in the archive record: wsg unarchive attaches them again.
+  if (state.archive) invalid(t('cli.archivedWs', { ws, name: path.basename(ws) }));
+  // A task of an archived epic: its epic's sources are detached, and the task comes back with it.
+  if (state.epic) {
+    let epicSt = null;
+    try { epicSt = W.epicState(W.epicOf(ws, state)); } catch { /* fromEpic says what is wrong */ }
+    if (epicSt && epicSt.archive) invalid(t('cli.epicArchivedAdd', { epic: state.epic.slug }));
+  }
   let derived = fromEpic(state);
   // Held from the checks to the last write: the state they read is the state that gets changed.
   // In a task of an epic, for a name that may be one of its sources, the epic's too — always the
@@ -606,6 +618,9 @@ async function cmdRemove(args) {
   const generate = lib('generate');
   const ui = lib('ui');
   if (!flags['--dry-run']) lock(ws);
+  try {
+    if (lib('workspace').readState(ws).archive) invalid(t('cli.archivedWs', { ws, name: path.basename(ws) }));
+  } catch { /* planRemove reports a state that does not read */ }
   let plan;
   try {
     plan = generate.planRemove(ws, pos[0], { deleteIgnored: !!flags['--delete-ignored'] });
@@ -1001,6 +1016,150 @@ async function statusCommand(given, value, flags, needTask) {
   if (json) return J.succeed(result(done), { warnings: plan.warnings });
   ui.head(t('cli.statusSet', { task: path.basename(ws), previous: plan.previous, status: plan.status }));
   if (done.tasksMdUpdated) ui.info(t('cli.statusTasksMd', { file: path.join(plan.epicWs, 'tasks.md') }));
+  return 0;
+}
+
+// The workspace wsg archive and wsg unarchive act on: the one named (a slug, <epic>/<task> or a
+// path), the one --ws names, else the one you are in — as it is on disk, so its locks and its line in
+// the epic's tasks.md are its own.
+function archiveTarget(pos, flags) {
+  if (pos[0] !== undefined && flags['--ws'] !== undefined) invalid(t('cli.extraArg', { arg: '--ws' }));
+  const found = targetWs(pos[0] !== undefined ? pos[0] : flags['--ws']);
+  if (!found) invalid(t('cli.notInWorkspace'));
+  if (found.legacy) invalid(t('cli.legacyWorkspace', { ws: found.ws }));
+  return fs.realpathSync(found.ws);
+}
+
+// The name a workspace is given by in messages: <epic>/<task> for a task of an epic.
+const wsName = (ws, state) => (state && state.epic ? `${state.epic.slug}/${path.basename(ws)}` : path.basename(ws));
+
+// The locks of wsg archive and wsg unarchive, taken before the plan and held to the last write: a
+// task of an epic, the epic's first (its tasks.md), then the task's — the order of add and status; an
+// epic, its own, then every task of it. One that is busy refuses the command with nothing changed
+// (exit 2). A dry run takes none. Returns the state read again under them.
+function archiveLocks(ws, state, readState) {
+  const W = lib('workspace');
+  if (state.epic) {
+    try {
+      W.epicState(W.epicOf(ws, state));
+    } catch (e) {
+      invalid(e.message);
+    }
+    lock(W.epicOf(ws, state));
+  }
+  lock(ws);
+  const now = readState(ws);
+  if (now.kind === 'epic') for (const c of lib('archive').tasksOf(ws)) lock(c.ws);
+  return now;
+}
+
+// A stop signal between two steps of a run that has several transactions (an epic's tasks, then the
+// epic): the step running rolls itself back (guarded), the ones done stay. Returns { stop(), done() }.
+function stopBetweenSteps() {
+  let stopped = false;
+  const onStop = () => { stopped = true; };
+  const takeBack = lib('lock').handOver();
+  for (const sig of ['SIGINT', 'SIGHUP', 'SIGTERM']) process.on(sig, onStop);
+  return {
+    stop: () => stopped,
+    done: () => {
+      for (const sig of ['SIGINT', 'SIGHUP', 'SIGTERM']) process.off(sig, onStop);
+      takeBack();
+    },
+  };
+}
+
+// `wsg archive`: lib/archive.js. Planned with everything checked before the first change; a refused
+// plan is the same document with --dry-run and without.
+async function cmdArchive(args) {
+  const { flags, pos } = parse(args, FLAGS.archive, 1);
+  const ws = archiveTarget(pos, flags);
+  currentWs = ws;
+  const W = lib('workspace');
+  const A = lib('archive');
+  const T = lib('templates');
+  const ui = lib('ui');
+  const readState = (dir) => {
+    try {
+      return W.readState(dir);
+    } catch (e) {
+      return invalid(e.message);
+    }
+  };
+  const dryRun = !!flags['--dry-run'];
+  const deleteIgnored = !!flags['--delete-ignored'];
+  let state = readState(ws);
+  if (!dryRun) state = archiveLocks(ws, state, readState);
+  let plan;
+  try {
+    plan = A.planArchive(ws, state, { deleteIgnored });
+  } catch (e) {
+    // Ctrl+C while git was asked about a worktree: only read so far, nothing changed.
+    if (e && e.name === 'Interrupted') {
+      if (J.active()) return J.fail('interrupted', t('cli.archiveCancelled'), { rollback: 'none' });
+      process.stderr.write(`\n${t('cli.archiveCancelled')}\n`);
+      return 130;
+    }
+    throw e;
+  }
+  const json = J.active();
+  const result = (done = null) => A.archiveResult(plan, { deleteIgnored, done });
+  const name = wsName(ws, state);
+  if (json && plan.errors.length) return J.fail('invalid_input', plan.errors[0], { details: plan.errors, result: result(), warnings: plan.warnings });
+  if (dryRun && json) return J.succeed(result(), { warnings: plan.warnings });
+  if (dryRun) {
+    process.stdout.write(`${JSON.stringify({ ...result(), errors: plan.errors, warnings: plan.warnings }, null, 2)}\n`);
+    return plan.errors.length ? INVALID : 0;
+  }
+  if (plan.errors.length) {
+    for (const e of plan.errors) process.stderr.write(`wsg: ${e}\n`);
+    return INVALID;
+  }
+  if (!json) for (const w of plan.warnings) ui.warn(w);
+  if (!A.changes(plan)) {
+    if (json) return J.succeed(result(), { warnings: plan.warnings });
+    ui.ok(t('cli.archiveSame', { name, date: plan.date }));
+    return 0;
+  }
+  guardPlatform();
+  const between = stopBetweenSteps();
+  let done;
+  try {
+    done = await A.applyArchive(plan, cfg, { deleteIgnored, stop: between.stop });
+  } catch (e) {
+    const partial = e && e.partial ? t('cli.archivePartial', { list: e.done.join(', ') }) : '';
+    // A worktree that changed after the plan: refused before anything of it changed.
+    if (e && e.invalid && e.rollback === 'none' && !partial) {
+      if (json) return J.fail('invalid_input', e.message, { details: [e.message], result: result(), warnings: plan.warnings });
+      process.stderr.write(`wsg: ${e.message}\n`);
+      return INVALID;
+    }
+    const what = (msg) => (e && e.failedTask ? t('cli.archiveTaskFailed', { task: e.failedTask, msg }) : msg) + (partial ? `\n${partial}` : '');
+    // What a run that stopped part of the way did, for a program: the tasks it archived (they stay
+    // so), the one that failed, why.
+    const stopped = (reason) => ({ done: (e && e.done) || [], failedTask: (e && e.failedTask) || null, reason });
+    if (e && e.name === 'Interrupted') {
+      if (json) return J.fail('interrupted', what(cancelled(e)), { ...J.rollbackOf(e, ws), warnings: plan.warnings, result: stopped('interrupted') });
+      process.stderr.write(`${what(cancelled(e))}\n`);
+      return 130;
+    }
+    if (e && e.rollback) {
+      if (json) return J.fail('step_failed', what(String(e.message)), { ...J.rollbackOf(e, ws), warnings: plan.warnings, result: stopped(String(e.message)) });
+      process.stderr.write(`wsg: ${what(String(e.message))}\n`);
+      return 1;
+    }
+    throw e;
+  } finally {
+    between.done();
+  }
+  if (json) return J.succeed(result(done), { warnings: plan.warnings });
+  const r = result(done);
+  const worktrees = [r, ...r.tasks].reduce((n, x) => n + x.removes.filter((m) => m.mode === 'worktree').length, 0);
+  ui.head(t('cli.archived', { name, date: plan.date }));
+  ui.info(t('cli.archivedFreed', { n: worktrees, size: T.sizeOf(r.bytes) }));
+  for (const b of r.keeps.branches) ui.info(t('cli.branchKept', { branch: b.branch, path: b.repo }));
+  if (done.tasksMdUpdated && plan.epicWs) ui.info(t('cli.statusTasksMd', { file: path.join(plan.epicWs, 'tasks.md') }));
+  ui.info(t('cli.archiveBack', { name }));
   return 0;
 }
 
@@ -1414,6 +1573,7 @@ const COMMANDS = {
   promote: cmdPromote,
   context: cmdContext,
   mcp: cmdMcp,
+  archive: cmdArchive,
   'install-skills': cmdInstallSkills,
   // The 0.1 spellings, kept for one release.
   '--check': cmdCheck,

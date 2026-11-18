@@ -4159,7 +4159,11 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
 
     git(api, ['worktree', 'lock', path.join(wsX, 'api')]);
     const locked = rm(['api']);
-    it('a worktree git refuses to remove: the removal fails', () => assert.strictEqual(locked.code, 1, locked.all));
+    // git would refuse it: refused in the plan, before anything changes.
+    it('a locked worktree: refused in the plan, exit 2', () => {
+      assert.strictEqual(locked.code, 2, locked.all);
+      assert.match(locked.err, /is locked/);
+    });
     it('and the workspace is as it was', () => assert.deepStrictEqual(tree(wsX), before));
     git(api, ['worktree', 'unlock', path.join(wsX, 'api')]);
 
@@ -4720,10 +4724,14 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       assert.strictEqual(busyPlain.out, '');
     });
 
-    // git refuses the removal (a locked worktree): the step fails and is rolled back.
-    git(api, ['worktree', 'lock', path.join(wsJ, 'api')]);
-    const failed = rm(['api', '--json']);
-    git(api, ['worktree', 'unlock', path.join(wsJ, 'api')]);
+    // git refuses the removal itself, past the plan (a git that fails `worktree remove`): the step
+    // fails and is rolled back.
+    const refuseGit = path.join(tmp, 'refuse-git-json');
+    fs.mkdirSync(refuseGit);
+    const gitBin = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+    fs.writeFileSync(path.join(refuseGit, 'git'),
+      `#!/bin/sh\ncase " $* " in *" worktree remove "*) echo "fatal: refused" >&2; exit 1;; esac\nexec ${JSON.stringify(gitBin)} "$@"\n`, { mode: 0o755 });
+    const failed = rm(['api', '--json'], { env: { PATH: `${refuseGit}:${ENV.PATH}` } });
     it('a step that fails: step_failed, exit 1, rolled back, the workspace as it was', () => {
       assert.strictEqual(failed.code, 1, failed.all);
       const j = envelope(failed, 'failed');
