@@ -37,6 +37,13 @@
 #      the temp dir, whose .claude.json holds the two global servers: the user's config is not read
 #      or touched, and no login is needed. WSG_SMOKE_ONLY=mcp runs this step alone — then nothing
 #      of the steps above runs, the advisor agent is not installed and no model is asked.
+#   9. Opt-in (WSG_SMOKE_08=1), no model, no claude: what wsg 0.8 adds, in a scratch WS_ROOT with a
+#      temp repository. `wsg new --no-code` (no repository, noCode in list --json); a task with a
+#      worktree archived (`wsg archive`: the worktree gone, the branch kept, list says archived) and
+#      unarchived (the worktree back on the branch, status open); `wsg reorder` of an epic's task
+#      directories and of its tracker tasks under "## Other tasks", the order in tasks.md and in
+#      wsg list --json. WSG_SMOKE_ONLY=v08 runs this step alone: claude need not be installed, and
+#      nothing under the user's config dir is touched.
 #
 # The agent is the user-level one: for the run, this checkout's agent is rendered into
 # ${CLAUDE_CONFIG_DIR:-~/.claude}/agents/wsg-advisor.md, as `wsg install-skills` would write it,
@@ -75,8 +82,9 @@ set -euo pipefail
 
 MODEL="${1:-haiku}"
 MCP_ONLY=no; [ "${WSG_SMOKE_ONLY:-}" = mcp ] && MCP_ONLY=yes
+V08_ONLY=no; [ "${WSG_SMOKE_ONLY:-}" = v08 ] && V08_ONLY=yes
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-command -v claude >/dev/null || { echo "claude is not on PATH" >&2; exit 1; }
+[ "$V08_ONLY" = yes ] || command -v claude >/dev/null || { echo "claude is not on PATH" >&2; exit 1; }
 command -v node >/dev/null || { echo "node is not on PATH" >&2; exit 1; }
 
 # The user-level advisor for the run, and what a killed run left behind: test/advisor-agent.sh.
@@ -84,7 +92,7 @@ SCRIPT="test/smoke-claude.sh"
 # shellcheck source=test/advisor-agent.sh
 . "$SRC/test/advisor-agent.sh"
 # Step 8 alone installs no agent: nothing under the user's config dir is touched.
-[ "$MCP_ONLY" = yes ] || recover_advisor
+[ "$MCP_ONLY" = yes ] || [ "$V08_ONLY" = yes ] || recover_advisor
 TMP="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/wsg-smoke-XXXXXX")" && pwd -P)"
 PROJECTS="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects"
 session_dir() { printf '%s/%s' "$PROJECTS" "$(printf '%s' "$1" | sed 's/[^a-zA-Z0-9]/-/g')"; }
@@ -196,6 +204,55 @@ JS
   report "a global server the epic leaves on is listed (the control)" "$(has "$out" smokeon)"
   echo "  info  $(snippet "$out")"
 }
+# 9. What wsg 0.8 adds, with wsg alone: a task without code, archive and unarchive, reorder. No model.
+v08_step() {
+  echo "9. wsg 0.8: --no-code, archive and unarchive, reorder (no model)"
+  local nc="$WS_ROOT/v08-spec" ar="$WS_ROOT/v08-arc" ep="$WS_ROOT/v08-epic" field
+  # A field of a workspace in wsg list --json: v08_field <slug> <expression on the entry e>.
+  v08_field() {
+    wsg list --json | node -e '
+      let s = ""; process.stdin.on("data", (d) => { s += d; }).on("end", () => {
+        const e = JSON.parse(s).result.workspaces.find((w) => w.slug === process.argv[1]);
+        process.stdout.write(String(e ? eval(process.argv[2]) : "missing"));
+      });' "$1" "$2"
+  }
+  wsg new v08-spec --no-code --no-launch >/dev/null && ok=yes || ok=no
+  report "wsg new --no-code" "$ok"
+  report "list --json: noCode true, no sources" "$([ "$(v08_field v08-spec 'e.noCode + " " + e.sources.length')" = "true 0" ] && echo yes || echo no)"
+  report "no repository in it: no repo pointer" "$([ ! -e "$nc/repo" ] && echo yes || echo no)"
+
+  wsg new v08-arc --no-launch >/dev/null
+  wsg add "$TMP/repo" --branch smoke/v08-arc --ws v08-arc >/dev/null
+  report "wsg archive --dry-run changes nothing" "$(wsg archive v08-arc --dry-run >/dev/null && [ -d "$ar/repo" ] && echo yes || echo no)"
+  wsg archive v08-arc >/dev/null && ok=yes || ok=no
+  report "wsg archive" "$ok"
+  report "the worktree is gone, the branch kept" "$([ ! -e "$ar/repo" ] && git -C "$TMP/repo" rev-parse -q --verify refs/heads/smoke/v08-arc >/dev/null && echo yes || echo no)"
+  report "list --json: archived, its source in archivedSources" "$([ "$(v08_field v08-arc 'e.status + " " + e.archivedSources.length')" = "archived 1" ] && echo yes || echo no)"
+  wsg unarchive v08-arc >/dev/null && ok=yes || ok=no
+  report "wsg unarchive" "$ok"
+  report "the worktree is back on its branch, status open" "$([ "$(git -C "$ar/repo" branch --show-current 2>/dev/null) $(wsg status v08-arc)" = "smoke/v08-arc open" ] && echo yes || echo no)"
+
+  wsg new v08-epic --kind epic --no-launch >/dev/null
+  for t in a-one b-two c-three; do wsg new "$t" --epic v08-epic --no-code --no-launch >/dev/null; done
+  wsg reorder c-three --to 1 --ws v08-epic --dry-run >/dev/null && ok=yes || ok=no
+  report "wsg reorder --dry-run" "$ok"
+  wsg reorder c-three --to 1 --ws v08-epic >/dev/null && ok=yes || ok=no
+  report "wsg reorder of a task directory" "$ok"
+  report "list --json: the epic's tasks in the new order" "$([ "$(v08_field v08-epic 'e.tasks.map((t) => t.slug).join(",")')" = "c-three,a-one,b-two" ] && echo yes || echo no)"
+  report "tasks.md: the block in the new order" "$(has "$(tr '\n' ' ' < "$ep/tasks.md")" '- `c-three/` - `a-one/` - `b-two/`')"
+  printf -- '- ACME-1 first\n- ACME-2 second\n  a line under it\n' >> "$ep/tasks.md"
+  wsg reorder ACME-2 --before ACME-1 --ws v08-epic >/dev/null && ok=yes || ok=no
+  report "wsg reorder of a tracker task under Other tasks" "$ok"
+  report "list --json: trackerTasks in the new order" "$([ "$(v08_field v08-epic 'e.trackerTasks.map((t) => t.id).join(",")')" = "ACME-2,ACME-1" ] && echo yes || echo no)"
+  report "wsg check sees no drift in tasks.md" "$(hasnt "$(wsg check v08-epic 2>&1)" 'lists other tasks')"
+}
+if [ "$V08_ONLY" = yes ]; then
+  v08_step
+  echo
+  echo "passed: $pass, failed: $fail"
+  [ "$fail" = 0 ]
+  exit
+fi
 if [ "$MCP_ONLY" = yes ]; then
   mcp_step
   echo
@@ -346,6 +403,7 @@ report "wsg list --json: done, closed today" "$([ "$(list_field status) $(list_f
 report "tasks.md shows [done <date>]" "$(has "$(cat "$E7/tasks.md")" "\`seven-a/\` [done $TODAY]")"
 
 [ "${WSG_SMOKE_MCP:-}" = 1 ] && mcp_step
+[ "${WSG_SMOKE_08:-}" = 1 ] && v08_step
 
 echo
 echo "passed: $pass, failed: $fail"

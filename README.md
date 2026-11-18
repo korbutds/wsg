@@ -521,7 +521,8 @@ shows you the text before writing it.
   external import and you agree, every task session also loads the epic's `AGENTS.md`. The task's
   always-on budget in `wsg check` counts the epic's `CLAUDE.md`, not that import.
 - **An older wsg.** wsg 0.4.x refuses an epic: its state is version 3. A task inside an epic is
-  version 2, and 0.4.x takes it for a plain task. Use one wsg version for an epic and its tasks.
+  version 2, and 0.4.x takes it for a plain task. wsg 0.7 and earlier do not know an epic's
+  `taskOrder` (`wsg reorder`): their `wsg refresh` lists its tasks by name again. Use one wsg version for an epic and its tasks.
 - **The advisor is not a sandbox.** In Claude Code it has no Write, Edit, NotebookEdit, Agent or
   Monitor tool, and a `PreToolUse` hook in its agent file runs `lib/advisor-guard.js` before every
   tool call: Read, Grep, Glob, WebFetch, WebSearch, ToolSearch and SubagentHandback (how a

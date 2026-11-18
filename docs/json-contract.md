@@ -31,7 +31,7 @@ settings file that can't be read or an unknown command is an envelope too.
 ## Envelope
 
 ```json
-{"schemaVersion": 1, "wsgVersion": "0.7.0", "ok": true, "command": "close", "dryRun": false,
+{"schemaVersion": 1, "wsgVersion": "0.8.0", "ok": true, "command": "close", "dryRun": false,
  "result": {}, "error": null, "warnings": []}
 ```
 
