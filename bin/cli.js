@@ -885,6 +885,8 @@ async function cmdClose(args) {
 async function statusCommand(given, value, flags, needTask) {
   if (!given) invalid(t(needTask));
   const W = lib('workspace');
+  // archived is wsg archive's: it removes the worktrees, which a status alone never does.
+  if (value === 'archived') invalid(t('cli.statusArchived'));
   if (value !== undefined && !W.STATUSES.includes(value)) invalid(t('cli.badStatus', { value, list: W.STATUSES.join(', ') }));
   const found = targetWs(given);
   if (found.legacy) invalid(t('cli.legacyWorkspace', { ws: found.ws }));
@@ -953,6 +955,7 @@ async function statusCommand(given, value, flags, needTask) {
     status: plan.status,
     previous: plan.previous,
     closed: plan.closed,
+    archived: W.archivedOn(state),
     changed: plan.changed,
     forEpicPending: plan.forEpicPending,
     sources: plan.sources,
@@ -1017,17 +1020,20 @@ async function refreshTasksOf(ws) {
     for (const sig of ['SIGINT', 'SIGHUP', 'SIGTERM']) process.off(sig, onStop);
     takeBack();
   }
-  for (const x of tasks) if (!x.refreshed && x.code !== 'done' && x.code !== 'interrupted') lib('ui').warn(t('context.taskNotRefreshed', { task: x.task, reason: x.reason }));
+  for (const x of tasks) if (!x.refreshed && !['done', 'archived', 'interrupted'].includes(x.code)) lib('ui').warn(t('context.taskNotRefreshed', { task: x.task, reason: x.reason }));
   return { tasks, stopped: stop || tasks.some((x) => x.code === 'interrupted') };
 }
 
-// What the tasks' refresh printed for people: the ones refreshed, the done ones left as they are.
+// What the tasks' refresh printed for people: the ones refreshed, the done and archived ones left as
+// they are.
 function reportTasks(tasks) {
   const ui = lib('ui');
   const refreshed = tasks.filter((x) => x.refreshed).map((x) => x.task);
   const left = tasks.filter((x) => x.code === 'done').map((x) => x.task);
+  const archived = tasks.filter((x) => x.code === 'archived').map((x) => x.task);
   if (refreshed.length) ui.info(t('context.tasksRefreshed', { list: refreshed.join(', ') }));
   if (left.length) ui.dim(t('context.tasksDone', { list: left.join(', ') }));
+  if (archived.length) ui.dim(t('context.tasksArchived', { list: archived.join(', ') }));
 }
 
 // `wsg context add|note|remove|list`: an epic's context (lib/context.js). A write plans with nothing

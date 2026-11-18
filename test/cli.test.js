@@ -5515,8 +5515,8 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     const root = path.join(tmp, 'list-root');
     const env = { WS_ROOT: root };
     const VERSION = require(path.join(ROOT, 'package.json')).version;
-    const ENTRY_KEYS = ['slug', 'kind', 'path', 'title', 'ticket', 'status', 'closed', 'forEpicPending', 'created', 'epic', 'legacy',
-      'problems', 'extraDirs', 'sources', 'tasks'];
+    const ENTRY_KEYS = ['slug', 'kind', 'path', 'title', 'ticket', 'status', 'closed', 'archived', 'forEpicPending', 'created', 'epic', 'legacy',
+      'problems', 'extraDirs', 'sources', 'archivedSources', 'tasks'];
     const listJson = (extra = {}) => {
       const r = wsg(['list', '--json'], { env: { ...env, ...extra } });
       let j = null;
@@ -5731,7 +5731,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     const env = { WS_ROOT: root };
     const VERSION = require(path.join(ROOT, 'package.json')).version;
     const today = require(path.join(ROOT, 'lib', 'templates.js')).today();
-    const RESULT_KEYS = ['workspace', 'task', 'epic', 'status', 'previous', 'closed', 'changed', 'forEpicPending', 'sources', 'tasksMdUpdated'];
+    const RESULT_KEYS = ['workspace', 'task', 'epic', 'status', 'previous', 'closed', 'archived', 'changed', 'forEpicPending', 'sources', 'tasksMdUpdated'];
     const run = (args, opts = {}) => {
       const r = wsg(args, { env, ...opts });
       if (r.code !== 0) throw new Error(`${args.join(' ')}: ${r.all}`);
@@ -5784,7 +5784,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       assert.strictEqual(readJ.code, 0, readJ.all);
       const j = envelope(readJ, 'status');
       assert.deepStrictEqual([j.ok, j.dryRun, j.error, j.warnings], [true, false, null, []]);
-      assert.deepStrictEqual(j.result, { workspace: pay, task: 'pay', epic: 'shop', status: 'open', previous: 'open', closed: null, changed: false,
+      assert.deepStrictEqual(j.result, { workspace: pay, task: 'pay', epic: 'shop', status: 'open', previous: 'open', closed: null, archived: null, changed: false,
         forEpicPending: false, sources: [{ name: 'st-api', mode: 'worktree', branch: 'acme/pay', dirty: null, unpushed: null }], tasksMdUpdated: false });
     });
     setState(solo, {}, ['status']);
