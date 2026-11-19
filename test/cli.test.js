@@ -4553,7 +4553,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     const KEYS = ['schemaVersion', 'wsgVersion', 'ok', 'command', 'dryRun', 'result', 'error', 'warnings'];
     const ERROR_KEYS = ['code', 'exitCode', 'message', 'details', 'rollback', 'kept'];
     const VERSION = require(path.join(ROOT, 'package.json')).version;
-    const RESULT_KEYS = ['workspace', 'name', 'path', 'mode', 'branchKept', 'ignored', 'files', 'settingsChanged'];
+    const RESULT_KEYS = ['workspace', 'name', 'path', 'mode', 'branchKept', 'ignored', 'files', 'settingsChanged', 'ignoredChanged', 'ignoredStamp'];
     const envelope = (r, what) => {
       const j = doc(r);
       assert.ok(j, `${what}: stdout is not one JSON document: ${r.out}`);
@@ -4586,7 +4586,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       assert.deepStrictEqual([j.ok, j.command, j.dryRun, j.error], [true, 'remove', true, null]);
       const p = doc(plain);
       assert.deepStrictEqual(j.result, { workspace: wsJ, name: 'api', path: api, mode: 'worktree', branchKept: 'task/rm-json',
-        ignored: [], files: p.files.map((f) => path.join(wsJ, f)), settingsChanged: p.settingsChanged });
+        ignored: [], files: p.files.map((f) => path.join(wsJ, f)), settingsChanged: p.settingsChanged, ignoredChanged: false, ignoredStamp: null });
     });
     it('--json --dry-run in either order', () => assert.deepStrictEqual(doc(rm(['--json', 'api', '--dry-run'])), doc(dry)));
     it('--dry-run --json touches nothing', () => assert.deepStrictEqual(tree(wsJ), before));

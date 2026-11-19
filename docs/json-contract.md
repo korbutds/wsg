@@ -95,12 +95,39 @@ carryCandidates}` for a dry run or a refusal, `null` once done.
 
 ### remove
 
-`{workspace, name, path, mode, branchKept, ignored, files, settingsChanged}`. `path` is the source's
+`{workspace, name, path, mode, branchKept, ignored, files, settingsChanged, ignoredChanged, ignoredStamp}`. `path` is the source's
 repository or directory and `mode` how it was attached (as in Source), both `null` for a name the
 workspace has no source by; `branchKept` is the worktree's branch, which is never deleted;
 `ignored` the ignored files that go with the worktree, as absolute paths; `files` the paths removed
 or rewritten (the source in the workspace, its rule, the generated files that change);
-`settingsChanged` whether `.claude/settings.json` changes, so a new session is needed.
+`settingsChanged` whether `.claude/settings.json` changes, so a new session is needed;
+`ignoredChanged` whether the refusal is because the ignored files are not the ones agreed (below);
+`ignoredStamp` a hash of what the `ignored` paths hold now (below), `null` when there are none.
+
+`--expect-ignored FILE` (only with `--delete-ignored`, else `invalid_input`): FILE is
+`{ignored, ignoredStamp}` from the result of an earlier `wsg remove --dry-run --json` — the files the
+owner was shown (the whole result works too: other keys are not read). The plan's own ignored
+files, compared as a set (NFC, each path once), must be exactly those, and `ignoredStamp` equal: any
+difference is `invalid_input`, nothing changed, `ignoredChanged` `true`, `ignored` and `ignoredStamp`
+the fresh ones, the message listing the files. Equal, only those files, holding what they held, are
+agreed to: a file that appears or changes in them before the removal still refuses
+(`invalid_input`, `ignoredChanged` `true`, `ignored` and `ignoredStamp` read again). A FILE that does
+not read, is not JSON or is not such an object is `invalid_input`; a leading BOM is dropped. A
+`node_modules` wsg cloned and carried copies equal to the main checkout are never in `ignored`: they
+are deleted with the worktree as before.
+
+**The stamp.** `ignoredStamp`, and `stamp` of each `blockers.ignored` entry of `wsg archive`: sha256
+(hex) over the sorted listing of every listed path and everything under it — relative path, type,
+size, `mtimeMs` — read with lstat only, symlinks never followed. An ignored directory is one listed
+path (`build/`, or `logs/` that holds only ignored files): a file made, edited or deleted anywhere in
+it, or a listed file rewritten, gives another stamp, and so does a file put back with its mtime restored (`touch -r`, `cp -p`) or a
+copy renamed over it: ctime and inode go into the stamp too, a symlink's target as well. Any activity
+in a listed directory — a `.DS_Store`, a file watcher, a dev server writing there — refuses the run
+until it stops; each refusal carries the fresh list to show and send back. Something under a listed
+path that does not read gives a stamp `unreadable:…` that never repeats: it can't be verified, so
+with `--expect-ignored` the run is refused (`invalid_input`, `ignoredChanged` `false`, a message
+saying what does not read) until the permissions are fixed. The value is opaque: compare it, send it
+back.
 
 ### check
 
@@ -180,16 +207,38 @@ with `--dry-run` and without. Another wsg command holding the workspace, or one 
 is `busy`; a dry run takes no lock. Archiving again is a no-op, `changed` `false`. An epic's tasks
 are archived first, each in its own transaction, the epic last: a task that fails is rolled back alone
 (`step_failed`, its `rollback`), the ones before it stay archived and the message names them; a
-run again goes on. Then `result` is `{done, failedTask, reason}`: the tasks this run archived, the
+run again goes on. Then `result` is `{done, failedTask, reason, ignoredChanged}`: the tasks this run archived, the
 task that failed (`null` when the epic itself did, or for a stop signal between two steps —
-`interrupted`, `reason` `"interrupted"`), and why. The record is written before the first removal,
+`interrupted`, `reason` `"interrupted"`), why, and whether it was ignored files that changed after the plan (`--expect-ignored`, or a file appearing with `--delete-ignored`). The record is written before the first removal,
 so a run killed half-way leaves a state that says what was there; `wsg archive` again goes on from it.
 An epic archived already archives a task in it that is not, and adds it to its cascade. The record
 keeps each worktree's branch as it is checked out at the archive (the attached one when its HEAD is
 detached), and an archived state is version 4, which wsg 0.7 and earlier refuse to read. Branches are never deleted; worktrees are removed without `--force`, links only
 unlinked; rules, notes, memory, `.learnings/`, knowledge and context stay as they are.
 
-`{workspace, kind, slug, epic, status, previous, archived, changed, deleteIgnored, removes, keeps, blockers, tasks, bytes, files, tasksMdUpdated}`
+`--expect-ignored FILE` (only with `--delete-ignored`, else `invalid_input`) closes the gap between
+the list an owner was shown and the run: FILE is exactly the `blockers.ignored` array of an earlier
+`wsg archive … --dry-run --json` without `--delete-ignored`: `[{task, source, files, stamp}]`, `stamp`
+as in "The stamp" under remove. The run plans as always, then compares its own ignored files with
+FILE's — normalized: entries without files dropped, sorted by task and source, each one's files NFC,
+each once, sorted; a leading BOM in FILE dropped. Any difference — a file more, a file less, another
+stamp (something made, edited or deleted in a listed path) — refuses the plan, dry run or not, with
+nothing changed: `invalid_input`, the message "the ignored files changed since you saw them" with the
+files as they are now, `ignoredChanged` `true`, and `blockers.ignored` the fresh list in the same
+shape, stamps included, ready to show and send back. An entry of FILE for a task this epic's archive
+took already (a run that stopped part of the way, below) is no difference: the same FILE works for
+the run again. Equal, each source agrees to its files, as they were, only: the re-checks right before
+the removal compare the list and the stamp again. A change found before the first change of the run
+is `invalid_input` with the plan, `ignoredChanged` `true` and `blockers.ignored` read again; found
+after something was archived — a later task's re-check once an earlier task of the epic is archived,
+or a source's own removal after the record was written — it is `step_failed` (the task rolled back,
+the ones before it kept), and `result` `{done, failedTask, reason, ignoredChanged: true}`: run the dry
+run again for the list. A FILE that does not read, is not JSON or is not such a list is
+`invalid_input`. A `node_modules` wsg cloned and carried copies equal to the main checkout are never
+in the list: they are deleted with the worktree as before. Without `--expect-ignored` nothing of this
+applies.
+
+`{workspace, kind, slug, epic, status, previous, archived, changed, deleteIgnored, ignoredChanged, removes, keeps, blockers, tasks, bytes, files, tasksMdUpdated}`
 
 | Key | Value |
 |---|---|
@@ -200,9 +249,10 @@ unlinked; rules, notes, memory, `.learnings/`, knowledge and context stay as the
 | `archived` | the date of the archive: today, or the date it was archived before |
 | `changed` | `false` when it was archived already: nothing written |
 | `deleteIgnored` | whether `--delete-ignored` was given |
+| `ignoredChanged` | `true` when the run is refused because its ignored files are not the ones agreed — those `--expect-ignored` names, or, during the run, those the plan listed; else `false` |
 | `removes` | what goes from the workspace itself: `[{name, mode, source, path, branch, sha, bytes, files, ignored, unpushed}]` — `source` the repository or directory, `path` the worktree or link in the workspace, `branch` and `sha` the worktree's branch and its tip (`null` for a link), `bytes` and `files` what the worktree holds (its files' apparent size and number, symlinks not followed; `0` for a link or a worktree already gone — an upper bound: copy-on-write clones free less), `ignored` the ignored files that go with it (absolute), `unpushed` the commits not on the branch's upstream, or without one not on its base (`null`: could not tell) |
 | `keeps` | `{folder, notes, memory, rules, context, branches}`: the workspace, its `notes.md` and `.claude-memory/` (`null` when there are none), its rule files (absolute), an epic's `context/` (`null` otherwise), and `branches` `[{task, name, repo, branch, sha}]` — every branch kept, the epic's tasks' included (`task` `null` for the workspace's own); `sha` is `null` for a workspace archived before (its record keeps no tip) |
-| `blockers` | `{dirty, ignored, detached}`, each `[{task, source, …}]`: `changes` (as `git status --porcelain` shows them), `files` (absolute) or `commit`; `task` the epic's task it is in, else `null`. Empty lists when nothing refuses |
+| `blockers` | `{dirty, ignored, detached}`, each `[{task, source, …}]`: `changes` (as `git status --porcelain` shows them), `files` (absolute) with `stamp` (what they hold, see remove) or `commit`; `task` the epic's task it is in, else `null`. Empty lists when nothing refuses; with `--delete-ignored` `ignored` is empty, except in an `--expect-ignored` refusal, where it is the fresh list |
 | `tasks` | an epic's tasks it takes: `[{task, workspace, status, previous, changed, removes, bytes, files}]`; a task archived on its own before is not taken (its record stays its own). `[]` for a task or a process |
 | `bytes`, `files` | the totals of every `removes`, the tasks' included: what is freed |
 | `tasksMdUpdated` | whether a `tasks.md` block changed (planned, in a dry run) |

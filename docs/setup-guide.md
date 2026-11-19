@@ -158,7 +158,9 @@ the owner names:
    exist nowhere else (a `.env` made later or a carried one edited since, an installed
    `node_modules`) are listed too: move out what is needed, then `wsg remove <name> --delete-ignored`.
    A script or an app adds `--json`: `wsg add <path> --json` and `wsg remove <name> --json` print
-   one JSON document, the outcome or the error with its code, and nothing else on stdout.
+   one JSON document, the outcome or the error with its code, and nothing else on stdout. An app
+   that showed the owner the ignored files adds `--expect-ignored <file>` with that list, so a
+   file the owner did not see refuses the removal.
    A `node_modules` wsg cloned is not checked: changes made inside it are deleted with the worktree.
    Not seen either: a tracked file marked `skip-worktree` or `assume-unchanged` and edited in the
    worktree — it is deleted with it. If a removal fails after the worktree is gone, the rollback

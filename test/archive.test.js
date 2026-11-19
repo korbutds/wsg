@@ -312,8 +312,8 @@ function task(slug, sources = [], extra = []) {
     }
     return out;
   };
-  const RESULT_KEYS = ['workspace', 'kind', 'slug', 'epic', 'status', 'previous', 'archived', 'changed', 'deleteIgnored', 'removes',
-    'keeps', 'blockers', 'tasks', 'bytes', 'files', 'tasksMdUpdated'];
+  const RESULT_KEYS = ['workspace', 'kind', 'slug', 'epic', 'status', 'previous', 'archived', 'changed', 'deleteIgnored', 'ignoredChanged',
+    'removes', 'keeps', 'blockers', 'tasks', 'bytes', 'files', 'tasksMdUpdated'];
   const REMOVE_KEYS = ['name', 'mode', 'source', 'path', 'branch', 'sha', 'bytes', 'files', 'ignored', 'unpushed'];
   const ENVELOPE_KEYS = ['schemaVersion', 'wsgVersion', 'ok', 'command', 'dryRun', 'result', 'error', 'warnings'];
 
@@ -644,6 +644,522 @@ function task(slug, sources = [], extra = []) {
     });
   }
 
+  console.log('\nwsg archive --expect-ignored: the ignored files the owner was shown');
+  {
+    let fileN = 0;
+    // FILE as a client writes it: the list, as JSON (raw: the text as it is).
+    const seenFile = (list, raw = null) => {
+      const f = path.join(tmp, `expect-${++fileN}.json`);
+      fs.writeFileSync(f, raw !== null ? raw : JSON.stringify(list));
+      return f;
+    };
+    const HEX = /^[0-9a-f]{64}$/;
+    const noStamp = (list) => list.map(({ stamp, ...e }) => e);
+    const spoil = (wt) => fs.writeFileSync(path.join(wt, '.env'), 'MINE=1\n');
+    const exclude = (repo, pattern) => fs.appendFileSync(path.join(repo, '.git', 'info', 'exclude'), `${pattern}\n`);
+    const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+    let fakeN = 0;
+    // A git that runs body (sh) before the real one: what changes in the middle of a run.
+    const fakeGit = (body) => {
+      const dir = path.join(tmp, `fake-git-${++fakeN}`);
+      fs.mkdirSync(dir);
+      fs.writeFileSync(path.join(dir, 'git'), `#!/bin/sh\n${body}\nexec ${JSON.stringify(realGit)} "$@"\n`, { mode: 0o755 });
+      return { PATH: `${dir}:${ENV.PATH}` };
+    };
+    // The nth `git ls-files … --directory` (the listing of ignored files) makes file first.
+    const onNthListing = (n, file) => {
+      const cnt = path.join(tmp, `fake-count-${fakeN + 1}`);
+      return fakeGit(`case " $* " in *" ls-files "*"--directory"*) c=$(cat ${JSON.stringify(cnt)} 2>/dev/null || echo 0); c=$((c+1)); echo $c > ${JSON.stringify(cnt)}; [ "$c" = ${n} ] && echo late > ${JSON.stringify(file)};; esac`);
+    };
+
+    // The list equals the plan's: archived, the listed file gone with the worktree, nothing else.
+    {
+      const repo = makeRepo();
+      const ws = task('exp-same', [[repo, ['--branch', 'feat/exp-same']]]);
+      const wt = path.join(ws, path.basename(repo));
+      spoil(wt);
+      const dry = json(['archive', 'exp-same', '--dry-run']);
+      it('the dry run without --delete-ignored lists the ignored file in blockers.ignored, with its stamp', () => {
+        assert.strictEqual(dry.code, 2, dry.all);
+        assert.deepStrictEqual(noStamp(dry.doc.result.blockers.ignored), [{ task: null, source: path.basename(repo), files: [path.join(wt, '.env')] }]);
+        assert.match(dry.doc.result.blockers.ignored[0].stamp, HEX);
+        assert.strictEqual(dry.doc.result.ignoredChanged, false);
+      });
+      const f = seenFile(dry.doc.result.blockers.ignored);
+      const d = json(['archive', 'exp-same', '--delete-ignored', '--expect-ignored', f, '--dry-run']);
+      it('a dry run with the matching list: exit 0', () => assert.strictEqual(d.code, 0, d.all));
+      const r = json(['archive', 'exp-same', '--delete-ignored', '--expect-ignored', f]);
+      it('expected equals the plan: archived, ignoredChanged false, the worktree gone', () => {
+        assert.strictEqual(r.code, 0, r.all);
+        assert.deepStrictEqual(Object.keys(r.doc.result), RESULT_KEYS);
+        assert.strictEqual(r.doc.result.ignoredChanged, false);
+        assert.deepStrictEqual(r.doc.result.removes[0].ignored, [path.join(wt, '.env')]);
+        assert.ok(!fs.existsSync(wt));
+        assert.strictEqual(readState(ws).status, 'archived');
+      });
+      it('the main checkout keeps its own .env', () => assert.strictEqual(read(repo, '.env'), 'TOKEN=x\n'));
+    }
+
+    // A file made after the dry run the owner saw: refused, nothing changed, the new list in result.
+    {
+      const repo = makeRepo();
+      const ws = task('exp-new', [[repo, ['--branch', 'feat/exp-new']]]);
+      const wt = path.join(ws, path.basename(repo));
+      spoil(wt);
+      const dry = json(['archive', 'exp-new', '--dry-run']);
+      const f = seenFile(dry.doc.result.blockers.ignored);
+      fs.mkdirSync(path.join(wt, 'build'));
+      fs.writeFileSync(path.join(wt, 'build', 'late.js'), 'x\n');
+      const before = { tree: tree(ws), refs: refs(repo), wt: worktreeCount(repo), state: read(ws, '.claude', 'wsg.json') };
+      const r = json(['archive', 'exp-new', '--delete-ignored', '--expect-ignored', f]);
+      const fresh = [{ task: null, source: path.basename(repo), files: [path.join(wt, '.env'), path.join(wt, 'build/')] }];
+      it('a new ignored file: refused, exit 2, invalid_input, rollback none, the message lists the files now', () => {
+        assert.strictEqual(r.code, 2, r.all);
+        assert.strictEqual(r.doc.error.code, 'invalid_input');
+        assert.strictEqual(r.doc.error.rollback, 'none');
+        assert.match(r.doc.error.message, /the ignored files changed since you saw them/);
+        assert.ok(r.doc.error.message.includes(path.join(wt, 'build/')), r.doc.error.message);
+      });
+      it('the refusal carries the fresh plan: ignoredChanged true, blockers.ignored the new list with a new stamp', () => {
+        assert.deepStrictEqual(Object.keys(r.doc.result), RESULT_KEYS);
+        assert.strictEqual(r.doc.result.ignoredChanged, true);
+        assert.deepStrictEqual(noStamp(r.doc.result.blockers.ignored), fresh);
+        assert.match(r.doc.result.blockers.ignored[0].stamp, HEX);
+      });
+      it('nothing deleted: the workspace, both ignored files, the worktree, the refs, the state', () => {
+        assert.deepStrictEqual(tree(ws), before.tree);
+        assert.strictEqual(refs(repo), before.refs);
+        assert.strictEqual(worktreeCount(repo), before.wt);
+        assert.strictEqual(read(ws, '.claude', 'wsg.json'), before.state);
+      });
+      const d = json(['archive', 'exp-new', '--delete-ignored', '--expect-ignored', f, '--dry-run']);
+      it('the dry run is refused the same way', () => {
+        assert.strictEqual(d.code, 2, d.all);
+        assert.strictEqual(d.doc.dryRun, true);
+        assert.strictEqual(d.doc.result.ignoredChanged, true);
+        assert.deepStrictEqual(d.doc.result.blockers.ignored, r.doc.result.blockers.ignored);
+      });
+      const more = json(['archive', 'exp-new', '--delete-ignored', '--dry-run', '--expect-ignored',
+        seenFile([...r.doc.result.blockers.ignored, { task: null, source: 'other', files: ['/x'], stamp: 'a' }])]);
+      it('a list that names more than there is: refused too', () => {
+        assert.strictEqual(more.code, 2, more.all);
+        assert.strictEqual(more.doc.result.ignoredChanged, true);
+      });
+      const plain = wsg(['archive', 'exp-new', '--delete-ignored', '--expect-ignored', f]);
+      it('without --json: exit 2, the message and the files as they are now on stderr', () => {
+        assert.strictEqual(plain.code, 2, plain.all);
+        assert.match(plain.err, /the ignored files changed since you saw them/);
+        assert.ok(plain.err.includes(path.join(wt, 'build/')) && plain.err.includes(path.join(wt, '.env')), plain.err);
+      });
+      // The list in the refusal, sent back in another order: the same files, archived.
+      const back = r.doc.result.blockers.ignored.map((e) => ({ ...e, files: [...e.files].reverse() }));
+      const again = json(['archive', 'exp-new', '--delete-ignored', '--expect-ignored', seenFile(back)]);
+      it('the fresh list sent back (any order): archived', () => {
+        assert.strictEqual(again.code, 0, again.all);
+        assert.ok(!fs.existsSync(wt));
+      });
+    }
+
+    // What a listed path holds is part of the agreement: a directory listed as build/, a file
+    // listed by its name, a directory git shows whole because it holds only ignored files.
+    {
+      const repo = makeRepo();
+      exclude(repo, '*.log');
+      const ws = task('exp-deep', [[repo, ['--branch', 'feat/exp-deep']]]);
+      const wt = path.join(ws, path.basename(repo));
+      spoil(wt);
+      fs.mkdirSync(path.join(wt, 'build'));
+      fs.writeFileSync(path.join(wt, 'build', 'out.js'), 'x\n');
+      fs.mkdirSync(path.join(wt, 'logs'));
+      fs.writeFileSync(path.join(wt, 'logs', 'a.log'), 'a\n');
+      const dry = json(['archive', 'exp-deep', '--dry-run']);
+      it('build/ and logs/ are one entry each', () => assert.deepStrictEqual(dry.doc.result.blockers.ignored[0].files,
+        [path.join(wt, '.env'), path.join(wt, 'build/'), path.join(wt, 'logs/')]));
+      const f = seenFile(dry.doc.result.blockers.ignored);
+      const refused = (what, change, undo) => {
+        change();
+        const before = tree(ws);
+        const r = json(['archive', 'exp-deep', '--delete-ignored', '--expect-ignored', f]);
+        it(`${what}: refused, the same files listed, ignoredChanged true, nothing touched`, () => {
+          assert.strictEqual(r.code, 2, r.all);
+          assert.strictEqual(r.doc.result.ignoredChanged, true);
+          assert.deepStrictEqual(r.doc.result.blockers.ignored[0].files, dry.doc.result.blockers.ignored[0].files);
+          assert.notStrictEqual(r.doc.result.blockers.ignored[0].stamp, dry.doc.result.blockers.ignored[0].stamp);
+          assert.deepStrictEqual(tree(ws), before);
+        });
+        undo();
+      };
+      const keys = path.join(wt, 'build', 'deep', 'keys.pem');
+      refused('build/deep/keys.pem added inside the listed build/', () => { fs.mkdirSync(path.dirname(keys)); fs.writeFileSync(keys, 'KEY\n'); }, () => {});
+      const f2 = seenFile(json(['archive', 'exp-deep', '--dry-run']).doc.result.blockers.ignored);
+      refused('logs/b.log added to a directory of ignored files only', () => fs.writeFileSync(path.join(wt, 'logs', 'b.log'), 'b\n'), () => {});
+      void f2;
+      // The listed .env rewritten with other content under the same name.
+      const f3 = seenFile(json(['archive', 'exp-deep', '--dry-run']).doc.result.blockers.ignored);
+      fs.writeFileSync(path.join(wt, '.env'), 'MINE=2, and longer\n');
+      const r3 = json(['archive', 'exp-deep', '--delete-ignored', '--expect-ignored', f3]);
+      it('a listed file rewritten with new content: refused', () => {
+        assert.strictEqual(r3.code, 2, r3.all);
+        assert.strictEqual(r3.doc.result.ignoredChanged, true);
+        assert.strictEqual(read(wt, '.env'), 'MINE=2, and longer\n');
+      });
+      // Untouched since its dry run: archived, the directories with it.
+      const last = json(['archive', 'exp-deep', '--dry-run']);
+      const ok = json(['archive', 'exp-deep', '--delete-ignored', '--expect-ignored', seenFile(last.doc.result.blockers.ignored)]);
+      it('untouched since the dry run: archived', () => {
+        assert.strictEqual(ok.code, 0, ok.all);
+        assert.ok(!fs.existsSync(wt));
+      });
+    }
+
+    // A stamp that can't be forged: a same-size rewrite with the mtime put back, a copy renamed over
+    // the file, a symlink pointed elsewhere; something that does not read can't be agreed to.
+    {
+      const repo = makeRepo();
+      const ws = task('exp-forge', [[repo, ['--branch', 'feat/exp-forge']]]);
+      const wt = path.join(ws, path.basename(repo));
+      const env = path.join(wt, '.env');
+      spoil(wt);
+      fs.mkdirSync(path.join(wt, 'build'));
+      fs.writeFileSync(path.join(wt, 'build', 'out.js'), 'x\n');
+      fs.symlinkSync('aaaa', path.join(wt, 'build', 'link'));
+      // A whole-second mtime, so putting it back gives the very same mtimeMs: only ctime and inode tell.
+      const ROUND = 1700000000;
+      fs.utimesSync(env, ROUND, ROUND);
+      const dryList = () => json(['archive', 'exp-forge', '--dry-run']).doc.result.blockers.ignored;
+      const refused = (what, change) => {
+        const list = dryList();
+        const f = seenFile(list);
+        change();
+        const before = tree(ws);
+        const r = json(['archive', 'exp-forge', '--delete-ignored', '--expect-ignored', f]);
+        it(`${what}: refused, ignoredChanged true, the same files, another stamp, nothing touched`, () => {
+          assert.strictEqual(r.code, 2, r.all);
+          assert.strictEqual(r.doc.result.ignoredChanged, true);
+          assert.deepStrictEqual(r.doc.result.blockers.ignored[0].files, list[0].files);
+          assert.notStrictEqual(r.doc.result.blockers.ignored[0].stamp, list[0].stamp);
+          assert.deepStrictEqual(tree(ws), before);
+        });
+      };
+      refused('.env rewritten, same size, its mtime put back (touch -r)', () => {
+        const st = fs.statSync(env);
+        fs.writeFileSync(env, 'MINE=9\n');
+        fs.utimesSync(env, ROUND, ROUND);
+        assert.strictEqual(fs.statSync(env).mtimeMs, st.mtimeMs);
+        assert.strictEqual(fs.statSync(env).size, st.size);
+      });
+      refused('a copy with the same size and mtime renamed over .env', () => {
+        const st = fs.statSync(env);
+        const copy = path.join(tmp, 'forge.env');
+        fs.writeFileSync(copy, 'MINE=8\n');
+        fs.utimesSync(copy, ROUND, ROUND);
+        fs.renameSync(copy, env);
+        assert.strictEqual(fs.statSync(env).mtimeMs, st.mtimeMs);
+      });
+      refused('a symlink in build/ pointed elsewhere, same length', () => {
+        fs.unlinkSync(path.join(wt, 'build', 'link'));
+        fs.symlinkSync('bbbb', path.join(wt, 'build', 'link'));
+      });
+      if (process.getuid && process.getuid() === 0) skip('as root every directory reads');
+      else {
+        const locked = path.join(wt, 'build', 'locked');
+        fs.mkdirSync(locked);
+        fs.writeFileSync(path.join(locked, 'k'), 'k\n');
+        fs.chmodSync(locked, 0o000);
+        let one;
+        let two;
+        let r;
+        try {
+          one = dryList();
+          two = dryList();
+          r = json(['archive', 'exp-forge', '--delete-ignored', '--expect-ignored', seenFile(one)]);
+        } finally {
+          fs.chmodSync(locked, 0o755);
+        }
+        it('a directory under build/ that does not read: the stamp is unreadable:…, never the same twice', () => {
+          assert.match(one[0].stamp, /^unreadable:/);
+          assert.notStrictEqual(one[0].stamp, two[0].stamp);
+        });
+        it('a directory that does not read: refused, cannot verify, ignoredChanged false, the worktree there', () => {
+          assert.strictEqual(r.code, 2, r.all);
+          assert.strictEqual(r.doc.error.code, 'invalid_input');
+          assert.match(r.doc.error.message, /does not read, so wsg cannot check/);
+          assert.strictEqual(r.doc.result.ignoredChanged, false);
+          assert.ok(fs.existsSync(path.join(locked, 'k')));
+        });
+      }
+      const ok = json(['archive', 'exp-forge', '--delete-ignored', '--expect-ignored', seenFile(dryList())]);
+      it('untouched since its dry run, a symlink in it: archived', () => {
+        assert.strictEqual(ok.code, 0, ok.all);
+        assert.ok(!fs.existsSync(wt));
+      });
+    }
+
+    // A file made between the plan and the removal: the re-check compares against the expected list.
+    {
+      const repo = makeRepo();
+      const ws = task('exp-mid', [[repo, ['--branch', 'feat/exp-mid']]]);
+      const wt = path.join(ws, path.basename(repo));
+      spoil(wt);
+      const list = json(['archive', 'exp-mid', '--dry-run']).doc.result.blockers.ignored;
+      const planned = async () => quiet(() => A.planArchive(ws, W.readState(ws), { deleteIgnored: true, expectIgnored: A.parseExpectIgnored(JSON.stringify(list)) }));
+      const plan = await planned();
+      it('the plan agrees with the expected list', () => {
+        assert.deepStrictEqual(plan.errors, []);
+        assert.strictEqual(plan.ignoredChanged, false);
+        assert.deepStrictEqual(plan.removes[0].agreed, ['.env']);
+        assert.strictEqual(plan.removes[0].agreedStamp, list[0].stamp);
+      });
+      fs.mkdirSync(path.join(wt, 'build'));
+      fs.writeFileSync(path.join(wt, 'build', 'late.js'), 'x\n');
+      const before = { tree: tree(ws), refs: refs(repo) };
+      let err = null;
+      await quiet(async () => { try { await A.applyArchive(plan, {}, { deleteIgnored: true }); } catch (e) { err = e; } });
+      it('a file after the plan: refused before the first change, ignoredChanged on the error', () => {
+        assert.ok(err, 'no error');
+        assert.strictEqual(err.invalid, true);
+        assert.strictEqual(err.ignoredChanged, true);
+        assert.strictEqual(err.rollback, 'none');
+        assert.match(err.message, /build\//);
+      });
+      it('nothing changed', () => {
+        assert.deepStrictEqual(tree(ws), before.tree);
+        assert.strictEqual(refs(repo), before.refs);
+      });
+      fs.rmSync(path.join(wt, 'build'), { recursive: true });
+      const plan2 = await planned();
+      fs.writeFileSync(path.join(wt, '.env'), 'MINE=3, other\n');
+      let err2 = null;
+      await quiet(async () => { try { await A.applyArchive(plan2, {}, { deleteIgnored: true }); } catch (e) { err2 = e; } });
+      it('the agreed file edited after the plan: refused by the stamp, before the first change', () => {
+        assert.ok(err2, 'no error');
+        assert.strictEqual(err2.ignoredChanged, true);
+        assert.strictEqual(err2.rollback, 'none');
+        assert.match(err2.message, /the ignored files you agreed to changed after the check/);
+      });
+    }
+    {
+      // Between the last re-check and the source's own removal (removeSource checks again).
+      const repo = makeRepo();
+      const ws = task('exp-late', [[repo, ['--branch', 'feat/exp-late']]]);
+      const wt = path.join(ws, path.basename(repo));
+      spoil(wt);
+      const list = json(['archive', 'exp-late', '--dry-run']).doc.result.blockers.ignored;
+      const plan = await quiet(() => A.planArchive(ws, W.readState(ws), { deleteIgnored: true, expectIgnored: A.parseExpectIgnored(JSON.stringify(list)) }));
+      const before = { state: read(ws, '.claude', 'wsg.json'), refs: refs(repo) };
+      const real = generate.removeSource;
+      let seen = null;
+      generate.removeSource = (...args) => {
+        seen = args[4];
+        fs.writeFileSync(path.join(wt, '.env'), 'MINE=4, edited late\n');
+        return real(...args);
+      };
+      let err = null;
+      try {
+        await quiet(async () => { try { await A.applyArchive(plan, {}, { deleteIgnored: true }); } catch (e) { err = e; } });
+      } finally {
+        generate.removeSource = real;
+      }
+      it('removeSource is given the agreed files and their stamp', () => {
+        assert.deepStrictEqual(seen.ignored, ['.env']);
+        assert.strictEqual(seen.ignoredStamp, list[0].stamp);
+      });
+      it('the file edited right before the removal: refused, rolled back, ignoredChanged on the error', () => {
+        assert.ok(err, 'no error');
+        assert.strictEqual(err.invalid, true);
+        assert.strictEqual(err.ignoredChanged, true);
+        assert.strictEqual(err.rollback, 'done');
+      });
+      it('the worktree, the edited file and the state as they were', () => {
+        assert.strictEqual(read(wt, '.env'), 'MINE=4, edited late\n');
+        assert.strictEqual(read(ws, '.claude', 'wsg.json'), before.state);
+        assert.strictEqual(refs(repo), before.refs);
+      });
+    }
+
+    // The CLI, a file made between its own plan and its re-check: the refusal has the list read again.
+    {
+      const repo = makeRepo();
+      exclude(repo, '*.log');
+      const ws = task('exp-cli-late', [[repo, ['--branch', 'feat/exp-cli-late']]]);
+      const wt = path.join(ws, path.basename(repo));
+      spoil(wt);
+      const f = seenFile(json(['archive', 'exp-cli-late', '--dry-run']).doc.result.blockers.ignored);
+      const r = json(['archive', 'exp-cli-late', '--delete-ignored', '--expect-ignored', f], { env: onNthListing(2, path.join(wt, 'late.log')) });
+      it('late: invalid_input, rollback none, ignoredChanged true', () => {
+        assert.strictEqual(r.code, 2, r.all);
+        assert.strictEqual(r.doc.error.code, 'invalid_input');
+        assert.strictEqual(r.doc.error.rollback, 'none');
+        assert.strictEqual(r.doc.result.ignoredChanged, true);
+        assert.match(r.doc.error.message, /ignored files appeared after the check/);
+      });
+      it('late: blockers.ignored is the list read again, the new file in it, with its stamp', () => {
+        assert.deepStrictEqual(noStamp(r.doc.result.blockers.ignored), [{ task: null, source: path.basename(repo), files: [path.join(wt, '.env'), path.join(wt, 'late.log')] }]);
+        assert.match(r.doc.result.blockers.ignored[0].stamp, HEX);
+        assert.ok(fs.existsSync(wt) && fs.existsSync(path.join(wt, 'late.log')));
+      });
+      const back = json(['archive', 'exp-cli-late', '--delete-ignored', '--expect-ignored', seenFile(r.doc.result.blockers.ignored)]);
+      it('late: that list sent back, archived', () => assert.strictEqual(back.code, 0, back.all));
+    }
+
+    // FILE as a client may write it: a BOM, a path twice, names decomposed (NFD).
+    {
+      const repo = makeRepo();
+      exclude(repo, '*.log');
+      const ws = task('exp-form', [[repo, ['--branch', 'feat/exp-form']]]);
+      const wt = path.join(ws, path.basename(repo));
+      spoil(wt);
+      fs.writeFileSync(path.join(wt, 'café.log'), 'x\n');
+      const list = json(['archive', 'exp-form', '--dry-run']).doc.result.blockers.ignored;
+      const dryWith = (f) => json(['archive', 'exp-form', '--delete-ignored', '--expect-ignored', f, '--dry-run']);
+      const bom = dryWith(seenFile(null, `﻿${JSON.stringify(list)}`));
+      it('a leading BOM: accepted', () => assert.strictEqual(bom.code, 0, bom.all));
+      const twice = dryWith(seenFile(list.map((e) => ({ ...e, files: [...e.files, e.files[0]] }))));
+      it('a path named twice: accepted', () => assert.strictEqual(twice.code, 0, twice.all));
+      const nfd = list.map((e) => ({ ...e, files: e.files.map((x) => x.normalize('NFD')) }));
+      it('the NFD list differs byte for byte', () => assert.notDeepStrictEqual(nfd, list));
+      const dec = dryWith(seenFile(nfd));
+      it('names decomposed (NFD): accepted', () => assert.strictEqual(dec.code, 0, dec.all));
+      const real = json(['archive', 'exp-form', '--delete-ignored', '--expect-ignored', seenFile(nfd)]);
+      it('names decomposed (NFD): archived', () => assert.strictEqual(real.code, 0, real.all));
+    }
+
+    // What --expect-ignored refuses as input: exit 2, invalid_input, nothing touched.
+    {
+      const repo = makeRepo();
+      const ws = task('exp-bad', [[repo, ['--branch', 'feat/exp-bad']]]);
+      spoil(path.join(ws, path.basename(repo)));
+      const good = seenFile([]);
+      const before = tree(ws);
+      for (const [what, args, re] of [
+        ['without --delete-ignored', ['--expect-ignored', good], /only goes with --delete-ignored/],
+        ['without --delete-ignored, a dry run', ['--expect-ignored', good, '--dry-run'], /only goes with --delete-ignored/],
+        ['a file that does not exist', ['--delete-ignored', '--expect-ignored', path.join(tmp, 'nope.json')], /does not read \(ENOENT\)/],
+        ['a directory', ['--delete-ignored', '--expect-ignored', tmp], /does not read/],
+        ['malformed JSON', ['--delete-ignored', '--expect-ignored', seenFile(null, '[{"task": null, "secret-token-xyz')], /not the list --expect-ignored takes \(not JSON\)$/],
+        ['an object, not an array', ['--delete-ignored', '--expect-ignored', seenFile({ task: null })], /not a JSON array/],
+        ['the dirty blockers instead', ['--delete-ignored', '--expect-ignored', seenFile([{ task: null, source: 'r', changes: [] }])], /entry 1 is not \{task, source, files, stamp\}/],
+        ['an entry without its stamp', ['--delete-ignored', '--expect-ignored', seenFile([{ task: null, source: 'r', files: ['/a'] }])], /entry 1 is not/],
+        ['files not strings', ['--delete-ignored', '--expect-ignored', seenFile([{ task: null, source: 'r', files: [1], stamp: 'a' }])], /entry 1 is not/],
+      ]) {
+        const r = json(['archive', 'exp-bad', ...args]);
+        it(`--expect-ignored, ${what}: exit 2, invalid_input`, () => {
+          assert.strictEqual(r.code, 2, r.all);
+          assert.strictEqual(r.doc.error.code, 'invalid_input');
+          assert.strictEqual(r.doc.error.rollback, 'none');
+          assert.match(r.doc.error.message, re);
+          assert.ok(!r.doc.error.message.includes('secret-token'), 'the file content is not quoted');
+        });
+      }
+      it('nothing touched by any of them', () => assert.deepStrictEqual(tree(ws), before));
+    }
+
+    // An epic: the entries are named by task; a run that stops part of the way; the same FILE again.
+    {
+      const repo = makeRepo();
+      exclude(repo, '*.log');
+      const ep = task('expmall', [], ['--kind', 'epic', '--title', 'Exp mall']);
+      assert.strictEqual(wsg(['add', repo, '--ws', ep, '--branch-template', 'expmall/{slug}']).code, 0);
+      const e1 = task('e1', [], ['--epic', 'expmall']);
+      const e2 = task('e2', [], ['--epic', 'expmall']);
+      const wt1 = path.join(e1, path.basename(repo));
+      const wt2 = path.join(e2, path.basename(repo));
+      spoil(wt1);
+      spoil(wt2);
+      const dry = json(['archive', 'expmall', '--dry-run']);
+      it('epic: the dry run names each entry by its task', () => {
+        assert.deepStrictEqual(dry.doc.result.blockers.ignored.map((e) => [e.task, e.source, e.files]),
+          [['e1', path.basename(repo), [path.join(wt1, '.env')]], ['e2', path.basename(repo), [path.join(wt2, '.env')]]]);
+      });
+      const f = seenFile(dry.doc.result.blockers.ignored);
+      // A file in e2 made once e1's worktree is removed: e2's re-check refuses, e1 stays archived.
+      const late = path.join(wt2, 'late.log');
+      const env = fakeGit(`case " $* " in *" worktree remove ${wt1} "*) echo late > ${JSON.stringify(late)};; esac`);
+      const half = json(['archive', 'expmall', '--delete-ignored', '--expect-ignored', f], { env });
+      it('epic, a later task\'s re-check refuses: step_failed, done e1, failedTask e2, ignoredChanged true', () => {
+        assert.strictEqual(half.code, 1, half.all);
+        assert.strictEqual(half.doc.error.code, 'step_failed');
+        assert.deepStrictEqual(half.doc.result.done, ['e1']);
+        assert.strictEqual(half.doc.result.failedTask, 'e2');
+        assert.strictEqual(half.doc.result.ignoredChanged, true);
+        assert.ok(!fs.existsSync(wt1) && fs.existsSync(path.join(wt2, '.env')) && fs.existsSync(late));
+      });
+      fs.rmSync(late);
+      const again = json(['archive', 'expmall', '--delete-ignored', '--expect-ignored', f]);
+      it('epic: the same FILE again, e1 archived already by the cascade: accepted, all archived', () => {
+        assert.strictEqual(again.code, 0, again.all);
+        assert.ok(!fs.existsSync(wt2));
+        assert.strictEqual(readState(e2).status, 'archived');
+        assert.ok(readState(ep).archive);
+      });
+    }
+
+    // wsg remove takes it too: {ignored, ignoredStamp} of its own dry run.
+    {
+      const repo = makeRepo();
+      exclude(repo, '*.log');
+      const ws = task('exp-rm', [[repo, ['--branch', 'feat/exp-rm']]]);
+      const name = path.basename(repo);
+      const wt = path.join(ws, name);
+      spoil(wt);
+      const dry = json(['remove', name, '--ws', ws, '--dry-run']);
+      it('remove: the dry run lists the ignored file and its stamp, ignoredChanged false', () => {
+        assert.strictEqual(dry.code, 2, dry.all);
+        assert.deepStrictEqual(dry.doc.result.ignored, [path.join(wt, '.env')]);
+        assert.match(dry.doc.result.ignoredStamp, HEX);
+        assert.strictEqual(dry.doc.result.ignoredChanged, false);
+      });
+      const pick = (res) => seenFile({ ignored: res.ignored, ignoredStamp: res.ignoredStamp });
+      const f = pick(dry.doc.result);
+      fs.mkdirSync(path.join(wt, 'build'));
+      fs.writeFileSync(path.join(wt, 'build', 'late.js'), 'x\n');
+      const before = tree(ws);
+      const r = json(['remove', name, '--ws', ws, '--delete-ignored', '--expect-ignored', f]);
+      it('remove: a new ignored file refuses, exit 2, the fresh list in result.ignored', () => {
+        assert.strictEqual(r.code, 2, r.all);
+        assert.strictEqual(r.doc.error.code, 'invalid_input');
+        assert.match(r.doc.error.message, /the ignored files changed since you saw them/);
+        assert.strictEqual(r.doc.result.ignoredChanged, true);
+        assert.deepStrictEqual(r.doc.result.ignored, [path.join(wt, '.env'), path.join(wt, 'build/')]);
+        assert.deepStrictEqual(tree(ws), before);
+      });
+      const f2 = pick(r.doc.result);
+      fs.writeFileSync(path.join(wt, 'build', 'deep.js'), 'y\n');
+      const deep = json(['remove', name, '--ws', ws, '--delete-ignored', '--expect-ignored', f2]);
+      it('remove: a file added inside the listed build/: refused by the stamp', () => {
+        assert.strictEqual(deep.code, 2, deep.all);
+        assert.strictEqual(deep.doc.result.ignoredChanged, true);
+        assert.notStrictEqual(deep.doc.result.ignoredStamp, r.doc.result.ignoredStamp);
+      });
+      const alone = json(['remove', name, '--ws', ws, '--expect-ignored', f]);
+      it('remove: --expect-ignored without --delete-ignored, exit 2', () => {
+        assert.strictEqual(alone.code, 2, alone.all);
+        assert.match(alone.doc.error.message, /only goes with --delete-ignored/);
+      });
+      const bad = json(['remove', name, '--ws', ws, '--delete-ignored', '--expect-ignored', seenFile([path.join(wt, '.env')])]);
+      it('remove: a bare array (no stamp), exit 2', () => {
+        assert.strictEqual(bad.code, 2, bad.all);
+        assert.match(bad.doc.error.message, /not \{ignored, ignoredStamp\}/);
+      });
+      // Late: a file made between the plan and the removal; the refusal reads the list again.
+      const f3 = pick(json(['remove', name, '--ws', ws, '--dry-run']).doc.result);
+      const late = json(['remove', name, '--ws', ws, '--delete-ignored', '--expect-ignored', f3], { env: onNthListing(2, path.join(wt, 'late.log')) });
+      it('remove, late: invalid_input, ignoredChanged true, result.ignored read again with the new file', () => {
+        assert.strictEqual(late.code, 2, late.all);
+        assert.strictEqual(late.doc.result.ignoredChanged, true);
+        assert.ok(late.doc.result.ignored.includes(path.join(wt, 'late.log')), JSON.stringify(late.doc.result.ignored));
+        assert.ok(fs.existsSync(wt));
+      });
+      // The whole result of the refusal as FILE: removed.
+      const ok = json(['remove', name, '--ws', ws, '--delete-ignored', '--expect-ignored', seenFile(late.doc.result)]);
+      it('remove: the whole fresh result sent back, removed', () => {
+        assert.strictEqual(ok.code, 0, ok.all);
+        assert.strictEqual(ok.doc.result.ignoredChanged, false);
+        assert.ok(!fs.existsSync(wt));
+      });
+    }
+  }
+
   console.log('\nwsg archive: locks');
   {
     const repo = makeRepo();
@@ -832,6 +1348,11 @@ function task(slug, sources = [], extra = []) {
       assert.strictEqual(G.bashAllowed(`node "${CLI}" archive shop/cart --dry-run --json`), true);
       assert.strictEqual(G.bashAllowed(`node "${CLI}" archive shop/cart`), false);
       assert.strictEqual(G.bashAllowed(`node "${CLI}" archive shop/cart --delete-ignored`), false);
+      assert.strictEqual(G.bashAllowed(`node "${CLI}" archive shop/cart --delete-ignored --expect-ignored seen.json`), false);
+      // --dry-run as the value of --expect-ignored is no dry run.
+      assert.strictEqual(G.bashAllowed(`node "${CLI}" archive shop/cart --delete-ignored --expect-ignored --dry-run`), false);
+      assert.strictEqual(G.bashAllowed(`node "${CLI}" archive shop/cart --delete-ignored --expect-ignored seen.json --dry-run --json`), true);
+      assert.strictEqual(G.bashAllowed(`node "${CLI}" remove repo --delete-ignored --expect-ignored seen.json`), false);
     });
   }
 

@@ -630,6 +630,7 @@ async function cmdRemove(args) {
   currentWs = ws;
   const generate = lib('generate');
   const ui = lib('ui');
+  const expectIgnored = expectedIgnored(flags, !!flags['--delete-ignored'], generate.parseExpectFiles);
   if (!flags['--dry-run']) lock(ws);
   try {
     if (lib('workspace').readState(ws).archive) invalid(t('cli.archivedWs', { ws, name: path.basename(ws) }));
@@ -637,6 +638,7 @@ async function cmdRemove(args) {
   let plan;
   try {
     plan = generate.planRemove(ws, pos[0], { deleteIgnored: !!flags['--delete-ignored'] });
+    if (expectIgnored) generate.expectRemoveIgnored(ws, plan, expectIgnored);
   } catch (e) {
     // Ctrl+C while git listed the worktree: exit 130. Only read so far, nothing changed.
     if (e && e.name === 'Interrupted') throw Object.assign(e, { rollback: 'none' });
@@ -654,6 +656,8 @@ async function cmdRemove(args) {
     ignored: r ? plan.ignored.map((f) => path.join(ws, r.name, f)) : [],
     files: plan.errors.length ? [] : plan.files.map((f) => path.join(ws, f)),
     settingsChanged: plan.settingsChanged,
+    ignoredChanged: !!plan.ignoredChanged,
+    ignoredStamp: r ? plan.ignoredStamp : null,
   });
   // A refused plan: the same document with --dry-run and without.
   if (json && plan.errors.length) return J.fail('invalid_input', plan.errors[0], { details: plan.errors, result: result(), warnings: plan.warnings });
@@ -678,13 +682,24 @@ async function cmdRemove(args) {
   }
   guardPlatform();
   try {
-    const { branch } = await generate.remove(ws, r.name, cfg, { deleteIgnored: !!flags['--delete-ignored'], ignored: plan.ignored });
+    const { branch } = await generate.remove(ws, r.name, cfg, {
+      deleteIgnored: !!flags['--delete-ignored'], ignored: plan.agreed || plan.ignored, ...(plan.agreed ? { ignoredStamp: plan.agreedStamp } : {}),
+    });
     if (json) return J.succeed(result(branch));
     ui.head(t('cli.removed', { name: r.name }));
     if (branch) ui.info(t('cli.branchKept', { branch, path: r.path }));
   } catch (e) {
     // Files that appeared after the plan: refused before anything changed.
     if (e && e.invalid) {
+      plan.ignoredChanged = !!e.ignoredChanged;
+      // Changed after the plan: the result has the ignored files as they are now, read again.
+      if (e.ignoredChanged) {
+        try {
+          const fresh = generate.planRemove(ws, r.name, { deleteIgnored: true });
+          plan.ignored = fresh.ignored;
+          plan.ignoredStamp = fresh.ignoredStamp;
+        } catch { /* the plan's list stays */ }
+      }
       if (json) return J.fail('invalid_input', e.message, { details: [e.message], result: result(), warnings: plan.warnings });
       process.stderr.write(`wsg: ${e.message}\n`);
       return INVALID;
@@ -1083,6 +1098,26 @@ function stopBetweenSteps() {
   };
 }
 
+// --expect-ignored FILE of wsg archive and wsg remove: the ignored files the owner was shown, read
+// with parse (it throws with the message). Only with --delete-ignored: alone it agrees to nothing.
+// Exit 2 for a file that does not read or is not such a list. Returns the parsed list, or undefined.
+function expectedIgnored(flags, deleteIgnored, parse) {
+  const file = flags['--expect-ignored'];
+  if (file === undefined) return undefined;
+  if (!deleteIgnored) invalid(t('cli.expectNeedsDelete'));
+  let text;
+  try {
+    text = fs.readFileSync(file, 'utf8');
+  } catch (e) {
+    invalid(t('cli.expectUnreadable', { file, why: e.code || e.message }));
+  }
+  try {
+    return parse(text);
+  } catch (e) {
+    return invalid(`${file}: ${e.message}`);
+  }
+}
+
 // `wsg archive`: lib/archive.js. Planned with everything checked before the first change; a refused
 // plan is the same document with --dry-run and without.
 async function cmdArchive(args) {
@@ -1102,11 +1137,12 @@ async function cmdArchive(args) {
   };
   const dryRun = !!flags['--dry-run'];
   const deleteIgnored = !!flags['--delete-ignored'];
+  const expectIgnored = expectedIgnored(flags, deleteIgnored, A.parseExpectIgnored);
   let state = readState(ws);
   if (!dryRun) state = archiveLocks(ws, state, readState);
   let plan;
   try {
-    plan = A.planArchive(ws, state, { deleteIgnored });
+    plan = A.planArchive(ws, state, { deleteIgnored, expectIgnored });
   } catch (e) {
     // Ctrl+C while git was asked about a worktree: only read so far, nothing changed.
     if (e && e.name === 'Interrupted') {
@@ -1117,7 +1153,7 @@ async function cmdArchive(args) {
     throw e;
   }
   const json = J.active();
-  const result = (done = null) => A.archiveResult(plan, { deleteIgnored, done });
+  const result = (done = null, o = {}) => A.archiveResult(plan, { deleteIgnored, done, ...o });
   const name = wsName(ws, state);
   if (json && plan.errors.length) return J.fail('invalid_input', plan.errors[0], { details: plan.errors, result: result(), warnings: plan.warnings });
   if (dryRun && json) return J.succeed(result(), { warnings: plan.warnings });
@@ -1144,14 +1180,18 @@ async function cmdArchive(args) {
     const partial = e && e.partial ? t('cli.archivePartial', { list: e.done.join(', ') }) : '';
     // A worktree that changed after the plan: refused before anything of it changed.
     if (e && e.invalid && e.rollback === 'none' && !partial) {
-      if (json) return J.fail('invalid_input', e.message, { details: [e.message], result: result(), warnings: plan.warnings });
+      // The ignored files changed after the plan: the result has them as they are now, read again.
+      const o = e.ignoredChanged ? { ignoredChanged: true, freshIgnored: A.freshIgnored(ws, readState(ws), { deleteIgnored }) } : {};
+      if (json) return J.fail('invalid_input', e.message, { details: [e.message], result: result(null, o), warnings: plan.warnings });
       process.stderr.write(`wsg: ${e.message}\n`);
       return INVALID;
     }
     const what = (msg) => (e && e.failedTask ? t('cli.archiveTaskFailed', { task: e.failedTask, msg }) : msg) + (partial ? `\n${partial}` : '');
     // What a run that stopped part of the way did, for a program: the tasks it archived (they stay
     // so), the one that failed, why.
-    const stopped = (reason) => ({ done: (e && e.done) || [], failedTask: (e && e.failedTask) || null, reason });
+    // ignoredChanged: it failed because ignored files changed after the plan (a later task's re-check,
+    // or a source's own removal).
+    const stopped = (reason) => ({ done: (e && e.done) || [], failedTask: (e && e.failedTask) || null, reason, ignoredChanged: !!(e && e.ignoredChanged) });
     if (e && e.name === 'Interrupted') {
       if (json) return J.fail('interrupted', what(cancelled(e)), { ...J.rollbackOf(e, ws), warnings: plan.warnings, result: stopped('interrupted') });
       process.stderr.write(`${what(cancelled(e))}\n`);
