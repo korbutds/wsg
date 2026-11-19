@@ -143,6 +143,7 @@ function make(slug, sources = [], extra = [], env = {}) {
     for (const [args, re] of [
       [['move', 'flagged'], /say where the task goes/],
       [['move', 'flagged', '--epic', 'x', '--out'], /--epic and --out together/],
+      [['move', 'flagged', '--out', '--title', 'T'], /--title is the title of a new epic/],
       [['move', 'flagged', '--epic', 'nowhere'], /nowhere/],
     ]) {
       const r = wsg(args);
@@ -733,6 +734,216 @@ function make(slug, sources = [], extra = [], env = {}) {
       assert.strictEqual(r2.code, 2, r2.all);
       assert.match(r2.doc.error.message, /right in WS_ROOT, but its state names the epic half-ep/);
     });
+  }
+
+  console.log('\n--new-epic');
+  {
+    const ws = make('lamp3');
+    const r = json(['move', 'lamp3', '--epic', 'lights', '--new-epic', '--title', 'Lights']);
+    const ep = path.join(wsRoot, 'lights');
+    const dest = path.join(ep, 'lamp3');
+    it('exit 0, newEpic, the task in it', () => {
+      assert.strictEqual(r.code, 0, r.all);
+      assert.strictEqual(r.doc.result.newEpic, true);
+      assert.deepStrictEqual(r.doc.result.to, { epic: 'lights', path: dest });
+      assert.ok(fs.existsSync(path.join(dest, 'AGENTS.md')) && !fs.existsSync(ws));
+    });
+    it('the epic is what wsg new --kind epic makes, its tasks.md listing the task', () => {
+      const root2 = path.join(tmp, 'ws3');
+      fs.mkdirSync(root2);
+      const fresh = make('lights', [], ['--kind', 'epic', '--title', 'Lights'], { WS_ROOT: root2 });
+      const st = readState(ep);
+      assert.strictEqual(st.kind, 'epic');
+      assert.strictEqual(st.title, 'Lights');
+      assert.deepStrictEqual(st.sources, []);
+      for (const f of ['AGENTS.md', 'CLAUDE.md', 'knowledge.md', 'decisions.md', path.join('.claude', 'wsg.json')]) {
+        assert.strictEqual(read(ep, f), read(fresh, f).replaceAll(root2, wsRoot), f);
+      }
+      assert.match(read(ep, 'tasks.md'), /^- `lamp3\/`$/m);
+    });
+    it('the task renders the new epic: no Owner rules yet', () => assert.match(read(dest, 'AGENTS.md'), /Epic `lights` has no Owner rules filled in yet/));
+    const taken = json(['move', 'lights/lamp3', '--epic', 'lights', '--new-epic']);
+    it('an epic that exists: refused, exit 2', () => {
+      assert.strictEqual(taken.code, 2, taken.all);
+      assert.match(taken.doc.error.message, /exists already/);
+    });
+  }
+  {
+    // The new epic takes the task's own name: the task steps aside while the epic is made.
+    const repo = makeRepo('cafe-api');
+    const ws = make('cafe', [[repo, ['--branch', 'feat/cafe']]]);
+    const dry = json(['move', 'cafe', '--epic', 'cafe', '--new-epic', '--dry-run']);
+    it('--dry-run: cafe into cafe/cafe', () => {
+      assert.strictEqual(dry.code, 0, dry.all);
+      assert.strictEqual(dry.doc.result.to.path, path.join(ws, 'cafe'));
+    });
+    const r = wsg(['move', 'cafe', '--epic', 'cafe', '--new-epic']);
+    const dest = path.join(wsRoot, 'cafe', 'cafe');
+    it('exit 0: the epic cafe, the task cafe in it, its worktree usable', () => {
+      assert.strictEqual(r.code, 0, r.all);
+      assert.strictEqual(readState(path.join(wsRoot, 'cafe')).kind, 'epic');
+      assert.deepStrictEqual(readState(dest).epic, { slug: 'cafe' });
+      usable(path.join(dest, 'cafe-api'), repo);
+    });
+    it('nothing hidden left in WS_ROOT', () => assert.deepStrictEqual(fs.readdirSync(wsRoot).filter((e) => e.startsWith('.')), []));
+  }
+
+  console.log('\na done task, and entries for the epic not merged');
+  {
+    make('market', [], ['--kind', 'epic']);
+    const ws = make('scale', [], ['--epic', 'market']);
+    fs.writeFileSync(path.join(ws, 'notes.md'), read(ws, 'notes.md').replace('## For the epic\n', '## For the epic\n\n- 2026-11-19: the scale rounds down (a.ts:1)\n'));
+    assert.strictEqual(wsg(['close', 'market/scale']).code, 0);
+    const r = json(['move', 'market/scale', '--out']);
+    it('moved with both warnings, still done', () => {
+      assert.strictEqual(r.code, 0, r.all);
+      const w = r.doc.warnings.join('\n');
+      assert.match(w, /market\/scale is done: it moves as it is/);
+      assert.match(w, /"## For the epic" that the epic market has not merged/);
+      assert.strictEqual(readState(path.join(wsRoot, 'scale')).status, 'done');
+    });
+    const back = json(['move', 'scale', '--epic', 'market']);
+    it('into an epic: its tasks.md shows it done', () => {
+      assert.strictEqual(back.code, 0, back.all);
+      assert.match(read(wsRoot, 'market', 'tasks.md'), /^- `scale\/` \[done \d{4}-\d{2}-\d{2}\]$/m);
+    });
+  }
+
+  console.log('\na failure after the rename, and a stop signal: everything back');
+  {
+    const M = require(path.join(ROOT, 'lib', 'move.js'));
+    const G = require(path.join(ROOT, 'lib', 'generate.js'));
+    const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
+    const quiet = async (fn) => {
+      const log = console.log;
+      const err = process.stderr.write;
+      console.log = () => {};
+      process.stderr.write = () => true;
+      try { return await fn(); } finally { console.log = log; process.stderr.write = err; }
+    };
+    const abs = makeRepo('gym-abs');
+    const rel = makeRepo('gym-rel');
+    git(rel, ['config', 'worktree.useRelativePaths', 'true']);
+    const ep = make('gym', [], ['--kind', 'epic']);
+    make('mat', [], ['--epic', 'gym']);
+    for (const [what, patch] of [
+      ['a failure in the render there', (real) => ({ computeRender: (...a) => (a[0].includes(`${path.sep}gym${path.sep}`) ? (() => { throw new Error('injected failure'); })() : real.computeRender(...a)) })],
+      ['a failure in the epic\'s tasks.md', (real) => ({ renderTasks: () => { throw new Error('injected failure'); } })],
+      ['a stop signal during the move', (real) => ({ renderTasks: (...a) => { process.emit('SIGINT'); return real.renderTasks(...a); } })],
+    ]) {
+      const slug = `rope-${passed}`;
+      const ws = make(slug, [[abs, ['--branch', `feat/${slug}`]], [rel, ['--branch', `feat/${slug}`]]]);
+      const before = { task: tree(ws), epic: tree(ep), abs: links(path.join(ws, 'gym-abs')), rel: links(path.join(ws, 'gym-rel')) };
+      const plan = M.planMove(ws, W.readState(ws), { epicWs: ep }, cfg);
+      const real = { computeRender: G.computeRender, renderTasks: G.renderTasks };
+      const swap = patch(real);
+      Object.assign(G, swap);
+      let err = null;
+      try {
+        await quiet(async () => { try { await M.applyMove(plan, cfg); } catch (e) { err = e; } });
+      } finally {
+        Object.assign(G, real);
+      }
+      it(`${what}: the error, rolled back done`, () => {
+        assert.deepStrictEqual(plan.errors, []);
+        assert.ok(err, 'no error');
+        if (what.includes('signal')) assert.strictEqual(err.name, 'Interrupted');
+        else assert.match(err.message, /injected failure/);
+        assert.strictEqual(err.rollback, 'done');
+      });
+      it(`${what}: the task back where it was, byte for byte, the epic as it was`, () => {
+        assert.ok(!fs.existsSync(path.join(ep, slug)));
+        assert.deepStrictEqual(tree(ws), before.task);
+        assert.deepStrictEqual(tree(ep), before.epic);
+      });
+      it(`${what}: both worktrees usable there, their links as git wrote them`, () => {
+        usable(path.join(ws, 'gym-abs'), abs);
+        usable(path.join(ws, 'gym-rel'), rel);
+        assert.deepStrictEqual(links(path.join(ws, 'gym-abs')), before.abs);
+        assert.deepStrictEqual(links(path.join(ws, 'gym-rel')), before.rel);
+      });
+    }
+    {
+      // A new epic of the task's own name, rolled back: the epic gone, the task back, nothing hidden left.
+      const ws = make('bench', [[abs, ['--branch', 'feat/bench']]]);
+      const before = tree(ws);
+      const plan = M.planMove(ws, W.readState(ws), { epicWs: path.join(wsRoot, 'bench'), newEpic: true }, cfg);
+      const real = G.renderTasks;
+      G.renderTasks = () => { throw new Error('injected failure'); };
+      let err = null;
+      try {
+        await quiet(async () => { try { await M.applyMove(plan, cfg); } catch (e) { err = e; } });
+      } finally {
+        G.renderTasks = real;
+      }
+      it('a new epic of its own name, rolled back: the task as it was, no epic, nothing hidden', () => {
+        assert.ok(plan.staging);
+        assert.strictEqual(err && err.rollback, 'done', err && err.message);
+        assert.deepStrictEqual(tree(ws), before);
+        assert.strictEqual(readState(ws).kind, 'task');
+        assert.deepStrictEqual(fs.readdirSync(wsRoot).filter((e) => e.startsWith('.')), []);
+        usable(path.join(ws, 'gym-abs'), abs);
+      });
+    }
+    for (const [what, slug, epicSlug] of [['a new epic', 'stool', 'seats'], ['a new epic of the task\'s own name', 'chair', 'chair']]) {
+      // The skeleton of the new epic fails half-way: nothing of it stays, the task is back.
+      const ws = make(slug, [[abs, ['--branch', `feat/${slug}`]]]);
+      const before = tree(ws);
+      const plan = M.planMove(ws, W.readState(ws), { epicWs: path.join(wsRoot, epicSlug), newEpic: true }, cfg);
+      const realWrite = fs.writeFileSync;
+      fs.writeFileSync = function (p, ...a) {
+        if (String(p).endsWith(`${path.sep}knowledge.md`)) throw Object.assign(new Error('injected failure'), { code: 'EIO' });
+        return realWrite.call(fs, p, ...a);
+      };
+      let err = null;
+      try {
+        await quiet(async () => { try { await M.applyMove(plan, cfg); } catch (e) { err = e; } });
+      } finally {
+        fs.writeFileSync = realWrite;
+      }
+      it(`${what}, its skeleton failing half-way: rolled back, no epic, the task as it was`, () => {
+        assert.strictEqual(err && err.rollback, 'done', err && err.message);
+        assert.match(err.message, /injected failure/);
+        assert.deepStrictEqual(tree(ws), before);
+        assert.strictEqual(readState(ws).kind, 'task');
+        if (slug !== epicSlug) assert.ok(!fs.existsSync(path.join(wsRoot, epicSlug)));
+        assert.deepStrictEqual(fs.readdirSync(wsRoot).filter((e) => e.startsWith('.')), []);
+        usable(path.join(ws, 'gym-abs'), abs);
+      });
+    }
+    git(rel, ['config', '--unset', 'worktree.useRelativePaths']);
+  }
+
+  console.log('\nws: the session from before the move');
+  {
+    const ws = make('crate');
+    const r = wsg(['move', 'crate', '--epic', 'market']);
+    const dest = path.join(wsRoot, 'market', 'crate');
+    const claudeDir = path.join(tmp, 'claude-sessions');
+    const enc = (p) => p.replace(/[^a-zA-Z0-9]/g, '-');
+    const old = path.join(claudeDir, 'projects', enc(ws));
+    fs.mkdirSync(old, { recursive: true });
+    fs.writeFileSync(path.join(old, 'aaaaaaaa-0000-4000-8000-00000000000f.jsonl'), '{"type":"user","message":{"role":"user","content":"hi"}}\n');
+    const fakeBin = path.join(tmp, 'fake-bin');
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, 'claude'), '#!/bin/sh\nprintf claude; for a; do printf \' [%s]\' "$a"; done; echo\n', { mode: 0o755 });
+    const wsZsh = path.join(tmp, 'wsg.zsh');
+    fs.writeFileSync(wsZsh, wsg(['shell-init', 'zsh']).out);
+    const cfgFile = path.join(tmp, 'ws-config');
+    fs.writeFileSync(cfgFile, 'WSG_AGENT=claude\n');
+    const ws_ = (arg) => {
+      const z = spawnSync('zsh', ['-f', '-c', `source ${JSON.stringify(wsZsh)}; ws ${arg}`],
+        { encoding: 'utf8', input: '', env: { ...ENV, PATH: `${fakeBin}:${process.env.PATH}`, WSG_CONFIG: cfgFile, CLAUDE_CONFIG_DIR: claudeDir } });
+      return z.stdout + z.stderr;
+    };
+    it('moved', () => assert.strictEqual(r.code, 0, r.all));
+    it('ws resumes the session kept under the old directory', () => assert.match(ws_('market/crate'), /^claude \[--resume\] \[aaaaaaaa-0000-4000-8000-00000000000f\]$/m));
+    const now = path.join(claudeDir, 'projects', enc(dest));
+    fs.mkdirSync(now, { recursive: true });
+    fs.writeFileSync(path.join(now, 'bbbbbbbb-0000-4000-8000-00000000000f.jsonl'), '{"type":"user","message":{"role":"user","content":"hi"}}\n');
+    it('a session in the new directory comes first', () => assert.match(ws_('market/crate'), /^claude \[--resume\] \[bbbbbbbb-0000-4000-8000-00000000000f\]$/m));
+    it('--new still starts a new one', () => assert.match(ws_('market/crate --new'), /^claude \[-n\] \[market\/crate\]$/m));
+    it('wsg wrote nothing under the Claude Code config', () => assert.ok(!fs.existsSync(ENV.CLAUDE_CONFIG_DIR) || !fs.existsSync(path.join(ENV.CLAUDE_CONFIG_DIR, 'projects'))));
   }
 
   finished = true;

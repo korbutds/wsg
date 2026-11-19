@@ -4,7 +4,8 @@
 #   ws                  list workspaces
 #   ws <slug>           jump in and start the agent from WSG_AGENT
 #   ws <epic>/<task>    the same for a task inside an epic
-#                       (claude resumes the last session with a message, if any)
+#                       (claude resumes the last session with a message, if any;
+#                       a task wsg move moved: from its old directory too)
 #   ws <slug> --new     jump in and start a new session
 #   ws <slug> --cd      only jump in
 #   ws <slug> --codex   jump in and start codex, whatever WSG_AGENT says
@@ -154,6 +155,33 @@ _ws_last_session() {
     recent=($f(N.mm-1))
     (( ${#recent} )) && _WS_SESSION_RECENT=1
     return 0
+  done
+  return 1
+}
+
+# The directories a task was in before wsg move moved it, the latest first, in reply: the "from" of
+# each entry of "moved" in its state, an absolute path ("from": "epic" of a source is none). Read by the
+# shell itself, one key a line as wsg writes the state; a path with a quote or a backslash is skipped.
+# Returns 1 when there is none.
+_ws_moved_from() {
+  reply=()
+  local f="$1/.claude/wsg.json" line MATCH MBEGIN MEND
+  local -a found match mbegin mend
+  [ -f "$f" ] || return 1
+  for line in "${(@f)$(<"$f")}"; do
+    [[ "$line" =~ '^ *"from": "(/[^"\\]*)",?$' ]] && found+=("$match[1]")
+  done
+  reply=("${(@Oa)found}")
+  (( ${#reply} ))
+}
+
+# No session in the task's own directory: the last one Claude Code keeps under a directory the task
+# was moved from (wsg move never touches ~/.claude), the latest move first. Its id in REPLY.
+_ws_last_moved_session() {
+  local d
+  _ws_moved_from "$1" || return 1
+  for d in "${reply[@]}"; do
+    _ws_last_session "$d" && return 0
   done
   return 1
 }
@@ -333,7 +361,7 @@ ws() {
   case "$REPLY" in
     claude)
       # claude with extra flags (a model, permissions) keeps session handling
-      if [ "$mode" != --new ] && _ws_last_session "$dir"; then
+      if [ "$mode" != --new ] && { _ws_last_session "$dir" || _ws_last_moved_session "$dir"; }; then
         local id="$REPLY" rc
         [ -n "$_WS_SESSION_RECENT" ] && print -r -u2 -- "@@ws.resume.recent@@"
         eval "$line --resume ${(q)id}"

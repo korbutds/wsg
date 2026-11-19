@@ -1382,7 +1382,7 @@ async function cmdReorder(args) {
   return 0;
 }
 
-// `wsg move <task> (--epic E | --out)`: lib/move.js. The task named (a slug,
+// `wsg move <task> (--epic E [--new-epic] [--title T] | --out)`: lib/move.js. The task named (a slug,
 // <epic>/<task> or a path), the one --ws names, else the one you are in. Planned with nothing touched
 // under the locks — the epics' first, in the order of their paths, then the task's — then applied in
 // one transaction; a refused plan is the same document with --dry-run and without.
@@ -1392,6 +1392,8 @@ async function cmdMove(args) {
   if (flags['--epic'] === undefined && !out) invalid(t('move.needWhere'));
   if (flags['--epic'] !== undefined && out) invalid(t('move.bothWhere'));
   if (flags['--epic'] === '') invalid(t('cli.needsValue', { arg: '--epic' }));
+  if (flags['--new-epic'] && flags['--epic'] === undefined) invalid(t('move.newEpicNeedsEpic'));
+  if (flags['--title'] !== undefined && !flags['--new-epic']) invalid(t('move.titleNeedsNewEpic'));
   const ws = archiveTarget(pos, flags);
   currentWs = ws;
   const W = lib('workspace');
@@ -1408,18 +1410,23 @@ async function cmdMove(args) {
   const native = (p) => { try { return fs.realpathSync.native(p); } catch { return path.resolve(p); } };
   const root = native(cfg.WS_ROOT);
   let epicWs = null;
-  if (flags['--epic'] !== undefined) {
+  if (flags['--epic'] !== undefined && flags['--new-epic']) {
+    const bad = W.slugError(flags['--epic']);
+    if (bad) invalid(t('workspace.badSlug', { slug: flags['--epic'], why: bad }));
+    epicWs = path.join(root, flags['--epic']);
+  } else if (flags['--epic'] !== undefined) {
     const given = config.resolveWs(flags['--epic'], cfg);
     if (!fs.existsSync(given)) invalid(t('cli.noEpic', { ws: given }));
     if (path.dirname(native(given)) !== root) invalid(t('cli.epicOutsideRoot', { ws: given, root: cfg.WS_ROOT }));
     epicWs = path.join(root, path.basename(native(given)));
   }
-  const want = out ? { out: true } : { epicWs };
+  const want = out ? { out: true } : { epicWs, newEpic: !!flags['--new-epic'], title: flags['--title'] };
   const dryRun = !!flags['--dry-run'];
   let state = readState(ws);
   if (!dryRun) {
-    // Every epic it touches: the one it leaves, the one it joins.
-    const epics = [...new Set([state.epic ? W.epicOf(ws, state) : null, epicWs].filter(Boolean))].sort();
+    // Every epic it touches that is there: the one it leaves, the one it joins. A new epic is made
+    // inside the move, where no one else can see it yet.
+    const epics = [...new Set([state.epic ? W.epicOf(ws, state) : null, epicWs && !want.newEpic ? epicWs : null].filter(Boolean))].sort();
     // A directory above that is no workspace at all (a task moved by hand): the plan says what it is.
     for (const e of epics.filter((d) => W.hasState(d))) {
       try {
@@ -1465,7 +1472,7 @@ async function cmdMove(args) {
   guardPlatform();
   let done;
   try {
-    done = await M.applyMove(plan);
+    done = await M.applyMove(plan, cfg);
   } catch (e) {
     if (e && e.name === 'Interrupted') {
       if (json) return J.fail('interrupted', cancelled(e), { ...J.rollbackOf(e, ws), warnings: plan.warnings });
@@ -1483,6 +1490,7 @@ async function cmdMove(args) {
   if (json) return J.succeed(result(done), { warnings: plan.warnings });
   const shown = (epic) => (epic ? `${epic}/${plan.slug}` : plan.slug);
   ui.head(t('move.moved', { from: shown(plan.from.epic), to: shown(plan.to.epic) }));
+  if (plan.newEpic) ui.info(t('move.newEpicMade', { epic: plan.to.epic, path: plan.toEpicWs }));
   ui.info(t('move.where', { path: plan.to.path }));
   if (plan.worktrees.length) ui.info(t('move.relinkedWorktrees', { list: plan.worktrees.map((w) => w.name).join(', ') }));
   // Taken from an epic before (the old one), or the task's own until now.
