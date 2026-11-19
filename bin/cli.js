@@ -1382,6 +1382,124 @@ async function cmdReorder(args) {
   return 0;
 }
 
+// `wsg move <task> (--epic E | --out)`: lib/move.js. The task named (a slug,
+// <epic>/<task> or a path), the one --ws names, else the one you are in. Planned with nothing touched
+// under the locks — the epics' first, in the order of their paths, then the task's — then applied in
+// one transaction; a refused plan is the same document with --dry-run and without.
+async function cmdMove(args) {
+  const { flags, pos } = parse(args, FLAGS.move, 1);
+  const out = !!flags['--out'];
+  if (flags['--epic'] === undefined && !out) invalid(t('move.needWhere'));
+  if (flags['--epic'] !== undefined && out) invalid(t('move.bothWhere'));
+  if (flags['--epic'] === '') invalid(t('cli.needsValue', { arg: '--epic' }));
+  const ws = archiveTarget(pos, flags);
+  currentWs = ws;
+  const W = lib('workspace');
+  const M = lib('move');
+  const ui = lib('ui');
+  const readState = (dir) => {
+    try {
+      return W.readState(dir);
+    } catch (e) {
+      return invalid(e.message);
+    }
+  };
+  // The epic it goes into, right in WS_ROOT, by the name it has on disk (on macOS `SHOP` finds `shop`).
+  const native = (p) => { try { return fs.realpathSync.native(p); } catch { return path.resolve(p); } };
+  const root = native(cfg.WS_ROOT);
+  let epicWs = null;
+  if (flags['--epic'] !== undefined) {
+    const given = config.resolveWs(flags['--epic'], cfg);
+    if (!fs.existsSync(given)) invalid(t('cli.noEpic', { ws: given }));
+    if (path.dirname(native(given)) !== root) invalid(t('cli.epicOutsideRoot', { ws: given, root: cfg.WS_ROOT }));
+    epicWs = path.join(root, path.basename(native(given)));
+  }
+  const want = out ? { out: true } : { epicWs };
+  const dryRun = !!flags['--dry-run'];
+  let state = readState(ws);
+  if (!dryRun) {
+    // Every epic it touches: the one it leaves, the one it joins.
+    const epics = [...new Set([state.epic ? W.epicOf(ws, state) : null, epicWs].filter(Boolean))].sort();
+    // A directory above that is no workspace at all (a task moved by hand): the plan says what it is.
+    for (const e of epics.filter((d) => W.hasState(d))) {
+      try {
+        W.epicState(e);
+      } catch (err) {
+        invalid(err.message);
+      }
+      lock(e);
+    }
+    lock(ws);
+    state = readState(ws);
+  }
+  let plan;
+  try {
+    plan = M.planMove(ws, state, want, cfg);
+  } catch (e) {
+    // Ctrl+C while git was asked about a worktree: only read so far, nothing changed.
+    if (e && e.name === 'Interrupted') {
+      if (J.active()) return J.fail('interrupted', t('cli.addCancelled'), { rollback: 'none' });
+      process.stderr.write(`\n${t('cli.addCancelled')}\n`);
+      return 130;
+    }
+    throw e;
+  }
+  const json = J.active();
+  const result = (done = null) => M.moveResult(plan, done);
+  if (json && plan.errors.length) return J.fail('invalid_input', plan.errors[0], { details: plan.errors, result: result(), warnings: plan.warnings });
+  if (dryRun && json) return J.succeed(result(), { warnings: plan.warnings });
+  if (dryRun) {
+    process.stdout.write(`${JSON.stringify({ ...result(), errors: plan.errors, warnings: plan.warnings }, null, 2)}\n`);
+    return plan.errors.length ? INVALID : 0;
+  }
+  if (plan.errors.length) {
+    for (const e of plan.errors) process.stderr.write(`wsg: ${e}\n`);
+    return INVALID;
+  }
+  if (!M.changes(plan)) {
+    if (json) return J.succeed(result(), { warnings: plan.warnings });
+    ui.ok(t('move.same', { name: plan.name }));
+    return 0;
+  }
+  if (!json) for (const w of plan.warnings) ui.warn(w);
+  guardPlatform();
+  let done;
+  try {
+    done = await M.applyMove(plan);
+  } catch (e) {
+    if (e && e.name === 'Interrupted') {
+      if (json) return J.fail('interrupted', cancelled(e), { ...J.rollbackOf(e, ws), warnings: plan.warnings });
+      process.stderr.write(`${cancelled(e)}\n`);
+      return 130;
+    }
+    if (e && e.rollback) {
+      if (json) return J.fail('step_failed', String(e.message), { ...J.rollbackOf(e, ws), warnings: plan.warnings });
+      process.stderr.write(`wsg: ${String(e.message)}\n`);
+      return 1;
+    }
+    throw e;
+  }
+  currentWs = plan.to.path;
+  if (json) return J.succeed(result(done), { warnings: plan.warnings });
+  const shown = (epic) => (epic ? `${epic}/${plan.slug}` : plan.slug);
+  ui.head(t('move.moved', { from: shown(plan.from.epic), to: shown(plan.to.epic) }));
+  ui.info(t('move.where', { path: plan.to.path }));
+  if (plan.worktrees.length) ui.info(t('move.relinkedWorktrees', { list: plan.worktrees.map((w) => w.name).join(', ') }));
+  // Taken from an epic before (the old one), or the task's own until now.
+  const wasFromEpic = (n) => plan.state.sources.some((s) => s.name === n && s.from === 'epic');
+  const kept = plan.relinked.filter(wasFromEpic);
+  const adopted = plan.relinked.filter((n) => !wasFromEpic(n));
+  if (kept.length) ui.info(t('move.relinkedSources', { list: kept.join(', '), epic: plan.to.epic }));
+  if (adopted.length) ui.info(t('move.adoptedSources', { list: adopted.join(', '), epic: plan.to.epic }));
+  if (plan.dropped.length) ui.info(t('move.droppedSources', { list: plan.dropped.join(', ') }));
+  if (plan.ticketDropped) ui.info(t('move.ticketDropped'));
+  if (plan.notes !== null) ui.info(t('move.notesForEpic'));
+  if (done.tasksMdUpdated.from) ui.info(t('cli.statusTasksMd', { file: path.join(plan.fromEpicWs, 'tasks.md') }));
+  if (done.tasksMdUpdated.to) ui.info(t('cli.statusTasksMd', { file: path.join(plan.toEpicWs, 'tasks.md') }));
+  ui.info(t('move.next', { name: shown(plan.to.epic) }));
+  return 0;
+}
+
 // Every task of the epic refreshed after its change is written (generate.refreshEpicTasks), each under
 // its own lock; the caller holds the epic's. From here a stop signal stops only the refresh of the
 // tasks, and says so — the epic is not put back (lib/lock.js's handler would say it was). The tasks
@@ -1795,6 +1913,7 @@ const COMMANDS = {
   archive: cmdArchive,
   unarchive: cmdUnarchive,
   reorder: cmdReorder,
+  move: cmdMove,
   'install-skills': cmdInstallSkills,
   // The 0.1 spellings, kept for one release.
   '--check': cmdCheck,
