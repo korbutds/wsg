@@ -42,8 +42,10 @@
 #      worktree archived (`wsg archive`: the worktree gone, the branch kept, list says archived) and
 #      unarchived (the worktree back on the branch, status open); `wsg reorder` of an epic's task
 #      directories and of its tracker tasks under "## Other tasks", the order in tasks.md and in
-#      wsg list --json. WSG_SMOKE_ONLY=v08 runs this step alone: claude need not be installed, and
-#      nothing under the user's config dir is touched.
+#      wsg list --json; and what 0.8.1 adds: `wsg move` of a task with a worktree into the epic and
+#      out again, the worktree usable at each place, tasks.md following, wsg check clean.
+#      WSG_SMOKE_ONLY=v08 runs this step alone: claude need not be installed, and nothing under the
+#      user's config dir is touched.
 #
 # The agent is the user-level one: for the run, this checkout's agent is rendered into
 # ${CLAUDE_CONFIG_DIR:-~/.claude}/agents/wsg-advisor.md, as `wsg install-skills` would write it,
@@ -204,9 +206,9 @@ JS
   report "a global server the epic leaves on is listed (the control)" "$(has "$out" smokeon)"
   echo "  info  $(snippet "$out")"
 }
-# 9. What wsg 0.8 adds, with wsg alone: a task without code, archive and unarchive, reorder. No model.
+# 9. What wsg 0.8 adds, with wsg alone: a task without code, archive and unarchive, reorder, move. No model.
 v08_step() {
-  echo "9. wsg 0.8: --no-code, archive and unarchive, reorder (no model)"
+  echo "9. wsg 0.8: --no-code, archive and unarchive, reorder, move (no model)"
   local nc="$WS_ROOT/v08-spec" ar="$WS_ROOT/v08-arc" ep="$WS_ROOT/v08-epic" field
   # A field of a workspace in wsg list --json: v08_field <slug> <expression on the entry e>.
   v08_field() {
@@ -245,6 +247,20 @@ v08_step() {
   report "wsg reorder of a tracker task under Other tasks" "$ok"
   report "list --json: trackerTasks in the new order" "$([ "$(v08_field v08-epic 'e.trackerTasks.map((t) => t.id).join(",")')" = "ACME-2,ACME-1" ] && echo yes || echo no)"
   report "wsg check sees no drift in tasks.md" "$(hasnt "$(wsg check v08-epic 2>&1)" 'lists other tasks')"
+
+  # wsg 0.8.1: a task with a worktree moved into the epic and out again, the worktree usable at each place.
+  local mv="$WS_ROOT/v081-mv"
+  wsg new v081-mv --no-launch >/dev/null
+  wsg add "$TMP/repo" --branch smoke/v081-mv --ws v081-mv >/dev/null
+  report "wsg move --dry-run changes nothing" "$(wsg move v081-mv --epic v08-epic --dry-run >/dev/null && [ -d "$mv/repo" ] && [ ! -e "$ep/v081-mv" ] && echo yes || echo no)"
+  wsg move v081-mv --epic v08-epic >/dev/null && ok=yes || ok=no
+  report "wsg move into the epic" "$ok"
+  report "the worktree is usable there, on its branch" "$([ "$(git -C "$ep/v081-mv/repo" branch --show-current 2>/dev/null)" = smoke/v081-mv ] && echo yes || echo no)"
+  report "tasks.md lists the task" "$(has "$(cat "$ep/tasks.md")" '- `v081-mv/`')"
+  report "wsg check of the moved task finds no error" "$(wsg check v08-epic/v081-mv >/dev/null 2>&1 && echo yes || echo no)"
+  wsg move v08-epic/v081-mv --out >/dev/null && ok=yes || ok=no
+  report "wsg move --out" "$ok"
+  report "the worktree is usable back in WS_ROOT, the epic's tasks.md without it" "$([ "$(git -C "$mv/repo" branch --show-current 2>/dev/null)" = smoke/v081-mv ] && [ "$(hasnt "$(cat "$ep/tasks.md")" 'v081-mv')" = yes ] && echo yes || echo no)"
 }
 if [ "$V08_ONLY" = yes ]; then
   v08_step

@@ -126,6 +126,7 @@ The commands the agent (or you) call:
 | `wsg archive [<task>] [--delete-ignored [--expect-ignored FILE]] [--dry-run] [--json] [--ws SLUG\|PATH]` | Archives a finished task, a process, or an epic with its tasks, to free the disk: its worktrees go (without `--force`), with the `node_modules` and builds in them, and its symlinks. The branches are never deleted; the workspace with its notes, memory, rules and knowledge stays, and so do the sources as they were attached, in `.claude/wsg.json`. Everything is checked first: changes (skip-worktree and assume-unchanged edits too), untracked files, ignored files that exist nowhere else (unless `--delete-ignored`; `--expect-ignored FILE` also refuses when they are not exactly the `blockers.ignored` list of an earlier `--dry-run --json`, the files the owner was shown, with nothing made, edited, deleted or put back in them since (any activity in a listed directory — a `.DS_Store`, a watcher, a dev server — refuses until it stops; something there that does not read refuses too) — the refusal carries the fresh list; a cloned `node_modules` and carried copies equal to the main checkout are not part of it and go as before), a detached commit no branch has, a locked worktree or a submodule checked out refuse the whole archive, nothing touched. Unpushed commits are a warning. `--dry-run` prints what goes, what stays and the size (an upper bound: copy-on-write clones free less). wsg 0.7 and earlier refuse an archived workspace. |
 | `wsg unarchive [<task>] [--dry-run] [--json] [--ws SLUG\|PATH]` | Brings an archived workspace back: each worktree attached again on its branch as it is, each link made again, the status it had put back. Every source must be able to come back, or nothing changes. An epic brings back the tasks its archive took. Ignored files deleted with `--delete-ignored` do not come back. |
 | `wsg reorder <item> (--before X\|--after X\|--to N) [--dry-run] [--json] [--ws E]` | Moves a task of an epic in the order `tasks.md` shows, within its group: a task directory (the `<!-- wsg:tasks -->` block; the order is kept in the epic's `.claude/wsg.json` as `taskOrder`, and `wsg list` follows it), or a tracker task under "## Other tasks", named by its key, moved with its indented lines. Never across the groups; a section with an item without a key, a key twice, a table or other text is refused. A new task goes to the end; the order survives status changes, archive and refresh. In a task of an epic it acts on the epic. |
+| `wsg move [<task>] (--epic E [--new-epic] [--title T]\|--out) [--dry-run] [--json] [--ws SLUG\|PATH]` | Moves a task into an epic, from one epic into another, or out of its epic: the directory in one rename (notes, memory, worktrees with all they hold, branches untouched), the link of every worktree under it with its repository rewritten in the form git wrote it (absolute or relative; a Claude Code `--worktree` inside a source's too; none outside the task touched), `autoMemoryDirectory` and the `wsg check` line rewritten when they are wsg's text, the epic's blocks in `AGENTS.md` brought in or taken out, the `## For the epic` section added to `notes.md`, both epics' `tasks.md`. A source the target epic has too is taken from it, as `wsg add <name>` takes it; one taken from the old epic that the new one lacks becomes the task's own; a worktree with a submodule checked out is refused; out of an epic the ticket key goes too. `--new-epic` makes the epic (it may take the task's own name). Everything is checked first; a failure or Ctrl+C puts everything back. A process, an epic and an archived task never move; a done task moves with a warning. Claude Code keeps sessions by directory: `ws` resumes the last one from the old path too (the state keeps `moved`), `claude --continue` in the new directory does not see them; wsg never touches `~/.claude`. |
 | `wsg context add <url\|path> [--id ID] [--title T] [--desc D]`, `wsg context note <id> (--text T\|--from FILE\|--from -) [--replace]`, `wsg context remove <id>`, `wsg context list` (each with `--ws E`, `--json`; the writes with `--dry-run`) | An epic's context: links, files copied into `context/`, notes. Its index — one line per item — is rendered into the epic's and every task's `AGENTS.md` in a `<!-- wsg:epic-context -->` block, at once; the agent opens an item only when it needs it. See [Epics](#epics). |
 | `wsg mcp add <name> [--env A,B=value] -- <command> [args...]`, `wsg mcp add <name> --url URL [--bearer-env VAR]`, `wsg mcp remove <name>`, `wsg mcp disable <name>`, `wsg mcp enable <name>`, `wsg mcp list` (each with `--ws E`, `--json`; the writes with `--dry-run`) | An epic's MCP servers for Claude Code: written into the epic's `.mcp.json` and enabled in the epic's and every task's `.claude/settings.json`, at once; `disable` turns a global server off there by name. Secrets by reference only (`${VAR}`). Codex not yet. See [Epics](#epics). |
 | `wsg promote [slug\|path] --skill NAME` | Turns a task into a process. Not an epic or a task of one. |
@@ -297,6 +298,11 @@ $WS_ROOT/shop/
   server that takes the name of one in your user-scope config. In a task
   (`wsg check shop/cart-fix`) it checks the link to the epic and the epic block of `AGENTS.md`, and
   its always-on budget counts what loads from the epic: its `CLAUDE.md` and rules without `paths:`.
+- **Moving a task.** A task made standalone, or in another epic, joins an epic with
+  `wsg move <task> --epic <epic>` (`--dry-run` first); `--out` takes it out of its epic, and
+  `--new-epic` makes the epic for it. The directory moves whole, its worktrees stay usable, and
+  both epics' `tasks.md` follow. Move a task only this way: a directory moved by hand breaks its
+  worktrees' links and points its memory at the old place (`wsg check` warns about the latter).
 - **Not in an epic.** `wsg team` refuses an epic with exit 2 — its agents would load in every task
   below; run it in a task. `wsg promote` refuses an epic and a task of one.
 - **`ws`** lists each epic with its tasks under it; `ws <epic>/<task>` jumps into one, and so does
@@ -504,6 +510,23 @@ shows you the text before writing it.
   `.worktreeinclude`, and auto-cleanup. `wsg` helps where those fall short: a task spanning several
   repositories, a task knowledge layer, and a limits validator.
 - No command to delete a workspace — for now, three commands by hand.
+- **A moved task's sessions.** Claude Code keeps a session under the directory it ran in, and wsg
+  never touches `~/.claude`: after `wsg move`, `ws` resumes the last session from the old directory
+  when the new one has none (`claude --resume <id>` from another directory finds it: checked with
+  `-p`, offline; an interactive session is not checked), and `claude --continue` there does not see
+  it. After `wsg move <task> --epic <task> --new-epic` the epic takes the task's old directory, and
+  with it the task's old sessions: open the epic with `ws <epic> --new`; `ws <epic>/<task>` resumes
+  them through `moved`. A session left open in the task keeps the old path: close it before the
+  move. wsg 0.8.0 and earlier ignore `moved` in the state, and keep it.
+- **A move that stopped.** `wsg move` puts everything back on a failure or Ctrl+C. Killed outright
+  (`kill -9`, a power cut) between the rename and the state, it leaves the task at the new place
+  with its old state, and `wsg move` says so. Put the directory back by hand (`mv`) where its state
+  says it is, run `git -C <repo> worktree repair <worktree>` for each worktree in it if the move got
+  as far as relinking them (repair also brings every other worktree of that repository to the
+  absolute or relative form `worktree.useRelativePaths` says), then run `wsg move` again. Killed
+  after the state was written, only the epics' `tasks.md` are behind: `wsg refresh` in each. A
+  `.<task>.wsg-move-…` directory left in `WS_ROOT` is the task of a stopped `--new-epic` of its own
+  name: rename it back.
 - **Epics in Codex are only partly verified.** Epics were built and tried with Claude Code. A
   task carries what it needs from its epic in its own `AGENTS.md` — plain-text pointers and the
   epic's Owner rules, rendered — because Codex reads only the `AGENTS.md` of its directory: the

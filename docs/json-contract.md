@@ -6,7 +6,7 @@ messages, a crash's stack). This file describes `schemaVersion` 1, as `lib/json.
 `bin/cli.js` produce it.
 
 Commands that take `--json`: `new`, `add`, `remove`, `refresh`, `check`, `list`, `status`, `close`,
-`context add`, `context note`, `context remove`, `context list`, `mcp add`, `mcp remove`,
+`move`, `context add`, `context note`, `context remove`, `context list`, `mcp add`, `mcp remove`,
 `mcp disable`, `mcp enable`, `mcp list`, and `wsg --version --json`. Any other command given `--json` refuses it as an unknown flag, in the
 envelope (`invalid_input`). `--json` is read before anything else can refuse, so a flag error, a
 settings file that can't be read or an unknown command is an envelope too.
@@ -31,7 +31,7 @@ settings file that can't be read or an unknown command is an envelope too.
 ## Envelope
 
 ```json
-{"schemaVersion": 1, "wsgVersion": "0.8.0", "ok": true, "command": "close", "dryRun": false,
+{"schemaVersion": 1, "wsgVersion": "0.8.1", "ok": true, "command": "close", "dryRun": false,
  "result": {}, "error": null, "warnings": []}
 ```
 
@@ -158,6 +158,7 @@ tasks and processes in `WS_ROOT` — each epic's tasks in its `tasks`. Each entr
 | `forEpicPending` | for a task of an epic: `true` while `## For the epic` in its `notes.md` has entries (lines outside HTML comments), i.e. not merged into the epic yet; `null` for anything else |
 | `created` | the UTC date the workspace was made, from the state |
 | `epic` | the epic its state names, or `null` |
+| `moved` | a task `wsg move` moved: `[{from, to, at}]`, its directory before and after each move, as on disk, and the date, oldest first; else `[]` |
 | `legacy` | `true` for a wsg 0.1 workspace (no `.claude/wsg.json`) |
 | `problems` | text: why the state does not read, a status this wsg doesn't know, a source entry that is no source, a task in the wrong place |
 | `extraDirs` | the directories a session reads besides its own: the epic's for a task of one, then its link and reference paths |
@@ -324,6 +325,61 @@ each line keeps its own, a line moved off the end gets the file's, and the file 
 | `order` | the group's order after the move: slugs or keys; `[]` when refused before it is known |
 | `changed` | `false` when it is there already: nothing written |
 | `tasksMdUpdated` | whether `tasks.md` changed (planned, in a dry run): the block for a task, the section for a tracker task |
+
+### move
+
+`wsg move <task> (--epic E [--new-epic] [--title T] | --out)`: a task into an epic, from one epic into
+another, or out of its epic to `WS_ROOT`. The directory moves in one rename, then the link of each
+worktree under it with its repository is rewritten — its sources' and any other git lists there (a
+Claude Code `--worktree` inside a source's, one made by hand) — (`<worktree>/.git` and git's `gitdir`
+file for it, each absolute or relative as git wrote it; no worktree outside the task is touched) and
+checked with git (`rev-parse`, `worktree list`, `status`), and
+the task's state (`epic`, `ticket`, the sources' `from`, `moved`), its generated blocks, `autoMemoryDirectory`
+in `.claude/settings.json` (its value alone, the file's formatting kept) and the `wsg check` and kind
+lines of `README.md` (only when they are wsg's text as written) are put right; into an epic, `notes.md`
+gets the `## For the epic` section a task made there has, when it has none; then the epic it left (`taskOrder` without it, `tasks.md`) and the
+one it joined (`tasks.md`). One transaction, under the locks of the epics it touches, in the order of
+their paths, then the task's (`busy` when another command holds one; a dry run takes none): a failure
+or a stop signal renames the directory back and puts every file as it was. `--new-epic` makes `E` as
+`wsg new E --kind epic` would, inside the same transaction; `E` may be the task's own name (the task
+steps aside under a hidden name next to it while the epic is made). The state keeps `moved`:
+`[{from, to, at}]`, the task's directory before and after each move, as on disk, and the date; `ws`
+resumes a Claude Code session from those directories when the task's own has none. wsg never writes
+under `~/.claude`.
+
+Refused, `invalid_input` with `result` present, the same document with `--dry-run` and without: a
+process or an epic; an archived task, or an archived epic on either side; a task not right in `WS_ROOT`
+or in an epic right in it, or whose directory above is not the epic its state names; a target that is
+not an epic (or, with `--new-epic`, one that exists); a name taken there, case ignored (a task, a file,
+one of the epic's reserved names or its sources' names); different file systems; a worktree under the
+task git does not link both ways, one with a submodule checked out, a repository inside the task with
+worktrees of its own (each named in `blockers.worktrees`); a source named like one of the target
+epic's for another directory; a marker the render can't handle; a task whose directory and state
+disagree about its epic (a move that stopped between the rename and the state: README, Limitations). Refused before the plan, `invalid_input` with
+`result` `null`: neither or both of `--epic` and `--out`, `--new-epic` without `--epic`, `--title`
+without `--new-epic`, an unknown flag, an epic not right in `WS_ROOT`. A task where it would go
+already is a no-op, `changed` `false`. Changes in a worktree are no refusal: they move with it. A done
+task moves as it is, with a warning; so do entries under `## For the epic` its epic has not merged,
+and a source of the target epic with a branch template the task has not attached (`wsg add <name>`).
+
+`{workspace, kind, slug, status, from, to, changed, newEpic, paths, blockers, regenerates, relinked, dropped, ticketDropped, notesForEpic, tasksMdUpdated}`
+
+| Key | Value |
+|---|---|
+| `workspace` | the task, where it is before the move |
+| `kind` | `task`, or the kind of the workspace refused |
+| `slug`, `status` | the task's directory name and status |
+| `from`, `to` | `{epic, path}`: its epic's slug (`null` outside one) and its directory, before and after; `to.path` `null` when refused before it is known |
+| `changed` | `false` when it is there already, or the plan is refused |
+| `newEpic` | whether the move makes the epic |
+| `paths` | `[{from, to}]`: the task's directory, then each worktree's under it, its sources' first |
+| `blockers` | `{worktrees: [{name, path, repo}]}`: the worktrees that refuse the move |
+| `regenerates` | the files rewritten, at their new paths, and the epics' `tasks.md` and state |
+| `relinked` | the sources the target epic has too, the same name and directory: taken from it (`from` `"epic"`), as `wsg add <name>` in a task of it takes them |
+| `dropped` | the sources taken from the old epic that become the task's own (`from` gone, their rule rewritten if wsg's text) |
+| `ticketDropped` | out of an epic: whether the ticket key left the state |
+| `notesForEpic` | into an epic: whether `notes.md` gets the `## For the epic` section |
+| `tasksMdUpdated` | `{from, to}`: whether the `tasks.md` block of the epic it left and of the one it joined changed (planned, in a dry run) |
 
 ### context add, context note, context remove
 

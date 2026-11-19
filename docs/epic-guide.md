@@ -59,6 +59,22 @@ From the epic session, when the owner asks to start work on a ticket.
    `cd … && <agent>` line, as the output says; the task is worked on there, not here. Its first session runs the setup
    (`wsg guide setup`) for what the epic does not give: why, done, scope, invariants.
 
+### A task made elsewhere
+
+A task that exists already — made standalone, or in another epic — is moved, not made again:
+
+```bash
+wsg move <task> --epic <epic> --dry-run      # the plan: paths, sources, what is regenerated
+wsg move <task> --epic <epic>                # after the owner's "ok"
+```
+
+The directory moves whole (notes, memory, worktrees, branches); its `AGENTS.md` gets this epic's
+blocks, and both epics' `tasks.md` are updated. A source it took from its old epic stays taken from
+this one when this epic has the same source, else it becomes the task's own. `wsg move <task> --out`
+takes a task out of its epic, `--new-epic` makes a new epic for it. A session open in the task keeps
+the old path: tell the owner to close it first, and to open the task again with `ws <epic>/<task>`,
+which also resumes the session from before the move.
+
 ## Working
 
 In the task's own session.

@@ -23,3 +23,6 @@ allowed-tools: Bash(wsg *)
 4. Don't set the workspace up from this session. Tell the person to start a new one there —
    `ws <slug>` and then `/wsg-setup`, or `cd <path> && claude "/wsg-setup"` — because settings,
    rules and agents load from the directory a session starts in.
+5. A task that exists already and belongs in an epic, in another one or in none is moved, not made
+   again: `wsg move <task> --epic <epic>` (`--new-epic` makes the epic, `--out` takes it out of
+   its epic). Show the person the `--dry-run` first and run it only after their "ok".

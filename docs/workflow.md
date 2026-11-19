@@ -170,6 +170,14 @@ wsg check <slug>              # file limits, imports, symlinks, budget, setup
 Run it periodically, not just after creation: files grow, and the check will catch when
 `CLAUDE.md` exceeds 200 lines or `AGENTS.md` approaches 32 KiB — the Codex chain ceiling.
 
+Move a task into an epic, between epics or out of one only with `wsg move` (`--dry-run` first): a
+directory moved by hand breaks its worktrees' links with their repositories and points its memory at
+the old place (`wsg check` warns about the latter).
+
+```bash
+wsg move <task> --epic <epic>       # --new-epic makes it; --out takes the task out of its epic
+```
+
 Delete a workspace only through git, otherwise admin entries are left behind:
 
 ```bash
