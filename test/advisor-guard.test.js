@@ -695,6 +695,10 @@ const FINDINGS = [
   [bash(`${W} help --check`), true, 'help of an alias'],
   [bash(`${W} --check -h`), true, '-h after an alias'],
   [bash(`${W} --promote -h`), false, 'the --promote alias is gone (0.9)'],
+  [bash(`${W} promote shop --dry-run`), true, 'promote --dry-run only plans'],
+  [bash(`${W} promote --dry-run --json`), true, 'promote --dry-run --json, the task you are in'],
+  [bash(`${W} promote shop`), false, 'promote without --dry-run'],
+  [bash(`${W} promote shop --title --dry-run`), false, '--title swallows --dry-run'],
   [bash(`${W} help -h`), false, '-h is not a command'],
   // What a block reason suggests instead of a format with ( ) must pass.
   [bash('git for-each-ref --sort=-committerdate refs/heads'), true, 'branches by date'],

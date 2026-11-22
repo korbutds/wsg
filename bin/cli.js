@@ -903,7 +903,7 @@ function cmdList(args) {
   return 0;
 }
 
-// `wsg status <task>` prints a task's or a process's status; `wsg status <task> <status>` sets it,
+// `wsg status <task>` prints a task's status; `wsg status <task> <status>` sets it,
 // and `wsg close <task>` is `wsg status <task> done`: one implementation, one result. The task is
 // always named — a task may be called review — and is a slug, `<epic>/<task>` or a path.
 async function cmdStatus(args) {
@@ -1500,6 +1500,85 @@ async function cmdMove(args) {
   return 0;
 }
 
+// `wsg promote [<task>] [--title T]`: lib/promote.js. The task named (a slug or a path; a workspace
+// of wsg 0.1 too), else the one you are in, becomes an epic in place. Planned with nothing touched
+// under its lock (a dry run takes none), then applied in one transaction; a refused plan is the same
+// document with --dry-run and without.
+async function cmdPromote(args) {
+  const { flags, pos } = parse(args, FLAGS.promote, 1);
+  if (flags['--title'] === '') invalid(t('cli.needsValue', { arg: '--title' }));
+  const found = targetWs(pos[0]);
+  if (!found) invalid(t('cli.notInWorkspace'));
+  const ws = fs.realpathSync.native(found.ws);
+  currentWs = ws;
+  const W = lib('workspace');
+  const P = lib('promote');
+  const ui = lib('ui');
+  const readState = () => {
+    if (found.legacy) return null;
+    try {
+      return W.readState(ws);
+    } catch (e) {
+      return invalid(e.message);
+    }
+  };
+  const dryRun = !!flags['--dry-run'];
+  let state = readState();
+  if (!dryRun) {
+    // The oldest workspaces have no .claude to hold a lock in: nothing else writes there either.
+    if (fs.existsSync(path.join(ws, '.claude'))) lock(ws);
+    state = readState();
+  }
+  let plan;
+  try {
+    plan = P.planPromote(ws, state, { title: flags['--title'] }, cfg);
+  } catch (e) {
+    if (e && e.name === 'Interrupted') {
+      if (J.active()) return J.fail('interrupted', t('cli.addCancelled'), { rollback: 'none' });
+      process.stderr.write(`\n${t('cli.addCancelled')}\n`);
+      return 130;
+    }
+    throw e;
+  }
+  const json = J.active();
+  const result = () => P.promoteResult(plan);
+  if (json && plan.errors.length) return J.fail('invalid_input', plan.errors[0], { details: plan.errors, result: result(), warnings: plan.warnings });
+  if (dryRun && json) return J.succeed(result(), { warnings: plan.warnings });
+  if (dryRun) {
+    process.stdout.write(`${JSON.stringify({ ...result(), errors: plan.errors, warnings: plan.warnings }, null, 2)}\n`);
+    return plan.errors.length ? INVALID : 0;
+  }
+  if (plan.errors.length) {
+    for (const e of plan.errors) process.stderr.write(`wsg: ${e}\n`);
+    return INVALID;
+  }
+  if (!json) for (const w of plan.warnings) ui.warn(w);
+  guardPlatform();
+  try {
+    await P.applyPromote(plan);
+  } catch (e) {
+    if (e && e.name === 'Interrupted') {
+      if (json) return J.fail('interrupted', cancelled(e), { ...J.rollbackOf(e, ws), warnings: plan.warnings });
+      process.stderr.write(`${cancelled(e)}\n`);
+      return 130;
+    }
+    if (e && e.rollback) {
+      if (json) return J.fail('step_failed', String(e.message), { ...J.rollbackOf(e, ws), warnings: plan.warnings });
+      process.stderr.write(`wsg: ${String(e.message)}\n`);
+      return 1;
+    }
+    throw e;
+  }
+  if (json) return J.succeed(result(), { warnings: plan.warnings });
+  ui.head(t('promote.done', { name: plan.slug, title: plan.title }));
+  if (plan.legacy) ui.info(t('promote.legacyDone'));
+  if (plan.dropped.length) ui.info(t('promote.dropped', { list: plan.dropped.join(', ') }));
+  if (plan.adopted.length) ui.info(t('promote.adopted', { list: plan.adopted.map((a) => a.name).join(', ') }));
+  ui.info(t('promote.created', { list: plan.creates.map((f) => path.relative(ws, f)).join(', ') || '—' }));
+  ui.info(t(plan.settingsKept ? 'promote.nextRefresh' : 'promote.next', { name: plan.slug }));
+  return 0;
+}
+
 // Every task of the epic refreshed after its change is written (generate.refreshEpicTasks), each under
 // its own lock; the caller holds the epic's. From here a stop signal stops only the refresh of the
 // tasks, and says so — the epic is not put back (lib/lock.js's handler would say it was). The tasks
@@ -1890,6 +1969,7 @@ const COMMANDS = {
   unarchive: cmdUnarchive,
   reorder: cmdReorder,
   move: cmdMove,
+  promote: cmdPromote,
   'install-skills': cmdInstallSkills,
   // The 0.1 spellings, kept for one release.
   '--check': cmdCheck,
