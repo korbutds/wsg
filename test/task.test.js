@@ -118,7 +118,7 @@ process.on('exit', () => {
       assert.strictEqual(JSON.parse(dry.out).state.noCode, true);
       assert.ok(!fs.existsSync(path.join(wsRoot, 'spec-dry')));
     });
-    for (const kind of ['epic', 'process']) {
+    for (const kind of ['epic']) {
       const x = wsg(['new', `nc-${kind}`, '--no-code', '--kind', kind, '--no-launch']);
       it(`refused for --kind ${kind}: exit 2, nothing made`, () => {
         assert.strictEqual(x.code, 2, x.all);
@@ -204,57 +204,13 @@ process.on('exit', () => {
     });
   }
 
-  console.log('\nwsg promote of a task without code');
-  {
-    assert.strictEqual(wsg(['new', 'nc-promo', '--no-code', '--no-launch']).code, 0);
-    const ws = path.join(wsRoot, 'nc-promo');
-    const p = wsg(['promote', 'nc-promo', '--skill', 'shop-digest']);
-    it('promoted: exit 0, said that noCode goes', () => {
-      assert.strictEqual(p.code, 0, p.all);
-      assert.match(p.all, /the task was without code \(noCode\): a process has no such mark/);
-    });
-    it('the state is a process without noCode, and it reads', () => {
-      const st = readState(ws);
-      assert.deepStrictEqual([st.kind, st.noCode], ['process', undefined]);
-      assert.strictEqual(W.stateProblem(st), '');
-      assert.strictEqual(wsg(['list']).code, 0);
-      assert.strictEqual(wsg(['refresh', '--ws', ws]).code, 0);
-    });
-  }
-
-  console.log('\nwsg promote of a task without code: the read-only rule');
-  {
-    const T = require(path.join(ROOT, 'lib', 'templates.js'));
-    const repo = makeRepo('shop-docs');
-    for (const slug of ['nc-rule', 'nc-edited']) {
-      assert.strictEqual(wsg(['new', slug, '--no-code', '--no-launch']).code, 0);
-      assert.strictEqual(wsg(['add', repo, '--link', '--ws', slug]).code, 0);
-    }
-    const rule = (slug) => path.join(wsRoot, slug, '.claude', 'rules', 'shop-docs.md');
-    write(rule('nc-edited'), `${read(rule('nc-edited'))}- my own note\n`);
-    const edited = read(rule('nc-edited'));
-    const p1 = wsg(['promote', 'nc-rule', '--skill', 'shop-sync']);
-    it('wsg\'s own unedited read-only rule becomes an ordinary link\'s rule', () => {
-      assert.strictEqual(p1.code, 0, p1.all);
-      const text = read(rule('nc-rule'));
-      assert.doesNotMatch(text, /read only: this task changes no code/);
-      assert.strictEqual(text, T.ruleMd(readState(path.join(wsRoot, 'nc-rule')).sources[0]));
-      assert.match(p1.all, /\.claude\/rules\/shop-docs\.md: the read-only rule of the task without code is now the rule of a shared checkout/);
-    });
-    const p2 = wsg(['promote', 'nc-edited', '--skill', 'shop-sync2']);
-    it('an edited one is kept as it is, and named', () => {
-      assert.strictEqual(p2.code, 0, p2.all);
-      assert.strictEqual(read(rule('nc-edited')), edited);
-      assert.match(p2.all, /\.claude\/rules\/shop-docs\.md was edited and still may say the repository is read only/);
-    });
-  }
-
   console.log('\nthe state');
   {
     const base = { version: 2, kind: 'task', slug: 'x', title: 'x', status: 'open', personalRules: false, created: '2026-11-01', sources: [] };
     it('noCode true reads', () => assert.strictEqual(W.stateProblem({ ...base, noCode: true }), ''));
     it('noCode false refused', () => assert.match(W.stateProblem({ ...base, noCode: false }), /"noCode" belongs only to a task, as true/));
-    it('noCode on a process refused', () => assert.match(W.stateProblem({ ...base, kind: 'process', skillName: 'x', noCode: true }), /noCode/));
+    it('a raw process state is no kind (readState takes it as a task first)', () =>
+      assert.match(W.stateProblem({ ...base, kind: 'process', skillName: 'x', noCode: true }), /"kind" must be one of task, epic/));
     it('noCode on an epic refused', () => assert.match(W.stateProblem({ version: 3, kind: 'epic', slug: 'e', title: 'e', created: '2026-11-01', sources: [], noCode: true }), /noCode/));
   }
 
@@ -362,10 +318,8 @@ process.on('exit', () => {
       assert.ok(!fs.existsSync(path.join(ws, 'spec.md')) && !fs.existsSync(path.join(ws, 'plan.md')));
       assert.strictEqual(readState(ws).spec, undefined);
     });
-    assert.strictEqual(wsg(['new', 'chk-proc', '--kind', 'process', '--no-launch']).code, 0);
     assert.strictEqual(wsg(['new', 'chk-epic', '--kind', 'epic', '--no-launch']).code, 0);
-    it('a process and an epic get none', () => {
-      assert.ok(!fs.existsSync(path.join(wsRoot, 'chk-proc', 'checklist.md')));
+    it('an epic gets none', () => {
       assert.ok(!fs.existsSync(path.join(wsRoot, 'chk-epic', 'checklist.md')));
     });
     const old = path.join(wsRoot, 'chk-old');
@@ -373,9 +327,8 @@ process.on('exit', () => {
     fs.rmSync(path.join(old, 'checklist.md'));
     const l = json(['list']);
     const by = Object.fromEntries(l.doc.result.workspaces.map((w) => [w.slug, w]));
-    it('list --json: checklist {done, total} for a task, null for a process, an epic, a task without the file', () => {
+    it('list --json: checklist {done, total} for a task, null for an epic, a task without the file', () => {
       assert.deepStrictEqual(by.chk.checklist, { done: 0, total: 0 });
-      assert.strictEqual(by['chk-proc'].checklist, null);
       assert.strictEqual(by['chk-epic'].checklist, null);
       assert.strictEqual(by['chk-old'].checklist, null);
       assert.strictEqual(by.chk.spec, false);
@@ -483,7 +436,7 @@ process.on('exit', () => {
     });
     const l = json(['list']);
     it('list --json: spec true', () => assert.strictEqual(l.doc.result.workspaces.find((w) => w.slug === 'refunds').spec, true));
-    for (const kind of ['epic', 'process']) {
+    for (const kind of ['epic']) {
       const x = wsg(['new', `spec-${kind}`, '--spec', '--kind', kind, '--no-launch']);
       it(`refused for --kind ${kind}: exit 2, nothing made`, () => {
         assert.strictEqual(x.code, 2, x.all);
@@ -510,21 +463,10 @@ process.on('exit', () => {
     it('check: the FILL IN of a spec task\'s checklist points to the end of stage 1', () => {
       assert.ok(checkItems(refunds).some((x) => /^warn checklist\.md still says FILL IN: it is built from the acceptance criteria of spec\.md once the owner approves the spec/.test(x)));
     });
-    const pr = wsg(['promote', 'spec-nc', '--skill', 'shop-review']);
-    it('wsg promote of a --spec --no-code task: a process that reads, both marks gone and said, the files kept', () => {
-      assert.strictEqual(pr.code, 0, pr.all);
-      assert.match(pr.all, /a process has none — spec\.md, plan\.md and checklist\.md stay as plain files/);
-      assert.match(pr.all, /the task was without code \(noCode\)/);
-      const st = readState(path.join(wsRoot, 'spec-nc'));
-      assert.deepStrictEqual([st.kind, st.spec, st.noCode], ['process', undefined, undefined]);
-      assert.strictEqual(W.stateProblem(st), '');
-      for (const f of ['spec.md', 'plan.md', 'checklist.md']) assert.ok(fs.existsSync(path.join(wsRoot, 'spec-nc', f)), f);
-      assert.strictEqual(wsg(['list']).code, 0);
-    });
     const base = { version: 2, kind: 'task', slug: 'x', title: 'x', status: 'open', personalRules: false, created: '2026-11-01', sources: [] };
-    it('the state: spec false refused, spec on a process refused', () => {
+    it('the state: spec false refused, spec on an epic refused', () => {
       assert.match(W.stateProblem({ ...base, spec: false }), /"spec" belongs only to a task, as true/);
-      assert.match(W.stateProblem({ ...base, kind: 'process', skillName: 'x', spec: true }), /"spec"/);
+      assert.match(W.stateProblem({ ...base, version: 3, kind: 'epic', spec: true }), /"spec"/);
     });
   }
 

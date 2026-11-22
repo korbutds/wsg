@@ -151,16 +151,15 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     it('an uppercase slug is refused', () => assert.match(bad({ slug: 'Demo', kind: 'task' }), /Lowercase/));
     fs.mkdirSync(path.join(wsRoot, 'taken'));
     it('an existing workspace is refused', () => assert.match(bad({ slug: 'taken', kind: 'task' }), /already exists/));
-    it('a process skill name with ../ is refused', () => assert.match(bad({ slug: 'p', kind: 'process', skillName: '../x' }), /skill name/));
-    it('the wsg- prefix is kept for the generator', () => assert.match(bad({ slug: 'p', kind: 'process', skillName: 'wsg-setup' }), /reserved/));
+    it('a process is no kind to make any more (0.9)', () => assert.match(bad({ slug: 'p', kind: 'process' }), /workspace kind process: task or epic only/));
     it('a good slug passes', () => assert.strictEqual(bad({ slug: 'oauth-2', kind: 'task' }), ''));
     it('a path that leaves WS_ROOT is refused even past the name rule', () => assert.throws(() => W.wsPath('../x', cfg), /outside/));
     const answers = { kind: 'task', title: 'T', problem: ['p'], dod: [], links: [], invariants: [], repos: [] };
     const e1 = await failure(() => generate.run({ ...answers, slug: '../escape' }, cfg));
     it('generate.run refuses slug ../x', () => assert.match(e1, /slug/));
     it('and creates nothing outside WS_ROOT', () => assert.ok(!fs.existsSync(path.join(tmp, 'escape'))));
-    const e2 = await failure(() => generate.run({ ...answers, kind: 'process', slug: 'proc-escape', skillName: '../../x' }, cfg));
-    it('generate.run refuses skill name ../x', () => assert.match(e2, /skill name/));
+    const e2 = await failure(() => generate.run({ ...answers, kind: 'process', slug: 'proc-escape' }, cfg));
+    it('generate.run refuses kind process', () => assert.match(e2, /workspace kind process/));
     it('and creates no workspace', () => assert.ok(!fs.existsSync(path.join(wsRoot, 'proc-escape'))));
   }
 
@@ -191,14 +190,16 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     it('an epic at version 3 with task defaults reads', () => assert.strictEqual(read(epicState), ''));
     it('a task of an epic with its ticket reads', () => assert.strictEqual(read(childState), ''));
     it('an epic source without task defaults reads', () => assert.strictEqual(read(withSource(undefined)), ''));
-    it('an unknown kind is refused', () => assert.match(read({ ...childState, kind: 'story' }), /cannot read .*"kind" must be one of task, process, epic/));
+    it('an unknown kind is refused', () => assert.match(read({ ...childState, kind: 'story' }), /cannot read .*"kind" must be one of task, epic$/));
     it('a state without a kind is refused', () => assert.match(read({ version: 2, sources: [] }), /"kind"/));
     it('an epic at version 2 is refused', () => assert.match(read({ ...epicState, version: 2 }), /expected version 3/));
     it('a task at version 3 is refused', () => assert.match(read({ ...childState, version: 3 }), /expected version 2/));
-    it('a process at version 3 is refused', () =>
+    it('a 0.8 process at version 3 is refused, as a task would be', () =>
       assert.match(read({ version: 3, kind: 'process', skillName: 'p', sources: [] }), /expected version 2/));
-    it('"epic" on a process is refused', () =>
-      assert.match(read({ version: 2, kind: 'process', skillName: 'p', sources: [], epic: { slug: 'checkout-v2' } }), /"epic" belongs only to a task/));
+    it('a 0.8 process reads as a task, its other keys kept', () => {
+      const dir = writeState(path.join(tmp, 'states', String(n++)), { version: 2, kind: 'process', skillName: 'p', sources: [] });
+      assert.deepStrictEqual(W.readState(dir), { version: 2, kind: 'task', skillName: 'p', sources: [] });
+    });
     it('"epic" on an epic is refused', () => assert.match(read({ ...epicState, epic: { slug: 'other' } }), /"epic" belongs only to a task/));
     for (const [what, epic] of [['a string', 'checkout-v2'], ['a slug that is not kebab-case', { slug: '../x' }],
       ['an extra key', { slug: 'checkout-v2', path: '/x' }], ['no slug', {}], ['null', null]]) {
@@ -224,7 +225,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       assert.match(read({ ...epicState, sources: [{ ...epicState.sources[0], reference: true }] }), /source api: "task" belongs only to an epic source that is not a reference/));
     it('"task" on a source without a name names it by number', () =>
       assert.match(read({ ...childState, sources: [{ path: '/x' }, { task }] }), /source #2: "task"/));
-    // A task's or a process's status; a state without one reads as open.
+    // A task's status; a state without one reads as open. proc: the state of a 0.8 process.
     const proc = { version: 2, kind: 'process', skillName: 'p', title: 'P', created: '2026-10-28', personalRules: false, sources: [] };
     for (const status of W.STATUSES) {
       it(`status ${status} on a task reads`, () => assert.strictEqual(read({ ...childState, status }), ''));
@@ -242,8 +243,8 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       ['an empty status', { ...childState, status: '' }, /"status" "" is not one of/],
       ['a null status', { ...childState, status: null }, /"status" null is not one of/],
       ['a number for a status', { ...childState, status: 1 }, /"status" 1 is not one of/],
-      ['status on an epic', { ...epicState, status: 'open' }, /"status" and "closed" belong only to a task or a process, not to an epic/],
-      ['closed on an epic', { ...epicState, closed: '2026-11-14' }, /"status" and "closed" belong only to a task or a process/],
+      ['status on an epic', { ...epicState, status: 'open' }, /"status" and "closed" belong only to a task, not to an epic/],
+      ['closed on an epic', { ...epicState, closed: '2026-11-14' }, /"status" and "closed" belong only to a task/],
       ...[['with review', { status: 'review' }], ['with open', { status: 'open' }], ['without a status', {}]].map(([what, extra]) =>
         [`closed ${what}`, { ...childState, ...extra, closed: '2026-11-14' }, /"closed" goes only with "status": "done", as a date YYYY-MM-DD/]),
       ...['14.11.2026', '2026-11-14T10:00:00Z', '2026-02-30', '2026-13-01', '', null, 20261114].map((closed) =>
@@ -306,7 +307,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       const upper = writeState(path.join(epics, 'upper'), { ...epicState, slug: 'upper', sources: [{ ...epicState.sources[0], name: 'Api' }] });
       assert.match(bad({ slug: 'api', epicWs: upper }), /the epic has a source by that name/);
     });
-    it('a process inside an epic is refused', () => assert.match(bad({ slug: 'p', kind: 'process', skillName: 'p' }), /only a task goes inside an epic, not kind process/));
+    it('a process is refused as an unknown kind', () => assert.match(bad({ slug: 'p', kind: 'process' }), /workspace kind process/));
     it('an epic inside an epic is refused', () => assert.match(bad({ slug: 'e', kind: 'epic' }), /only a task goes inside an epic, not kind epic/));
     it('an unknown kind is refused', () => assert.match(bad({ slug: 'x', kind: 'story' }), /workspace kind story/));
     it('a missing kind is refused', () => assert.match(bad({ slug: 'x', kind: undefined }), /workspace kind undefined/));
@@ -417,8 +418,8 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       ['../x', ['new', '../x', '--no-launch']],
       ['an uppercase slug', ['new', 'Demo', '--no-launch']],
       ['an existing slug', ['new', 'demo', '--no-launch']],
-      ['a process named wsg-… without --skill', ['new', 'wsg-p1', '--kind', 'process', '--no-launch']],
-      ['--skill on a task', ['new', 'p2', '--skill', 'x', '--no-launch']],
+      ['--kind process (gone in 0.9)', ['new', 'p1', '--kind', 'process', '--no-launch']],
+      ['--skill (gone in 0.9)', ['new', 'p2', '--skill', 'x', '--no-launch']],
       ['an unknown kind', ['new', 'p3', '--kind', 'chore', '--no-launch']],
       ['an unknown flag', ['new', 'p4', '--titel', 'x']],
       ['a flag without its value', ['new', 'p5', '--title']],
@@ -427,22 +428,10 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     for (const [name, args] of rejected) {
       const rr = wsg(args);
       it(`${name}: exit 2`, () => assert.strictEqual(rr.code, 2, rr.all));
-      if (args[1] === 'wsg-p1') it('the wsg-… process asks for --skill', () => assert.match(rr.err, /named after the slug[\s\S]*--skill <name>/));
+      if (args[1] === 'p1') it('--kind process is an unknown kind', () => assert.match(rr.err, /--kind is task or epic, not process/));
+      if (args[1] === 'p2') it('--skill is an unknown flag', () => assert.match(rr.err, /unknown argument: --skill/));
     }
     it('rejected runs created nothing', () => assert.deepStrictEqual(tree(wsRoot), before));
-
-    const p = wsg(['new', 'release-flow', '--kind', 'process', '--skill', 'release', '--no-launch']);
-    it('a process gets its skill, journal and runs/', () => {
-      assert.strictEqual(p.code, 0, p.all);
-      for (const f of ['.claude/skills/release/SKILL.md', 'journal.md', 'runs']) assert.ok(fs.existsSync(path.join(wsRoot, 'release-flow', f)), f);
-    });
-    it('a new process passes its check', () => assert.strictEqual(wsg(['check', 'release-flow']).code, 0));
-    const bare = wsg(['new', 'deps-upgrade', '--kind', 'process', '--no-launch']);
-    it('a process without --skill gets a skill named after the slug', () => {
-      assert.strictEqual(bare.code, 0, bare.all);
-      assert.ok(fs.existsSync(path.join(wsRoot, 'deps-upgrade', '.claude', 'skills', 'deps-upgrade', 'SKILL.md')));
-      assert.strictEqual(JSON.parse(fs.readFileSync(path.join(wsRoot, 'deps-upgrade', '.claude', 'wsg.json'), 'utf8')).skillName, 'deps-upgrade');
-    });
 
     const memory = path.join(tmp, 'rules.md');
     fs.writeFileSync(memory, '# my rules\n');
@@ -528,7 +517,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     });
     it('a task keeps its own list', () => {
       wsg(['new', 'ru-task', '--title', 'Оплата', '--no-launch'], { env });
-      assert.match(fs.readFileSync(path.join(epicRoot, 'ru-task', 'notes.md'), 'utf8'), /README\.md, notes\.md, journal\.md, \.claude\/rules\//);
+      assert.match(fs.readFileSync(path.join(epicRoot, 'ru-task', 'notes.md'), 'utf8'), /README\.md, notes\.md, \.claude\/rules\//);
     });
     it('the advisor block deleted by hand comes back after the whole sentence, with no version claimed', () => {
       const dir = path.join(epicRoot, 'no-ticket');
@@ -704,20 +693,21 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
 
     const before = tree(epicRoot);
     const sk = wsg(['new', 'with-skill', '--kind', 'epic', '--skill', 'x', '--no-launch'], { env });
-    it('--skill on an epic: exit 2', () => {
+    it('--skill on an epic: exit 2, an unknown flag', () => {
       assert.strictEqual(sk.code, 2, sk.all);
-      assert.match(sk.err, /--skill is only for --kind process/);
+      assert.match(sk.err, /unknown argument: --skill/);
     });
     const bk = wsg(['new', 'p6', '--kind', 'story', '--no-launch'], { env });
-    it('an unknown kind names the three', () => {
+    it('an unknown kind names the two', () => {
       assert.strictEqual(bk.code, 2, bk.all);
-      assert.match(bk.err, /--kind is task, process or epic, not story/);
+      assert.match(bk.err, /--kind is task or epic, not story/);
     });
     it('and they created nothing', () => assert.deepStrictEqual(tree(epicRoot), before));
     for (const lang of ['en', 'ru']) {
       it(`wsg help new (${lang}) describes the epic kind`, () => {
         const h = wsg(['help', 'new'], { env: { WSG_LANG: lang } }).out;
-        assert.match(h, /--kind task\|process\|epic/);
+        assert.match(h, /--kind task\|epic/);
+        assert.doesNotMatch(h, /process|процесс|--skill/);
         assert.match(h, /epic: /);
       });
       it(`wsg help guide (${lang}) names the epic guide`, () => assert.match(wsg(['help', 'guide'], { env: { WSG_LANG: lang } }).out, /^ {2}epic {2,}/m));
@@ -1066,7 +1056,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       ['a workspace that is no epic', ['new', 'x', '--epic', 'plain-task'], /plain-task is not an epic/],
       ['a task of the epic as the epic', ['new', 'x', '--epic', 'shop/pay-fix'], /is not in WS_ROOT/],
       ['an epic outside WS_ROOT', ['new', 'x', '--epic', path.join(tmp, 'elsewhere', 'far')], /is not in WS_ROOT/],
-      ['--kind process', ['new', 'x', '--kind', 'process', '--epic', 'shop'], /only a task goes inside an epic, not kind process/],
+      ['--kind process', ['new', 'x', '--kind', 'process', '--epic', 'shop'], /--kind is task or epic, not process/],
       ['--kind epic', ['new', 'x', '--kind', 'epic', '--epic', 'shop'], /only a task goes inside an epic, not kind epic/],
       ['an empty --epic', ['new', 'x', '--epic', ''], /--epic needs a value/],
       ['a name the epic uses', ['new', 'team', '--epic', 'shop'], /can't be named team: the epic uses the name itself/],
@@ -2137,7 +2127,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     it('the directory above is no epic: FAIL', () => {
       const r = checkOut(bare);
       assert.strictEqual(r.code, 1, r.out);
-      assert.match(r.out, /FAIL epic link broken: the directory above, .*shop, is a process workspace, not an epic/);
+      assert.match(r.out, /FAIL epic link broken: the directory above, .*shop, is a task workspace, not an epic/);
     });
     fs.writeFileSync(epicState, '{');
     it('its state does not read: FAIL, with the reason', () =>
@@ -2166,16 +2156,6 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       assert.doesNotMatch(r.out, /epic link broken|move the task|this task:/);
       assert.strictEqual(r.out.match(/^Epic$/gm).length, 1, r.out);
     });
-    it('a process with a stray "epic": the same', () => {
-      assert.strictEqual(wsg(['new', 'prc', '--kind', 'process', '--skill', 'run-it', '--no-launch'], { env }).code, 0);
-      const f = path.join(root, 'prc', W.STATE_FILE);
-      fs.writeFileSync(f, JSON.stringify({ ...JSON.parse(fs.readFileSync(f, 'utf8')), epic: { slug: 'shop' } }));
-      const r = checkOut(path.join(root, 'prc'));
-      assert.strictEqual(r.code, 1, r.out);
-      assert.match(r.out, /FAIL \.claude\/wsg\.json — "epic" belongs only to a task, and this workspace is kind process/);
-      assert.doesNotMatch(r.out, /^Epic$|epic link broken|this task:/m);
-    });
-
     const agentsFile = path.join(bare, 'AGENTS.md');
     const agentsText = fs.readFileSync(agentsFile, 'utf8');
     fs.writeFileSync(agentsFile, agentsText.replace(/<!-- wsg:epic -->\n[\s\S]*?<!-- \/wsg:epic -->\n/, ''));
@@ -2283,7 +2263,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     if (fs.existsSync(path.join(wt, '.git'))) execFileSync('git', ['-C', repo, 'worktree', 'remove', '--force', wt]);
   }
 
-  console.log('\nteam, promote and refresh in an epic');
+  console.log('\nteam and refresh in an epic');
   {
     const root = path.join(tmp, 'epic-cmds-root');
     const env = { WS_ROOT: root };
@@ -2352,27 +2332,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       assert.strictEqual(r.code, 0, r.out);
     });
 
-    // promote
     const before2 = tree(ep);
-    const pe = wsg(['promote', ep, '--skill', 'weekly'], { env });
-    it('wsg promote in an epic: exit 2, nothing touched', () => {
-      assert.strictEqual(pe.code, 2, pe.all);
-      assert.match(pe.err, /an epic is not promoted to a process/);
-      assert.deepStrictEqual(tree(ep), before2);
-    });
-    const pt = wsg(['promote', pay, '--skill', 'weekly'], { env });
-    it('wsg promote in a task of the epic: exit 2, nothing touched', () => {
-      assert.strictEqual(pt.code, 2, pt.all);
-      assert.match(pt.err, /a task of an epic is not promoted to a process yet/);
-      assert.deepStrictEqual(tree(ep), before2);
-    });
-    it('from inside the task too', () => {
-      const r = wsg(['promote', '--skill', 'weekly'], { cwd: pay, env });
-      assert.strictEqual(r.code, 2, r.all);
-      assert.match(r.err, /a task of an epic/);
-      assert.deepStrictEqual(tree(ep), before2);
-    });
-
     // refresh in the epic
     const r0 = wsg(['refresh', '--ws', ep], { env });
     it('wsg refresh in a fresh epic: up to date, nothing touched', () => {
@@ -3192,9 +3152,6 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       assert.strictEqual(r5.code, 0, r5.all);
       assert.match(fs.readFileSync(agentsFile, 'utf8'), /\n\n<!-- wsg:advisor -->\n[^\n]+\n<!-- \/wsg:advisor -->\n$/);
     });
-    const wsP = path.join(wsRoot, 'advisor-proc');
-    wsg(['new', 'advisor-proc', '--kind', 'process', '--skill', 'release', '--no-launch']);
-    it('a process workspace has it too', () => assert.match(fs.readFileSync(path.join(wsP, 'AGENTS.md'), 'utf8'), /^This is a process workspace[^\n]*\n<!-- wsg:advisor -->\n/m));
 
     // CLAUDE.md: the same rule in Claude Code's terms, where it decides to delegate.
     const claudeFile = path.join(wsA, 'CLAUDE.md');
@@ -3209,7 +3166,6 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       assert.doesNotMatch(cblock[1], /@/);
       assert.strictEqual(cblock[1], 'Before you show the owner questions or decisions, call the wsg-advisor subagent (Agent tool) with a self-contained brief; show the owner its FOR THE OWNER block as is, and nothing else from its reply.');
     });
-    it('a process workspace has it in CLAUDE.md too', () => assert.match(fs.readFileSync(path.join(wsP, 'CLAUDE.md'), 'utf8'), /^<!-- wsg:advisor -->\n[^\n]+\n<!-- \/wsg:advisor -->$/m));
     // An older CLAUDE.md: no block. wsg add brings it in, under the heading, as news.
     const cold = ctext.replace(/<!-- wsg:advisor -->\n[\s\S]*?<!-- \/wsg:advisor -->\n\n/, '');
     fs.writeFileSync(claudeFile, cold);
@@ -3741,7 +3697,6 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     const busy = [
       ['add', wsg(['add', web, '--link'], { cwd: wsL })],
       ['remove', wsg(['remove', 'web'], { cwd: wsL })],
-      ['promote', wsg(['promote', 'locked', '--skill', 'x'])],
     ];
     for (const [name, r] of busy) {
       it(`${name} while another command holds the lock: exit 2`, () => {
@@ -3977,22 +3932,6 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     it('and the lock is released', () => assert.ok(!fs.existsSync(lock)));
     it('and the workspace is as it was', () => assert.deepStrictEqual(tree(wsL), snapL));
     it('no branch is left', () => assert.ok(!branches(api).includes('task/lock-int')));
-
-    // promote is synchronous: no handler could run during it. Ctrl+C stops it as it always did,
-    // instead of being swallowed with exit 0; the lock left names a dead pid.
-    const gitPromote = path.join(tmp, 'git-interrupt-promote');
-    fs.mkdirSync(gitPromote);
-    fs.writeFileSync(path.join(gitPromote, 'git'),
-      `#!/bin/sh\ncase "$*" in *"rev-parse --show-toplevel"*) kill -INT 0; sleep 2;; esac\nexec ${realGit} "$@"\n`, { mode: 0o755 });
-    wsg(['new', 'prom-int', '--no-launch']);
-    const rp = spawnSync(process.execPath, [CLI, 'promote', 'prom-int', '--skill', 'weekly'],
-      { cwd: tmp, encoding: 'utf8', detached: true, env: { ...ENV, PATH: `${gitPromote}:${ENV.PATH}` } });
-    it('Ctrl+C during promote stops it, not exit 0', () => assert.strictEqual(rp.signal, 'SIGINT', `${rp.status} ${rp.signal} ${rp.stdout}${rp.stderr}`));
-    const after = wsg(['promote', 'prom-int', '--skill', 'weekly']);
-    it('the next command takes the lock it left over', () => {
-      assert.strictEqual(after.code, 0, after.all);
-      assert.match(after.out, /stale lock/);
-    });
   }
 
   console.log('\nwsg add: values that end up in markdown');
@@ -4097,8 +4036,14 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       }
     }
     it('the usage points to wsg help', () => assert.match(wsg(['--help']).out, /wsg help <command>/));
+    it('no help names the process kind or --skill (gone in 0.9)', () => {
+      for (const lang of ['en', 'ru']) {
+        const texts = [wsg(['--help'], { env: { WSG_LANG: lang } }).out,
+          ...Object.keys(FLAGS).filter((c) => !c.includes(' ')).map((c) => wsg(['help', c], { env: { WSG_LANG: lang } }).out)];
+        for (const h of texts) assert.doesNotMatch(h, /process|--skill/, h.slice(0, 60));
+      }
+    });
     it('wsg --check --help is the help of check', () => assert.strictEqual(wsg(['--check', '--help']).out, wsg(['help', 'check']).out));
-    it('wsg --promote -h is the help of promote', () => assert.strictEqual(wsg(['--promote', '-h']).out, wsg(['help', 'promote']).out));
     it('--help as a value is not help: add x --note --help runs add', () => {
       const r = wsg(['add', 'x', '--note', '--help'], { env: { WSG_CONFIG: broken } });
       assert.strictEqual(r.code, 1, r.all);
@@ -4685,7 +4630,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       assert.strictEqual(outside.code, 2, outside.all);
       assert.strictEqual(envelope(outside, 'outside').error.code, 'invalid_input');
     });
-    for (const args of [['--help', '--json'], ['help', 'remove', '--json'], ['guide', '--json'], ['team', 'fullstack', '--json'], ['promote', '--json']]) {
+    for (const args of [['--help', '--json'], ['help', 'remove', '--json'], ['guide', '--json'], ['team', 'fullstack', '--json']]) {
       const r = wsg(args, { cwd: wsJ });
       it(`wsg ${args.join(' ')}: a command without --json refuses it, in the envelope`, () => {
         assert.strictEqual(r.code, 2, r.all);
@@ -5557,7 +5502,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     run(['new', 'pay', '--epic', 'shop', '--ticket', 'ACME-7', '--title', 'Pay flow', '--no-launch']);
     run(['new', 'refund', '--epic', 'shop', '--sources', 'none', '--no-launch']);
     run(['new', 'fresh', '--no-launch']);
-    run(['new', 'release', '--kind', 'process', '--no-launch']);
+    run(['new', 'release', '--no-launch']);
     run(['add', listDocs, '--reference', '--ws', 'fresh']);
     const shop = path.join(root, 'shop');
     const pay = path.join(shop, 'pay');
@@ -5571,8 +5516,9 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     setState(pay, { status: 'done', closed: '2026-11-10' });
     fs.writeFileSync(path.join(pay, 'notes.md'), fs.readFileSync(path.join(pay, 'notes.md'), 'utf8')
       .replace(/(## For the epic\n\n<!--[\s\S]*?-->\n)/, '$1\n- 2026-11-10: the API caches refunds (api/cache.ts:12)\n'));
-    // A process with a status from a later wsg: listed, the problem said.
-    setState(path.join(root, 'release'), { status: 'blocked' });
+    // A process of wsg 0.8 with a status from a later wsg: listed as a task, the problem said.
+    setState(path.join(root, 'release'), { kind: 'process', skillName: 'release', status: 'blocked' });
+    fs.writeFileSync(path.join(root, 'release', '.claude', 'ws-kind'), 'process\n');
     // 0.1 workspaces: ws-kind, and the oldest — CLAUDE.md in a directory that is not a repository.
     fs.mkdirSync(path.join(root, 'old', '.claude'), { recursive: true });
     fs.writeFileSync(path.join(root, 'old', '.claude', 'ws-kind'), 'process\n');
@@ -5650,15 +5596,15 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       assert.deepStrictEqual([f.kind, f.status, f.forEpicPending, f.epic, f.extraDirs], ['task', 'open', null, null, [listDocs]]);
       assert.deepStrictEqual(f.sources.map((s) => s.mode), ['reference']);
     });
-    it('a process with an unknown status: kept as it is, the problem said', () => {
+    it('a 0.8 process with an unknown status: a task, the status kept as it is, the problem said', () => {
       const p = by(path.join(root, 'release'));
-      assert.deepStrictEqual([p.kind, p.status], ['process', 'blocked']);
+      assert.deepStrictEqual([p.kind, p.status], ['task', 'blocked']);
       assert.strictEqual(p.problems.length, 1);
       assert.match(p.problems[0], /"blocked" is not one of open, review, done/);
     });
-    it('0.1 workspaces: legacy, the kind ws-kind gives, the rest empty', () => {
+    it('0.1 workspaces: legacy, the kind ws-kind gives (a process reads as a task), the rest empty', () => {
       const o = by(path.join(root, 'old'));
-      assert.deepStrictEqual([o.kind, o.legacy, o.status, o.title, o.problems, o.sources], ['process', true, null, null, [], []]);
+      assert.deepStrictEqual([o.kind, o.legacy, o.status, o.title, o.problems, o.sources], ['task', true, null, null, [], []]);
       assert.deepStrictEqual([by(path.join(root, 'oldest')).kind, by(path.join(root, 'oldest')).legacy], ['task', true]);
     });
     it('a state that does not read: kind null, its problem, still listed (at the top and in the epic)', () => {
@@ -5675,7 +5621,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       assert.ok(lines.includes('  pay [done 2026-11-10] ACME-7 — Pay flow (For the epic in notes.md not merged yet)'), plain.out);
       assert.ok(lines.includes('  refund [review]'), plain.out);
       assert.ok(lines.includes('fresh'), plain.out);
-      assert.ok(lines.includes('release (process) [blocked]'), plain.out);
+      assert.ok(lines.includes('release [blocked]'), plain.out);
       assert.ok(lines.includes('old (wsg 0.1: no .claude/wsg.json)'), plain.out);
       assert.ok(lines.includes('broken (its state does not read: see wsg check)'), plain.out);
       assert.ok(lines.some((l) => l.startsWith('  ! ') && /wsg\.json/.test(l)), plain.out);
@@ -5773,7 +5719,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     run(['new', 'pay', '--epic', 'shop', '--title', 'Pay flow', '--no-launch']);
     run(['new', 'cart', '--epic', 'shop', '--sources', 'none', '--no-launch']);
     run(['new', 'solo', '--no-launch']);
-    run(['new', 'ops', '--kind', 'process', '--no-launch']);
+    run(['new', 'ops', '--no-launch']);
     const shop = path.join(root, 'shop');
     const pay = path.join(shop, 'pay');
     const solo = path.join(root, 'solo');
@@ -5843,10 +5789,19 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       assert.strictEqual(plainSame.code, 0, plainSame.all);
       assert.match(plainSame.out, /solo is review already: nothing changed/);
     });
+    // A process of wsg 0.8: closed as a task, and the write saves it as one, every other key kept.
+    setState(path.join(root, 'ops'), { kind: 'process', skillName: 'ops' });
     const proc = wsg(['close', 'ops', '--json'], { env });
-    it('a process can be closed too', () => {
+    it('a 0.8 process is closed as a task, and saved as one', () => {
       assert.strictEqual(proc.code, 0, proc.all);
       assert.deepStrictEqual([envelope(proc, 'close').result.status, stateOf(path.join(root, 'ops')).status], ['done', 'done']);
+      assert.deepStrictEqual([stateOf(path.join(root, 'ops')).kind, stateOf(path.join(root, 'ops')).skillName], ['task', 'ops']);
+    });
+    it('a 0.8 process is archived as a task', () => {
+      setState(path.join(root, 'ops'), { kind: 'process' });
+      const r = wsg(['archive', 'ops', '--json'], { env });
+      assert.strictEqual(r.code, 0, r.all);
+      assert.deepStrictEqual([JSON.parse(r.out).result.kind, stateOf(path.join(root, 'ops')).kind], ['task', 'task']);
     });
 
     // A task of the epic: the state and the tasks block, nothing else, no git.
@@ -6225,43 +6180,6 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     });
   }
 
-
-  console.log('\nwsg promote');
-  {
-    wsg(['new', 'to-promote', '--no-launch']);
-    const r1 = wsg(['promote', 'to-promote']);
-    it('without --skill: exit 2, no prompt', () => {
-      assert.strictEqual(r1.code, 2);
-      assert.match(r1.err, /--skill/);
-    });
-    it('bad skill name: exit 2', () => assert.strictEqual(wsg(['promote', 'to-promote', '--skill', 'Bad']).code, 2));
-    const r2 = wsg(['promote', '--skill', 'weekly-upgrade'], { cwd: path.join(wsRoot, 'to-promote') });
-    it('with --skill it runs from inside the workspace', () => assert.strictEqual(r2.code, 0, r2.all));
-    it('the kind is a process in both places', () => {
-      assert.strictEqual(fs.readFileSync(path.join(wsRoot, 'to-promote', '.claude/ws-kind'), 'utf8').trim(), 'process');
-      assert.strictEqual(W.readState(path.join(wsRoot, 'to-promote')).kind, 'process');
-    });
-    it('the old --promote spelling still works', () => {
-      wsg(['new', 'to-promote-2', '--no-launch']);
-      assert.strictEqual(wsg(['--promote', 'to-promote-2', '--skill', 'x']).code, 0);
-    });
-    // <task>/<source> looks like <epic>/<task>: it must not reach the source through its link.
-    // A folder of notes with a CLAUDE.md and no .git is what promote takes for a 0.1 workspace.
-    const target = path.join(tmp, 'promote-target');
-    fs.mkdirSync(target);
-    fs.writeFileSync(path.join(target, 'CLAUDE.md'), '# notes\n');
-    wsg(['new', 'promote-host', '--no-launch']);
-    const added = wsg(['add', target, '--reference', '--ws', 'promote-host']);
-    it('a source is linked into the host', () => {
-      assert.strictEqual(added.code, 0, added.all);
-      assert.ok(fs.lstatSync(path.join(wsRoot, 'promote-host', 'promote-target')).isSymbolicLink());
-    });
-    const r3 = wsg(['promote', 'promote-host/promote-target', '--skill', 'rel']);
-    it('promote <task>/<source> is not a workspace in WS_ROOT', () => assert.notStrictEqual(r3.code, 0, r3.all));
-    it('and writes nothing into the source', () => {
-      for (const f of ['journal.md', 'runs', '.claude']) assert.ok(!fs.existsSync(path.join(target, f)), f);
-    });
-  }
 
   console.log('\nwsg guide, install-skills, the rest of the CLI');
   {
@@ -7498,7 +7416,13 @@ wait`;
           return { code, text: lines.join('\n') };
         })();
         const now = report(dir, oldCfg);
-        it(`0.1.4 ${name}: the same report as before`, () => assert.strictEqual(now.text, was.text));
+        // A process (dropped in 0.9) reads as a task: the process checks go, the task rules apply, no new FAIL.
+        if (name === 'process') {
+          it('0.1.4 process: checked as a task, no FAIL', () => {
+            assert.match(now.text, /^ {2}kind: task$/m);
+            assert.doesNotMatch(now.text, /FAIL|skill release|journal\.md|runs recorded/);
+          });
+        } else it(`0.1.4 ${name}: the same report as before`, () => assert.strictEqual(now.text, was.text));
         it(`0.1.4 ${name}: the same exit code`, () => assert.strictEqual(now.code, was.code));
         const added = wsg(['add', docs, '--reference', '--ws', dir]);
         it(`0.1.4 ${name}: wsg add refuses it`, () => assert.strictEqual(added.code, 2));

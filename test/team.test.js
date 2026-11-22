@@ -1,7 +1,7 @@
 'use strict';
 
-// `wsg team`: the role cards, the workflow, the Claude Code adapters, /wsg-feature or the process
-// skill's pointer, and the AGENTS.md block — run as a user or an agent runs it, in a child process
+// `wsg team`: the role cards, the workflow, the Claude Code adapters, /wsg-feature, and the
+// AGENTS.md block — run as a user or an agent runs it, in a child process
 // with its own HOME, WS_ROOT and Claude config dir. Nothing here needs the network or a real agent.
 
 const assert = require('node:assert');
@@ -401,82 +401,6 @@ try {
     }
   }
 
-  console.log('\nwsg team in a process workspace');
-  {
-    const ws = fresh('p1', ['--kind', 'process', '--skill', 'release']);
-    const skill = path.join('.claude', 'skills', 'release', 'SKILL.md');
-    const skillBefore = read(ws, skill);
-    const r = wsg(['team', 'fullstack'], { cwd: ws });
-    it('exit 0, next step is the process skill', () => {
-      assert.strictEqual(r.code, 0, r.all);
-      assert.match(r.out, /\/release/);
-      assert.doesNotMatch(r.all, /WARN/);
-    });
-    it('adapters and cards, no /wsg-feature', () => {
-      for (const role of ALL) assert.ok(fs.existsSync(path.join(ws, adapter(role))), role);
-      assert.ok(!fs.existsSync(path.join(ws, '.claude', 'skills', 'wsg-feature')));
-    });
-    it('the process skill gets the pointer block after its heading', () => {
-      const text = read(ws, skill);
-      assert.match(text, /^# p1\n<!-- wsg:team -->\n.*`team\/workflow\.md`.*\n<!-- \/wsg:team -->\n/m);
-      assert.strictEqual(withoutBlock(text, 'team'), skillBefore);
-    });
-    it('the AGENTS.md block names the process skill', () => assert.match(block(read(ws, 'AGENTS.md'), 'team'), /`\/release` skill/));
-    const before = tree(ws);
-    wsg(['team', 'fullstack'], { cwd: ws });
-    it('a re-run changes no byte', () => assert.deepStrictEqual(tree(ws), before));
-    it('a comment in the frontmatter is no heading: the pointer goes after `# <title>`', () => {
-      const w = fresh('p3', ['--kind', 'process', '--skill', 'deploy']);
-      const rel = path.join('.claude', 'skills', 'deploy', 'SKILL.md');
-      fs.writeFileSync(path.join(w, rel), read(w, rel).replace('disable-model-invocation: true\n', 'disable-model-invocation: true\n# keep manual\n'));
-      const res = wsg(['team', 'fullstack'], { cwd: w });
-      assert.strictEqual(res.code, 0, res.all);
-      const text = read(w, rel);
-      assert.match(text, /^# keep manual\n---\n/m);
-      assert.match(text, /^# p3\n<!-- wsg:team -->\n/m);
-    });
-    it('a process with its skill gone: a warning, the rest is written', () => {
-      const w = fresh('p2', ['--kind', 'process', '--skill', 'upgrade']);
-      fs.rmSync(path.join(w, '.claude', 'skills', 'upgrade'), { recursive: true });
-      const res = wsg(['team', 'fullstack'], { cwd: w });
-      assert.strictEqual(res.code, 0, res.all);
-      assert.match(res.out, /WARN.*SKILL\.md is missing/);
-      assert.ok(fs.existsSync(path.join(w, WORKFLOW)));
-      // A card new on a re-run is no reason to restart, even with .claude/skills/ gone.
-      fs.rmSync(path.join(w, '.claude', 'skills'), { recursive: true });
-      fs.rmSync(path.join(w, card('pm')));
-      const again = wsg(['team', 'fullstack'], { cwd: w });
-      assert.strictEqual(again.code, 0, again.all);
-      assert.ok(fs.existsSync(path.join(w, card('pm'))));
-      assert.doesNotMatch(again.out, /new session/);
-    });
-  }
-
-  console.log('\nwsg team, then wsg promote');
-  {
-    const ws = fresh('t11');
-    wsg(['team', 'fullstack'], { cwd: ws });
-    const pr = wsg(['promote', 't11', '--skill', 'ship']);
-    it('promote says to run wsg team again', () => {
-      assert.match(pr.out, /run wsg team fullstack to point \/ship to team\/workflow\.md/);
-      assert.match(pr.out, /wsg-feature\/ is kept/);
-    });
-    const again = wsg(['team', 'fullstack'], { cwd: ws });
-    it('the re-run adds the pointer as a first insertion, without a warning', () => {
-      assert.strictEqual(again.code, 0, again.all);
-      assert.doesNotMatch(again.all, /WARN/);
-      assert.match(read(ws, path.join('.claude', 'skills', 'ship', 'SKILL.md')), /<!-- wsg:team -->/);
-      assert.match(block(read(ws, 'AGENTS.md'), 'team'), /`\/ship` skill/);
-    });
-    const skill = path.join(ws, '.claude', 'skills', 'ship', 'SKILL.md');
-    fs.writeFileSync(skill, withoutBlock(fs.readFileSync(skill, 'utf8'), 'team'));
-    const third = wsg(['team', 'fullstack'], { cwd: ws });
-    it('a pointer deleted by hand after that is put back with a warning', () => {
-      assert.strictEqual(third.code, 0, third.all);
-      assert.match(third.out, /wsg:team --> markers were missing/);
-    });
-  }
-
   console.log('\na broken team in wsg.json refuses every command');
   {
     const stateOf = (w) => path.join(w, '.claude', 'wsg.json');
@@ -555,7 +479,7 @@ try {
     const edit = (w, rel, fn) => fs.writeFileSync(path.join(w, rel), fn(read(w, rel)));
     const section = (r) => r.out.slice(r.out.indexOf('\nTeam\n'), r.out.indexOf('\nAlways-on budget\n'));
 
-    for (const [why, extra] of [['a task', []], ['a process', ['--kind', 'process', '--skill', 'rel']]]) {
+    for (const [why, extra] of [['a task', []]]) {
       const w = fresh(`c-none-${n++}`, extra);
       const r = check(w);
       it(`${why} without a team: no team section, no new finding`, () => {
@@ -638,17 +562,6 @@ try {
       it('MCP tools and Bash(…) are known; a user\'s own agent is not checked', () => {
         assert.strictEqual(r.code, 0, r.all);
         assert.doesNotMatch(section(r), /WARN|FAIL|mine\.md/);
-      });
-    }
-    {
-      // A promoted task keeps wsg-feature: it is no procedure, so a process without one still fails.
-      const w = withTeam();
-      wsg(['promote', path.basename(w), '--skill', 'ship']);
-      fs.rmSync(path.join(w, '.claude', 'skills', 'ship'), { recursive: true });
-      const r = check(w);
-      it('a leftover wsg-feature does not count as the procedure skill', () => {
-        assert.strictEqual(r.code, 1, r.all);
-        assert.match(r.out, /FAIL .*process without a skill/);
       });
     }
     {
@@ -877,7 +790,7 @@ try {
     });
     it('README: the layering, handback, memory, re-run and Codex', () => {
       for (const s of ['team/<role>.md', 'team/workflow.md', '.claude/agents/wsg-<role>.md', '/wsg-feature', '**Handback.**', '`memory: user`',
-        '/wsg-teach', 'never overwritten or removed', '`--without` is not remembered', 'the pointer block of its skill', 'no Codex role agents yet']) assert.ok(teamPart.replace(/\s+/g, ' ').includes(s), s);
+        '/wsg-teach', 'never overwritten or removed', '`--without` is not remembered', 'no Codex role agents yet']) assert.ok(teamPart.replace(/\s+/g, ' ').includes(s), s);
     });
     it('README: the commands table has wsg team, guide teach and wsg-teach', () => {
       assert.ok(readme.includes('| `wsg team <preset> [--without ROLE,...] [--dry-run] [--ws SLUG\\|PATH]` |'));
@@ -896,8 +809,7 @@ try {
       for (const r of ALL) assert.ok(wf.includes(`\`${r}\``), r);
       assert.match(conv, /\n## Team\n[\s\S]*The `wsg-` prefix of the adapters is frozen/);
       assert.match(conv, /`<!-- wsg:team -->`/);
-      assert.match(conv, /\| `\.claude\/skills\/<skill>\/SKILL\.md` \| in a process workspace with a team: `<!-- wsg:team -->`/);
-      assert.match(wf.replace(/\s+/g, ' '), /A process workspace gets no `\/wsg-feature`: its own skill gets a pointer line/);
+      assert.doesNotMatch(wf + conv, /process (workspace|skill)/);
     });
   }
 

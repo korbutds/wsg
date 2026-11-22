@@ -12,14 +12,11 @@ allowed-tools: Bash(wsg *)
 1. Agree on a slug with the person, starting from $ARGUMENTS: short kebab-case named after the
    task — lowercase Latin letters, digits and hyphens, e.g. `oauth-refresh` or `faq-admin`.
 2. Pass a one-line title (`--title "…"`) or a ticket key or URL (`--ticket …`) only if the person
-   gave one. For a repeatable engineering procedure (a release, a dependency upgrade) add
-   `--kind process`: its skill is named after the slug; `--skill <name>` only if the person wants
-   another name. For a task with no code to change (a spec, a research, a decision) add
+   gave one. For a task with no code to change (a spec, a research, a decision) add
    `--no-code`: no repository, no branch. Add `--spec` only when the person wants the spec and the
    plan approved before any code: `spec.md` and `plan.md` come with the task.
 3. Run `wsg new <slug> --no-launch` with those flags. Exit code 2 means the input was rejected and
-   nothing was created: show the message and do what it asks — agree on another slug, or pass
-   `--skill <name>`.
+   nothing was created: show the message and do what it asks — agree on another slug.
 4. Don't set the workspace up from this session. Tell the person to start a new one there —
    `ws <slug>` and then `/wsg-setup`, or `cd <path> && claude "/wsg-setup"` — because settings,
    rules and agents load from the directory a session starts in.

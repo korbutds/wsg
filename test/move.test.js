@@ -415,12 +415,29 @@ function make(slug, sources = [], extra = [], env = {}) {
     git(repo, ['config', '--unset', 'worktree.useRelativePaths']);
   }
 
+  console.log('\na process of wsg 0.8 moves as a task');
+  {
+    make('oldp-epic', [], ['--kind', 'epic']);
+    const ws = make('oldp');
+    writeState(ws, { ...readState(ws), kind: 'process', skillName: 'oldp' });
+    fs.writeFileSync(path.join(ws, '.claude', 'ws-kind'), 'process\n');
+    const r = json(['move', 'oldp', '--epic', 'oldp-epic']);
+    it('moved: exit 0, kind task in the result', () => {
+      assert.strictEqual(r.code, 0, r.all);
+      assert.strictEqual(r.doc.result.kind, 'task');
+    });
+    it('the state is saved as a task, its other keys kept', () => {
+      const st = readState(path.join(wsRoot, 'oldp-epic', 'oldp'));
+      assert.deepStrictEqual([st.kind, st.skillName, st.epic], ['task', 'oldp', { slug: 'oldp-epic' }]);
+    });
+  }
+
   console.log('\nrefusals: nothing touched');
   {
     const repo = makeRepo('fair-api');
     const ep = make('fair', [[repo, ['--link']]], ['--kind', 'epic']);
     make('stall', [], ['--epic', 'fair']);
-    make('proc', [], ['--kind', 'process']);
+    make('proc');
     const broken = make('broken', [[repo, ['--branch', 'feat/broken']]]);
     // Its repository's side names another place: git would not see it as linked both ways.
     const l = links(path.join(broken, 'fair-api'));
@@ -435,10 +452,9 @@ function make(slug, sources = [], extra = [], env = {}) {
     writeState(archivedWs, { ...readState(archivedWs), version: 4, status: 'archived', archive: { date: '2026-11-02', previous: { status: 'open', closed: null }, sources: [] } });
     const before = tree(wsRoot);
     for (const [what, args, re] of [
-      ['a process', ['move', 'proc', '--epic', 'fair'], /proc is a process: a process stays where it is/],
       ['an epic', ['move', 'fair', '--out'], /fair is an epic: an epic never moves/],
       ['an archived task', ['move', 'gone', '--epic', 'fair'], /archived: wsg unarchive gone first/],
-      ['into a task, not an epic', ['move', 'proc', '--epic', 'broken'], /is not an epic|is a process/],
+      ['into a task, not an epic', ['move', 'proc', '--epic', 'broken'], /is not an epic/],
       ['a worktree git does not link both ways', ['move', 'broken', '--epic', 'fair'], /not a worktree of .* that git links both ways — run git -C .* worktree repair .*broken\/fair-api first/],
       ['a source named like one of the epic for another directory', ['move', 'clash', '--epic', 'fair'], /the epic fair has a source of that name for another directory/],
     ]) {

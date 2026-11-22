@@ -538,11 +538,13 @@ const ITEMS = [
       assert.strictEqual(jsonOf(r).error.code, 'invalid_input');
       assert.match(jsonOf(r).error.message, /cart is a task workspace: wsg context works on an epic in this version/);
     });
-    it('so is a process, and context list too', () => {
-      wsg(['new', 'release', '--kind', 'process', '--no-launch'], { env });
+    it('so is a process of wsg 0.8 (a task now), and context list too', () => {
+      wsg(['new', 'release', '--no-launch'], { env });
+      const f = path.join(root, 'release', '.claude', 'wsg.json');
+      fs.writeFileSync(f, JSON.stringify({ ...JSON.parse(fs.readFileSync(f, 'utf8')), kind: 'process', skillName: 'release' }));
       const r = ctx(['list', '--ws', 'release']);
       assert.strictEqual(r.code, 2, r.all);
-      assert.match(r.err, /release is a process workspace/);
+      assert.match(r.err, /release is a task workspace/);
     });
     it('the epic found from inside it', () => {
       const r = ctx(['list', '--json'], { cwd: ep });

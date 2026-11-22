@@ -693,7 +693,8 @@ const FINDINGS = [
   [bash(`${W} new x --help`), false, 'with anything else it is new, not help'],
   [bash(`${W} add --note --help`), false, '--help as a value'],
   [bash(`${W} help --check`), true, 'help of an alias'],
-  [bash(`${W} --promote -h`), true, '-h after an alias'],
+  [bash(`${W} --check -h`), true, '-h after an alias'],
+  [bash(`${W} --promote -h`), false, 'the --promote alias is gone (0.9)'],
   [bash(`${W} help -h`), false, '-h is not a command'],
   // What a block reason suggests instead of a format with ( ) must pass.
   [bash('git for-each-ref --sort=-committerdate refs/heads'), true, 'branches by date'],

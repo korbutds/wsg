@@ -111,10 +111,6 @@ _ws_repo_state() {            # state of one checkout: branch, detached, rebase,
     return
   fi
   gd="$(git -C "$r" rev-parse --absolute-git-dir 2>/dev/null)"
-  if [ "$2" = process ]; then
-    print -nr -- "$(git -C "$r" rev-parse --short HEAD 2>/dev/null) @@ws.state.noBranch@@$dirty"
-    return
-  fi
   if [ -d "$gd/rebase-merge" ] || [ -d "$gd/rebase-apply" ]; then
     st="@@ws.state.rebase@@ @ $(git -C "$r" rev-parse --short HEAD 2>/dev/null)"
   else
@@ -125,7 +121,7 @@ _ws_repo_state() {            # state of one checkout: branch, detached, rebase,
 
 # The kind in REPLY without a fork: $(<file) is read by the shell itself, a listing or a
 # completion over hundreds of workspaces would otherwise start a process for each.
-_ws_kind_of() {               # task|process|epic
+_ws_kind_of() {               # task|epic (a 0.8 "process" reads as task)
   local f="$1/.claude/ws-kind"
   local k
   REPLY=task
@@ -274,9 +270,6 @@ _ws_show() {
   fi
   # the texts are printf arguments, never the format: a translation may hold a %
   case "$kind" in
-    process)
-      local -a rf; rf=("$d"/runs/*.md(N))
-      printf '  %s%-*s %-7s%s · %s: %d\n' "$pad" $(( 18 - ${#pad} )) "$name" "@@ws.list.process@@" "$extra" "@@ws.list.runs@@" "${#rf}" ;;
     epic) printf '  %s%-*s %-7s%s\n' "$pad" $(( 18 - ${#pad} )) "$name" "@@ws.list.epic@@" "$extra" ;;
     *) printf '  %s%-*s %-7s%s\n' "$pad" $(( 18 - ${#pad} )) "$name" "@@ws.list.task@@" "$extra" ;;
   esac

@@ -20,7 +20,7 @@ const argv = process.argv.slice(2);
 // deep in a command is then an envelope on stdout too (lib/json.js), and ui prints nothing there.
 const J = require(path.join(ROOT, 'lib', 'json.js'));
 const { FLAGS, GLOBAL, GROUPS, commandOf } = require(path.join(ROOT, 'lib', 'flags.js'));
-const ALIASES = { '--check': 'check', '--promote': 'promote' };
+const ALIASES = { '--check': 'check' };
 const hasOwn = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 const known = (c) => hasOwn(FLAGS, ALIASES[c] || c);
 // `wsg --version --json` gives the version in the envelope.
@@ -170,7 +170,7 @@ const lib = (name) => require(path.join(ROOT, 'lib', `${name}.js`));
 // absolute against it.
 let currentWs = null;
 
-// add, remove and promote change wsg.json: one at a time per workspace (lib/lock.js).
+// add, remove and the other writers change wsg.json: one at a time per workspace (lib/lock.js).
 // opts: as acquire takes them.
 // Returns release(): a command that goes on after its writes (wsg new starts the agent) lets go first.
 function lock(ws, opts) {
@@ -206,14 +206,8 @@ async function cmdNew(args) {
   if (!pos[0]) invalid(t('cli.newSlug'));
   const kind = flags['--kind'] || 'task';
   if (!lib('workspace').KINDS.includes(kind)) invalid(t('cli.badKind', { kind }));
-  if (kind !== 'process' && flags['--skill']) invalid(t('cli.skillForProcess'));
   const W = lib('workspace');
   const S = lib('source');
-  // The skill named after the slug: a slug the skill rules reject asks for --skill, not another slug.
-  if (kind === 'process' && !flags['--skill'] && !W.slugError(pos[0])) {
-    const bad = W.skillError(pos[0]);
-    if (bad) invalid(t('workspace.badSkillFromSlug', { name: pos[0], why: bad }));
-  }
   const dryRun = !!flags['--dry-run'];
   if (flags['--sources'] !== undefined && flags['--epic'] === undefined) invalid(t('cli.sourcesNeedEpic'));
   // A task without code: no repository, no branch. In an epic it takes none of the epic's sources;
@@ -263,8 +257,6 @@ async function cmdNew(args) {
     ...(epicWs ? { epicWs } : {}),
     title: (flags['--title'] || '').trim() || pos[0],
     ...S.ticketFields(flags['--ticket'], cfg),
-    // A process's skill is named after the slug unless --skill says otherwise.
-    skillName: flags['--skill'] || (kind === 'process' ? pos[0] : ''),
     // The digest of the owner's rules goes in whenever the file exists: the agent fills it during setup.
     personalRules: !!(cfg.WSG_GLOBAL_MEMORY && fs.existsSync(cfg.WSG_GLOBAL_MEMORY)),
     ...(noCode ? { noCode: true } : {}),
@@ -856,7 +848,7 @@ async function cmdTeam(args) {
   else ui.ok(t('cli.teamNone'));
   for (const file of team.keptDiffering(p)) ui.info(t('cli.teamKept', { file }));
   if (p.restart) ui.info(t('cli.teamRestart', { slug: state.slug || path.basename(ws) }));
-  ui.info(state.kind === 'process' ? t('cli.teamNextProcess', { skill: state.skillName }) : t('cli.teamNext'));
+  ui.info(t('cli.teamNext'));
   return 0;
 }
 
@@ -1850,29 +1842,6 @@ function printMcpList(r, slug) {
   if (r.missingEnv.length) ui.warn(t('mcp.listMissing', { list: r.missingEnv.join(', ') }));
 }
 
-async function cmdPromote(args) {
-  const { flags, pos } = parse(args, FLAGS.promote, 1);
-  if (!flags['--skill']) invalid(t('cli.promoteSkill'));
-  const bad = lib('workspace').skillError(flags['--skill']);
-  if (bad) invalid(t('workspace.badSkill', { name: flags['--skill'], why: bad }));
-  guardPlatform();
-  let target = pos[0];
-  if (!target) {
-    const found = lib('workspace').find(process.cwd());
-    target = found ? found.ws : process.cwd();
-  }
-  // Only a directory that has .claude/ can be a workspace; promote refuses anything else itself.
-  // promote is synchronous to the end: a signal handler would never run, only swallow Ctrl+C.
-  const ws = config.resolveWs(target, cfg);
-  if (fs.existsSync(path.join(ws, '.claude'))) lock(ws, { signals: false });
-  try {
-    return await lib('promote').run(target, cfg, { skillName: flags['--skill'] });
-  } catch (e) {
-    if (e.invalid) invalid(e.message);
-    throw e;
-  }
-}
-
 function cmdInstallSkills(args) {
   const { flags } = parse(args, FLAGS['install-skills'], 0);
   const ui = lib('ui');
@@ -1915,7 +1884,6 @@ const COMMANDS = {
   list: cmdList,
   status: cmdStatus,
   close: cmdClose,
-  promote: cmdPromote,
   context: cmdContext,
   mcp: cmdMcp,
   archive: cmdArchive,
@@ -1925,7 +1893,6 @@ const COMMANDS = {
   'install-skills': cmdInstallSkills,
   // The 0.1 spellings, kept for one release.
   '--check': cmdCheck,
-  '--promote': cmdPromote,
 };
 
 (async () => {

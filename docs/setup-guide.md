@@ -57,12 +57,6 @@ Go through these in order. Each answer goes into its section of `AGENTS.md`, rep
 If the title is just the slug or not in English, propose a better one and update the `# ` heading
 of every file that repeats it.
 
-**A process workspace** (`.claude/ws-kind` says `process`) is a repeatable engineering procedure:
-a release, a dependency upgrade, a routine migration. Ask instead: what the procedure does and gives
-(`## Why`), when it runs, the input of each run, the rules and boundaries of every run, and how to
-tell a single run is finished. Its steps are not asked now — they are worked out with the owner on
-the first run and written into its skill. Its repositories are attached as links.
-
 **An epic workspace** (`.claude/ws-kind` says `epic`) is one tracker epic; its tasks are made
 inside it later. Ask only for what its `AGENTS.md` has: what the epic delivers and why (`## Why`),
 the epic's ticket (syncing reads the tracker by it; `wsg check` warns while it is `FILL IN`), links

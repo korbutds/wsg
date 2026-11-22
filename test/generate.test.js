@@ -159,35 +159,6 @@ process.on('exit', () => {
     fs.writeFileSync(agentsMd, agentsOrig);
   }
 
-  console.log('\nprocess workspace');
-  const proc = {
-    ...base,
-    kind: 'process',
-    slug: 'release-flow',
-    title: 'Banner release',
-    ticket: '',
-    ticketUrl: '',
-    stateLabel: "repeatable process; each run's ticket is an argument",
-    skillName: 'release-banner',
-    varies: ['campaign ticket'],
-    fixed: ['repositories and conventions'],
-    steps: ['Read the ticket', 'Create a branch'],
-    repos: [{ name: 'api', path: repo, mode: 'link', branch: '', base: '', target: 'main', verify: 'echo ok', note: '', carry: [], cloneNm: false }],
-  };
-  const wp = await quietAsync(() => generate.run(proc, cfg));
-  it('kind recorded as process', () => assert.strictEqual(fs.readFileSync(path.join(wp, '.claude/ws-kind'), 'utf8').trim(), 'process'));
-  it('skill is manual-only and carries the steps', () => {
-    const sk = fs.readFileSync(path.join(wp, '.claude/skills/release-banner/SKILL.md'), 'utf8');
-    assert.match(sk, /^disable-model-invocation: true$/m);
-    assert.match(sk, /1\. Read the ticket/);
-    assert.match(sk, /Append a paragraph to `journal\.md`/);
-  });
-  it('run journal created', () => assert.ok(fs.existsSync(path.join(wp, 'journal.md'))));
-  it('runs directory created', () => assert.ok(fs.existsSync(path.join(wp, 'runs'))));
-  it('AGENTS.md explains how the procedure runs', () =>
-    assert.match(fs.readFileSync(path.join(wp, 'AGENTS.md'), 'utf8'), /## How it runs/));
-  it('--check passes', () => assert.strictEqual(quiet(() => check.run(wp, cfg, CHECK_ENV)), 0));
-
   console.log('\nrollback on failure');
   const bad = { ...task, slug: 'rollback-me', repos: [{ ...task.repos[0], branch: 'alice/task/oauth/PROJ-412/deeper' }] };
   const badErr = await failure(() => generate.run(bad, cfg));
@@ -503,8 +474,6 @@ process.on('exit', () => {
         assert.strictEqual(zshRoot('WS_ROOT="~/q"\n').replace(/\/+/g, '/'), path.join(tmp, 'q'));
       });
     }
-    it('a skill description with a colon is quoted', () =>
-      assert.match(T.skillMd({ skillName: 's', title: 'Release: checklist', steps: [] }), /^description: "Release: checklist"$/m));
   }
 
   console.log('\nws: launching the agent');
@@ -790,98 +759,6 @@ process.on('exit', () => {
     wsgNew('cart');
     it('a workspace named like a task of an epic wins', () =>
       assert.match(jump('cart --cd'), /pwd=.*\/ws-epics\/cart$/m));
-  }
-
-  console.log('\n--promote');
-  {
-    const promote = require(path.join(ROOT, 'lib', 'promote.js'));
-    const notWs = path.join(tmp, 'not-a-workspace');
-    fs.mkdirSync(notWs);
-    const rejects = async (name, dir) => {
-      const before = fs.readdirSync(dir).sort();
-      try {
-        await promote.run(dir, cfg);
-        failed++; console.log(`  FAIL  ${name}\n        did not throw`);
-      } catch (e) {
-        it(name, () => assert.match(e.message, /does not look like a wsg workspace/));
-      }
-      it(`${name}: nothing created`, () => assert.deepStrictEqual(fs.readdirSync(dir).sort(), before));
-    };
-    await rejects('an empty directory is rejected', notWs);
-    // a repository with its own CLAUDE.md is not a workspace; its checkout must not be written to
-    fs.writeFileSync(path.join(repo, 'CLAUDE.md'), '# repo\n');
-    await rejects('a repository with CLAUDE.md is rejected', repo);
-    fs.rmSync(path.join(repo, 'CLAUDE.md'));
-
-    // The successful path: a task becomes a process and still passes the check.
-    const pm = await quietAsync(() => generate.run({ ...base, kind: 'task', slug: 'promote-me', title: 'T',
-      stateLabel: 'new feature', repos: [{ name: 'api', path: repo, mode: 'link', branch: '', base: '', target: 'main', verify: 'echo ok', note: '', carry: [], cloneNm: false }] }, cfg));
-    const noSkill = await failure(() => promote.run(pm, cfg));
-    it('promote without a skill name is refused, no prompt', () => assert.match(noSkill, /skill name/));
-    it('a refused promote leaves the kind', () => assert.strictEqual(fs.readFileSync(path.join(pm, '.claude/ws-kind'), 'utf8').trim(), 'task'));
-    const badSkill = await failure(() => promote.run(pm, cfg, { skillName: '../x' }));
-    it('promote refuses a skill name with a path in it', () => assert.match(badSkill, /Lowercase Latin letters/));
-    const code = await quietAsync(() => promote.run(pm, cfg, { skillName: 'weekly-release' }));
-    it('promote: kind switched to process', () => assert.strictEqual(fs.readFileSync(path.join(pm, '.claude/ws-kind'), 'utf8').trim(), 'process'));
-    it('promote: the state file follows', () => {
-      const st = JSON.parse(fs.readFileSync(path.join(pm, '.claude/wsg.json'), 'utf8'));
-      assert.strictEqual(st.kind, 'process');
-      assert.strictEqual(st.skillName, 'weekly-release');
-      assert.strictEqual(st.status, 'open');
-    });
-    it('promote: skill and journal created', () => {
-      assert.ok(fs.existsSync(path.join(pm, '.claude/skills/weekly-release/SKILL.md')));
-      assert.ok(fs.existsSync(path.join(pm, 'journal.md')));
-    });
-    it('promote: AGENTS.md explains how it runs', () => assert.match(fs.readFileSync(path.join(pm, 'AGENTS.md'), 'utf8'), /## How it runs/));
-    it('promote: the same wording as a new process, no ticket', () => {
-      const text = fs.readFileSync(path.join(pm, 'AGENTS.md'), 'utf8');
-      assert.match(text, /runs\/<date>-<short-name>\.md/);
-      assert.doesNotMatch(text, /<ticket>/);
-    });
-    it('promote: the check passes afterwards', () => assert.strictEqual(code, 0));
-    it('promote: the empty steps are still flagged — the first run was the task', () => {
-      const lines = [];
-      const log = console.log;
-      console.log = (x) => lines.push(String(x));
-      try { check.run(pm, cfg, CHECK_ENV); } finally { console.log = log; }
-      assert.match(lines.join('\n'), /WARN.*no steps described, though it has been run/);
-    });
-
-    // A workspace where AGENTS.md is a symlink (generated before sources were checked).
-    const linked = await quietAsync(() => generate.run({ ...base, kind: 'task', slug: 'linked-agents', title: 'T',
-      stateLabel: 'new feature', repos: [{ name: 'docs', path: docs, mode: 'link', branch: '', base: '', target: '—', verify: '', note: '', carry: [], cloneNm: false }] }, cfg));
-    const foreign = path.join(tmp, 'foreign-AGENTS.md');
-    fs.writeFileSync(foreign, 'FOREIGN\n');
-    fs.rmSync(path.join(linked, 'AGENTS.md'));
-    fs.symlinkSync(foreign, path.join(linked, 'AGENTS.md'));
-    const pe = await failure(() => promote.run(linked, cfg, { skillName: 'x' }));
-    it('promote refuses to write through a symlinked AGENTS.md', () => assert.match(pe, /is a symlink/));
-    it('the file behind the symlink is untouched', () => assert.strictEqual(fs.readFileSync(foreign, 'utf8'), 'FOREIGN\n'));
-
-    // Symlinks deeper on the way: a shared skills folder, a linked ws-kind.
-    const nested = await quietAsync(() => generate.run({ ...base, kind: 'task', slug: 'nested-links', title: 'T',
-      stateLabel: 'new feature', repos: [{ name: 'docs', path: docs, mode: 'link', branch: '', base: '', target: '—', verify: '', note: '', carry: [], cloneNm: false }] }, cfg));
-    const sharedSkills = path.join(tmp, 'shared-skills');
-    fs.mkdirSync(sharedSkills);
-    // The skeleton has its own skills folder (wsg-setup): replaced by the shared one here.
-    fs.rmSync(path.join(nested, '.claude', 'skills'), { recursive: true });
-    fs.symlinkSync(sharedSkills, path.join(nested, '.claude', 'skills'));
-    const pe2 = await failure(() => promote.run(nested, cfg, { skillName: 'x' }));
-    it('promote refuses a symlinked .claude/skills', () => assert.match(pe2, /\.claude\/skills in .* is a symlink/));
-    it('the shared skills folder stays empty', () => assert.deepStrictEqual(fs.readdirSync(sharedSkills), []));
-    fs.rmSync(path.join(nested, '.claude', 'skills'));
-    const kindFile = path.join(tmp, 'foreign-kind');
-    fs.writeFileSync(kindFile, 'task\n');
-    fs.rmSync(path.join(nested, '.claude', 'ws-kind'));
-    fs.symlinkSync(kindFile, path.join(nested, '.claude', 'ws-kind'));
-    const pe3 = await failure(() => promote.run(nested, cfg, { skillName: 'x' }));
-    it('promote refuses a symlinked .claude/ws-kind', () => assert.match(pe3, /ws-kind in .* is a symlink/));
-    it('the file behind ws-kind is untouched', () => assert.strictEqual(fs.readFileSync(kindFile, 'utf8'), 'task\n'));
-    it('a refused promote creates nothing', () => {
-      assert.ok(!fs.existsSync(path.join(nested, 'journal.md')));
-      assert.ok(!fs.existsSync(path.join(nested, 'runs')));
-    });
   }
 
   console.log('\nsources that would overwrite files outside the workspace');
@@ -1180,31 +1057,6 @@ process.on('exit', () => {
       assert.match(agents, /## Out of scope\n\n- the login screen redesign/);
       assert.match(agents, /ask the owner first/);
     });
-    const proc = await quietAsync(() => generate.run({ ...base, kind: 'process', slug: 'release', title: 'Release', skillName: 'release',
-      stateLabel: 'repeatable process', trigger: ['a release is scheduled'], varies: ['the version to release'],
-      fixed: ['no force-push to the release branch'], steps: [], invariants: [], repos: [linked] }, cfgT));
-    const pa = fs.readFileSync(path.join(proc, 'AGENTS.md'), 'utf8');
-    const skill = fs.readFileSync(path.join(proc, '.claude/skills/release/SKILL.md'), 'utf8');
-    it('process: when it runs is in AGENTS.md', () => assert.match(pa, /## When it runs\n\n- a release is scheduled/));
-    it('process: rules and boundaries are always-on, in AGENTS.md', () => assert.match(pa, /## Rules and boundaries\n\n- no force-push/));
-    it('process: the skill points to them instead of repeating', () => {
-      assert.doesNotMatch(skill, /no force-push/);
-      assert.match(skill, /Rules and boundaries of every run are in AGENTS.md/);
-    });
-    it('process: the input of each run is in the skill', () => assert.match(skill, /## Input of each run\n\n- the version to release/));
-    it('process: the run name example is an engineering one', () => assert.match(pa, /runs\/2026-09-30-release-2\.4\.md/));
-    it('process: steps are worked out on the first run', () => assert.match(skill, /on the first run, work them out with the owner/));
-    it('process: no ticket is asked for anywhere', () => {
-      for (const f of [pa, skill, fs.readFileSync(path.join(proc, 'journal.md'), 'utf8')]) assert.doesNotMatch(f, /<ticket>|ticket or description/);
-    });
-    it('process: runs are named by date', () => {
-      assert.match(pa, /runs\/<date>-<short-name>\.md/);
-      assert.match(skill, /runs\/<date>-<short-name>\.md/);
-    });
-    it('process: it can be run without an argument', () => assert.match(pa, /Without an argument, look at what is new/));
-    it('process: the skill leaves pushes and MRs to the owner', () => assert.match(skill, /Do not push or create an MR/));
-    it('process: no invariants section it was never asked for', () => assert.doesNotMatch(pa, /Invariants are not findings/));
-    it('process: repositories are links, the skill makes the branch', () => assert.match(pa, /no permanent branch/));
     const checkOut = (dir) => {
       const lines = [];
       const log = console.log;
@@ -1212,11 +1064,7 @@ process.on('exit', () => {
       try { check.run(dir, cfgT, CHECK_ENV); } finally { console.log = log; }
       return lines.join('\n');
     };
-    it('a new process passes its own check with no warnings at all', () => assert.doesNotMatch(checkOut(proc), /WARN|FAIL/));
-    it('the setup skill is not taken for the procedure', () => assert.doesNotMatch(checkOut(proc), /skill wsg-setup/));
     it('a task with its answers given counts as set up', () => assert.match(checkOut(task), /OK   setup finished: 1 git repository/));
-    fs.writeFileSync(path.join(proc, 'runs', 'first.md'), '# run\n');
-    it('after a run, missing steps are', () => assert.match(checkOut(proc), /no steps described, though it has been run/));
   }
 
   console.log('\nanswers in another language');

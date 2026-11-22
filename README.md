@@ -114,28 +114,27 @@ The commands the agent (or you) call:
 
 | Command | What it does |
 |---|---|
-| `wsg new <slug> [--title T] [--kind task\|process\|epic] [--skill NAME] [--ticket X] [--epic E] [--sources a,b\|none] [--no-code] [--spec] [--dry-run] [--json] [--no-launch]` | Creates the skeleton and starts the agent; `--no-launch` prints the next step instead. Only the slug is needed, and `--kind` for a process or an epic: the setup dialogue asks for the rest. `--epic E` makes a task inside the epic `E`, `--sources` picks the epic's repositories it takes (see [Epics](#epics)); `--no-code` makes a task without a repository (see [Tasks without code](#tasks-without-code)); `--spec` makes a task go spec first (see [Checklist and spec stages](#checklist-and-spec-stages)); `--dry-run` prints the plan as JSON; `--json` prints one JSON document, the outcome or the error, and never starts the agent. |
+| `wsg new <slug> [--title T] [--kind task\|epic] [--ticket X] [--epic E] [--sources a,b\|none] [--no-code] [--spec] [--dry-run] [--json] [--no-launch]` | Creates the skeleton and starts the agent; `--no-launch` prints the next step instead. Only the slug is needed, and `--kind` for a process or an epic: the setup dialogue asks for the rest. `--epic E` makes a task inside the epic `E`, `--sources` picks the epic's repositories it takes (see [Epics](#epics)); `--no-code` makes a task without a repository (see [Tasks without code](#tasks-without-code)); `--spec` makes a task go spec first (see [Checklist and spec stages](#checklist-and-spec-stages)); `--dry-run` prints the plan as JSON; `--json` prints one JSON document, the outcome or the error, and never starts the agent. |
 | `wsg add <path> [--worktree\|--link\|--reference] [--branch B] [--base REF] [--reset-to-base] [--target T] [--verify CMD] [--carry all\|none\|a,b] [--[no-]clone-node-modules] [--note TEXT] [--branch-template T] [--dry-run] [--json] [--ws SLUG\|PATH]` | Attaches one source to the workspace you are in. An existing branch is attached as it is, one only on origin is continued; `--reset-to-base` starts it over (with a `backup/…`). Every check happens before anything is touched; a failure rolls back only this source. `--dry-run` prints the plan as JSON; `--json` prints one JSON document, the outcome or the error, and nothing else. In an epic, a link with the defaults its tasks reuse; in a task of an epic, `wsg add <name>` takes the epic's source of that name. |
 | `wsg remove <name> [--delete-ignored [--expect-ignored FILE]] [--dry-run] [--json] [--ws SLUG\|PATH]` | Detaches a source: a clean worktree (its branch is kept) or the symlink, its rule, and its generated parts. Ignored files that exist nowhere else (made in the worktree, or carried in and changed since) are deleted with the worktree only after `--delete-ignored` (with `--expect-ignored FILE`, only if they are exactly `{ignored, ignoredStamp}` of an earlier `--dry-run --json`: the same files, nothing made, edited or deleted in them since; a cloned `node_modules` and carried copies equal to the main checkout are not part of it and go as before); a `node_modules` wsg cloned is not checked, so changes inside it are not protected. The way to fix a source attached with the wrong flags: remove, then add again. |
 | `wsg refresh [--tasks] [--dry-run] [--json] [--ws SLUG\|PATH]` | Brings the generated parts up to date with this wsg — e.g. adds the advisor block to a workspace made by 0.2 — and touches nothing else. `--tasks` in an epic: then every task of it, each under its own lock. `--dry-run` prints the files it would change as JSON; `--json` prints one JSON document. |
 | `wsg team <preset> [--without ROLE,...] [--dry-run] [--ws SLUG\|PATH]` | Adds a team of roles (preset `fullstack`): cards and a workflow in `team/`, a Claude Code subagent per role, `/wsg-feature`. Only adds; an existing file is kept. `--dry-run` prints what it would create, keep and update as JSON. Not in an epic: in its tasks. See [Team](#team). |
 | `wsg check [path\|slug] [--json]` | Checks a workspace against the conventions; `--json` gives the report by section as one JSON document. A task of an epic is `<epic>/<task>`. |
 | `wsg list [--json]` | Lists every workspace in `WS_ROOT`, each epic's tasks under it, with the kind, a task's status marker, the ticket and the title; a 0.1 workspace and one whose state does not read are listed with what is wrong. Only reads, runs no git. `--json` gives each workspace's state, sources and the directories a session needs, and an epic's tracker tasks from `tasks.md`. An epic's tasks come in its order (`wsg reorder`). |
-| `wsg status <task> [open\|review\|done] [--dry-run] [--json]` | Prints a task's or a process's status (`archived` too, which only `wsg archive` sets), or sets it: only `.claude/wsg.json` and the epic's `tasks.md` block change (a done task of an epic reopened also gets its generated parts refreshed). The move to done warns about uncommitted or unpushed work and about entries left under `## For the epic`, and never refuses for them. The task is always named: a slug, `<epic>/<task>` or a path. |
+| `wsg status <task> [open\|review\|done] [--dry-run] [--json]` | Prints a task's status (`archived` too, which only `wsg archive` sets), or sets it: only `.claude/wsg.json` and the epic's `tasks.md` block change (a done task of an epic reopened also gets its generated parts refreshed). The move to done warns about uncommitted or unpushed work and about entries left under `## For the epic`, and never refuses for them. The task is always named: a slug, `<epic>/<task>` or a path. |
 | `wsg close <task> [--dry-run] [--json]` | `wsg status <task> done`. Merges, pushes and removes nothing. |
-| `wsg archive [<task>] [--delete-ignored [--expect-ignored FILE]] [--dry-run] [--json] [--ws SLUG\|PATH]` | Archives a finished task, a process, or an epic with its tasks, to free the disk: its worktrees go (without `--force`), with the `node_modules` and builds in them, and its symlinks. The branches are never deleted; the workspace with its notes, memory, rules and knowledge stays, and so do the sources as they were attached, in `.claude/wsg.json`. Everything is checked first: changes (skip-worktree and assume-unchanged edits too), untracked files, ignored files that exist nowhere else (unless `--delete-ignored`; `--expect-ignored FILE` also refuses when they are not exactly the `blockers.ignored` list of an earlier `--dry-run --json`, the files the owner was shown, with nothing made, edited, deleted or put back in them since (any activity in a listed directory — a `.DS_Store`, a watcher, a dev server — refuses until it stops; something there that does not read refuses too) — the refusal carries the fresh list; a cloned `node_modules` and carried copies equal to the main checkout are not part of it and go as before), a detached commit no branch has, a locked worktree or a submodule checked out refuse the whole archive, nothing touched. Unpushed commits are a warning. `--dry-run` prints what goes, what stays and the size (an upper bound: copy-on-write clones free less). wsg 0.7 and earlier refuse an archived workspace. |
+| `wsg archive [<task>] [--delete-ignored [--expect-ignored FILE]] [--dry-run] [--json] [--ws SLUG\|PATH]` | Archives a finished task, or an epic with its tasks, to free the disk: its worktrees go (without `--force`), with the `node_modules` and builds in them, and its symlinks. The branches are never deleted; the workspace with its notes, memory, rules and knowledge stays, and so do the sources as they were attached, in `.claude/wsg.json`. Everything is checked first: changes (skip-worktree and assume-unchanged edits too), untracked files, ignored files that exist nowhere else (unless `--delete-ignored`; `--expect-ignored FILE` also refuses when they are not exactly the `blockers.ignored` list of an earlier `--dry-run --json`, the files the owner was shown, with nothing made, edited, deleted or put back in them since (any activity in a listed directory — a `.DS_Store`, a watcher, a dev server — refuses until it stops; something there that does not read refuses too) — the refusal carries the fresh list; a cloned `node_modules` and carried copies equal to the main checkout are not part of it and go as before), a detached commit no branch has, a locked worktree or a submodule checked out refuse the whole archive, nothing touched. Unpushed commits are a warning. `--dry-run` prints what goes, what stays and the size (an upper bound: copy-on-write clones free less). wsg 0.7 and earlier refuse an archived workspace. |
 | `wsg unarchive [<task>] [--dry-run] [--json] [--ws SLUG\|PATH]` | Brings an archived workspace back: each worktree attached again on its branch as it is, each link made again, the status it had put back. Every source must be able to come back, or nothing changes. An epic brings back the tasks its archive took. Ignored files deleted with `--delete-ignored` do not come back. |
 | `wsg reorder <item> (--before X\|--after X\|--to N) [--dry-run] [--json] [--ws E]` | Moves a task of an epic in the order `tasks.md` shows, within its group: a task directory (the `<!-- wsg:tasks -->` block; the order is kept in the epic's `.claude/wsg.json` as `taskOrder`, and `wsg list` follows it), or a tracker task under "## Other tasks", named by its key, moved with its indented lines. Never across the groups; a section with an item without a key, a key twice, a table or other text is refused. A new task goes to the end; the order survives status changes, archive and refresh. In a task of an epic it acts on the epic. |
-| `wsg move [<task>] (--epic E [--new-epic] [--title T]\|--out) [--dry-run] [--json] [--ws SLUG\|PATH]` | Moves a task into an epic, from one epic into another, or out of its epic: the directory in one rename (notes, memory, worktrees with all they hold, branches untouched), the link of every worktree under it with its repository rewritten in the form git wrote it (absolute or relative; a Claude Code `--worktree` inside a source's too; none outside the task touched), `autoMemoryDirectory` and the `wsg check` line rewritten when they are wsg's text, the epic's blocks in `AGENTS.md` brought in or taken out, the `## For the epic` section added to `notes.md`, both epics' `tasks.md`. A source the target epic has too is taken from it, as `wsg add <name>` takes it; one taken from the old epic that the new one lacks becomes the task's own; a worktree with a submodule checked out is refused; out of an epic the ticket key goes too. `--new-epic` makes the epic (it may take the task's own name). Everything is checked first; a failure or Ctrl+C puts everything back. A process, an epic and an archived task never move; a done task moves with a warning. Claude Code keeps sessions by directory: `ws` resumes the last one from the old path too (the state keeps `moved`), `claude --continue` in the new directory does not see them; wsg never touches `~/.claude`. |
+| `wsg move [<task>] (--epic E [--new-epic] [--title T]\|--out) [--dry-run] [--json] [--ws SLUG\|PATH]` | Moves a task into an epic, from one epic into another, or out of its epic: the directory in one rename (notes, memory, worktrees with all they hold, branches untouched), the link of every worktree under it with its repository rewritten in the form git wrote it (absolute or relative; a Claude Code `--worktree` inside a source's too; none outside the task touched), `autoMemoryDirectory` and the `wsg check` line rewritten when they are wsg's text, the epic's blocks in `AGENTS.md` brought in or taken out, the `## For the epic` section added to `notes.md`, both epics' `tasks.md`. A source the target epic has too is taken from it, as `wsg add <name>` takes it; one taken from the old epic that the new one lacks becomes the task's own; a worktree with a submodule checked out is refused; out of an epic the ticket key goes too. `--new-epic` makes the epic (it may take the task's own name). Everything is checked first; a failure or Ctrl+C puts everything back. An epic and an archived task never move; a done task moves with a warning. Claude Code keeps sessions by directory: `ws` resumes the last one from the old path too (the state keeps `moved`), `claude --continue` in the new directory does not see them; wsg never touches `~/.claude`. |
 | `wsg context add <url\|path> [--id ID] [--title T] [--desc D]`, `wsg context note <id> (--text T\|--from FILE\|--from -) [--replace]`, `wsg context remove <id>`, `wsg context list` (each with `--ws E`, `--json`; the writes with `--dry-run`) | An epic's context: links, files copied into `context/`, notes. Its index — one line per item — is rendered into the epic's and every task's `AGENTS.md` in a `<!-- wsg:epic-context -->` block, at once; the agent opens an item only when it needs it. See [Epics](#epics). |
 | `wsg mcp add <name> [--env A,B=value] -- <command> [args...]`, `wsg mcp add <name> --url URL [--bearer-env VAR]`, `wsg mcp remove <name>`, `wsg mcp disable <name>`, `wsg mcp enable <name>`, `wsg mcp list` (each with `--ws E`, `--json`; the writes with `--dry-run`) | An epic's MCP servers for Claude Code: written into the epic's `.mcp.json` and enabled in the epic's and every task's `.claude/settings.json`, at once; `disable` turns a global server off there by name. Secrets by reference only (`${VAR}`). Codex not yet. See [Epics](#epics). |
-| `wsg promote [slug\|path] --skill NAME` | Turns a task into a process. Not an epic or a task of one. |
 | `wsg guide [setup\|advisor\|teach\|epic]` | Prints a guide an agent follows: the setup dialogue, the advisor's procedure, teaching a team role a practice, or working in an epic. |
 | `wsg install-skills [--uninstall]` | Installs the `wsg-new` and `wsg-teach` skills into `~/.claude/skills` and the `wsg-advisor` agent into `~/.claude/agents` (or under `$CLAUDE_CONFIG_DIR`) and, when Codex is there, `~/.codex/agents` (or `$CODEX_HOME/agents`). Overwrites only files it wrote — they carry a marker — and refuses others with exit 1. `--uninstall` removes only its own files. |
 
 Exit codes: `0` ok, `1` the check found errors or a step failed and was rolled back, `2` invalid
 input — nothing was changed, `130` cancelled with Ctrl+C (or a closed terminal, `kill`) and rolled
-back. `--check` and `--promote` still work as aliases. `wsg help <command>` (or `wsg <command> --help`)
+back. `--check` still works as an alias. `wsg help <command>` (or `wsg <command> --help`)
 describes a command's options. `--help`, `help`, `--version`, `--where`, `shell-init`, `guide` and
 `install-skills` work even when the settings file can't be read.
 
@@ -163,29 +162,19 @@ $WS_ROOT/oauth-refresh/
 
 ## Kinds of workspace
 
-| | **task** | **process** |
-|---|---|---|
-| lives | until merge | permanently |
-| bound to | ticket and branch | nothing: each run gets its own input |
-| main artifact | plan, spec, review | `.claude/skills/<name>/SKILL.md` |
-| log | `notes.md` → "Current context" | `journal.md` + `runs/<date>-<short-name>.md` |
-| memory | context of one task | accumulates across runs |
+A **task** is regular ticket work: one ticket and one branch, until merge. Its log is `notes.md`
+→ "Current context", its memory the context of that one task.
 
-A **task** is regular ticket work. A **process** is a repeatable engineering procedure: a release,
-a dependency upgrade, a routine migration. A process keeps its procedure in a skill that is invoked
-manually (`/release 2.4`, or just `/release` to go through whatever is new), and its run log
-accumulates what broke last time. No tracker needed: runs are named by date.
-Create one with `wsg new <slug> --kind process`: the skill is named after the slug, `--skill <name>`
-for another name.
+The other kind, the **epic**, holds several tasks: see [Epics](#epics).
 
-A task that turns out to be repeatable is turned into a process: `wsg promote <slug> --skill <name>`.
-
-A third kind, the **epic**, holds several tasks: see [Epics](#epics).
+wsg 0.8 and earlier had a third kind, the process (a repeatable procedure in a skill). wsg 0.9 reads
+a process workspace as a task: its state and `.claude/ws-kind` are taken as `task`, its skill,
+`journal.md` and `runs/` stay as plain files, and the next write saves `task`.
 
 ### Tasks without code
 
 Not every ticket changes code: a spec, a research, a decision to make. `wsg new <slug> --no-code`
-makes such a task (a task only: refused for a process or an epic), and its state keeps `noCode: true`.
+makes such a task (a task only: refused for an epic), and its state keeps `noCode: true`.
 
 | | ordinary task | `--no-code` task |
 |---|---|---|
@@ -195,8 +184,6 @@ makes such a task (a task only: refused for a process or an epic), and its state
 | `wsg check` | warns until a git repository is attached | warns while the Definition of done says FILL IN |
 | `wsg list --json`, `wsg new --json` | `noCode: false` | `noCode: true` |
 
-`wsg promote` of such a task makes an ordinary process: `noCode` goes from the state, and says so.
-
 ### Checklist and spec stages
 
 Every task made by wsg 0.8 gets `checklist.md`: the Definition of done as checkboxes, written by the
@@ -205,7 +192,7 @@ setup (`- [ ] FILL IN` until then) and ticked `- [x]` only with evidence. wsg co
 not counted — and gives `checklist: {done, total}` in `wsg list --json` and `wsg status --json`.
 Moving a task to review or done warns "N of M checklist items unchecked", and never refuses;
 `wsg check` warns about a FILL IN left after the setup and about unchecked items on a done task.
-Processes and epics get none, and tasks made before 0.8 get none added (`wsg check` notes it).
+Epics get none, and tasks made before 0.8 get none added (`wsg check` notes it).
 
 `wsg new <slug> --spec` (a task only) adds `spec.md` and `plan.md` templates and a `## Stages`
 section in `AGENTS.md`: the agent writes the spec first and waits for your "ok", then builds
@@ -304,7 +291,7 @@ $WS_ROOT/shop/
   both epics' `tasks.md` follow. Move a task only this way: a directory moved by hand breaks its
   worktrees' links and points its memory at the old place (`wsg check` warns about the latter).
 - **Not in an epic.** `wsg team` refuses an epic with exit 2 — its agents would load in every task
-  below; run it in a task. `wsg promote` refuses an epic and a task of one.
+  below; run it in a task.
 - **`ws`** lists each epic with its tasks under it; `ws <epic>/<task>` jumps into one, and so does
   the task's name alone or a prefix when it is unambiguous.
 
@@ -313,15 +300,13 @@ $WS_ROOT/shop/
 Not only paths and branches, but also what the agent is useless without — each answer in its own
 section of `AGENTS.md`. The agent reads them in every session, so 1–3 lines per answer is the goal.
 
-| task | process |
-|---|---|
-| **problem** and why now — required, it defines the scope | **what it does** and what it gives you — required |
-| **definition of done** | **when it runs** |
-| **out of scope** — nearby things not to touch | **input of each run** — the skill's arguments |
-| **invariants** — deliberate decisions that look like violations; without them the agent and the reviewer subagent will "fix" them | **rules and boundaries** — always-on, not only inside the skill |
-| | **when a run is finished** |
+| task |
+|---|
+| **problem** and why now — required, it defines the scope |
+| **definition of done** |
+| **out of scope** — nearby things not to touch |
+| **invariants** — deliberate decisions that look like violations; without them the agent and the reviewer subagent will "fix" them |
 
-A process's steps are not asked up front: the agent works them out with you on the first run.
 Until the "Why" section is filled in and a git repository is attached, `wsg check` warns that
 setup is not finished. A task without code (`--no-code`) is asked for a done criterion the owner
 can check instead of a repository and a command.
@@ -430,8 +415,7 @@ team/<role>.md                    role cards: the portable source of truth, read
 team/workflow.md                  stages 0–6 and who writes which file
 AGENTS.md  <!-- wsg:team -->      three lines pointing to both
 .claude/agents/wsg-<role>.md      Claude Code adapter: "read team/<role>.md and follow it"
-.claude/skills/wsg-feature/       /wsg-feature runs the workflow (task workspaces; a process
-                                  skill gets one pointer line instead)
+.claude/skills/wsg-feature/       /wsg-feature runs the workflow
 ```
 
 | Role | What it does | Tools |
@@ -456,8 +440,7 @@ AGENTS.md  <!-- wsg:team -->      three lines pointing to both
   facts go elsewhere. `wsg check` reports memory over the limit and index lines without a file.
 - **Re-running.** `wsg team` only adds: a missing role's files are written, an existing file is
   kept as it is, never overwritten or removed; only the generated blocks (the roles list in
-  `team/workflow.md`, the team block in `AGENTS.md`, and in a process workspace the pointer block
-  of its skill) are rendered again. `--without` is not remembered: the next run without it adds
+  `team/workflow.md` and the team block in `AGENTS.md`) are rendered again. `--without` is not remembered: the next run without it adds
   the roles left out. Removing a role is by hand.
 - **Codex** and other agents read the cards through `AGENTS.md` and play a role from its card;
   there are no Codex role agents yet.

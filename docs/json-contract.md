@@ -139,17 +139,17 @@ is a heading the plain check prints, its items the lines under it: `level` `ok`,
 
 ### list
 
-`{wsgVersion, wsRoot, workspaces}`. Read-only, without git. `workspaces` holds the roots — epics,
-tasks and processes in `WS_ROOT` — each epic's tasks in its `tasks`. Each entry:
+`{wsgVersion, wsRoot, workspaces}`. Read-only, without git. `workspaces` holds the roots — epics
+and tasks in `WS_ROOT` — each epic's tasks in its `tasks`. Each entry:
 
 | Key | Value |
 |---|---|
 | `slug` | the directory name |
-| `kind` | `task`, `process`, `epic`; `null` when the state does not read, or for a 0.1 workspace whose `.claude/ws-kind` names no known kind |
+| `kind` | `task`, `epic` (a `process` of wsg 0.8 is listed as `task`); `null` when the state does not read, or for a 0.1 workspace whose `.claude/ws-kind` names no known kind |
 | `path` | the workspace, as `WS_ROOT` gives it (a symlinked `WS_ROOT` is kept) |
 | `title` | from the state |
 | `ticket` | the key a task of an epic keeps in its state; `null` for anything else, a standalone task with a ticket included (it keeps it only in `AGENTS.md`) |
-| `status` | `open`, `review`, `done`, `archived` for a task or a process — or a value a later wsg wrote, as it is (`problems` says so); `null` for an epic, a 0.1 workspace and one whose state does not read |
+| `status` | `open`, `review`, `done`, `archived` for a task — or a value a later wsg wrote, as it is (`problems` says so); `null` for an epic, a 0.1 workspace and one whose state does not read |
 | `closed` | the UTC date it was closed, while done; else `null` |
 | `archived` | the UTC date `wsg archive` took it, an epic included; else `null` |
 | `noCode` | `true` for a task made with `wsg new --no-code` (no repository, no branch: `wsg add` takes `--link` and `--reference` only); `false` for any other workspace whose state reads; `null` for a 0.1 workspace and one whose state does not read |
@@ -193,12 +193,12 @@ was done (its context index, its MCP servers). A render refused at plan time (a 
 warning and the status is set anyway; a write that fails rolls the whole reopening back (`step_failed`). Uncommitted
 or unpushed work, entries left under `## For the epic` and, on a move to review or done, unchecked
 items of `checklist.md` ("N of M checklist items unchecked") are warnings, never refusals; so is done
-set for a task of an epic from inside its own workspace (a standalone task or a process gets no
+set for a task of an epic from inside its own workspace (a standalone task gets no
 such warning: it has no epic session).
 
 ### archive
 
-`wsg archive [<task>]`: a task, a process or an epic with its tasks. Everything is checked before the
+`wsg archive [<task>]`: a task or an epic with its tasks. Everything is checked before the
 first change (`wsg unarchive` brings it back); anything that refuses — a worktree with changes, untracked files, edits hidden by
 skip-worktree or assume-unchanged, ignored files that exist nowhere else (without
 `--delete-ignored`), a detached commit no local branch has, a lock (`git worktree lock`), a
@@ -254,7 +254,7 @@ applies.
 | `removes` | what goes from the workspace itself: `[{name, mode, source, path, branch, sha, bytes, files, ignored, unpushed}]` — `source` the repository or directory, `path` the worktree or link in the workspace, `branch` and `sha` the worktree's branch and its tip (`null` for a link), `bytes` and `files` what the worktree holds (its files' apparent size and number, symlinks not followed; `0` for a link or a worktree already gone — an upper bound: copy-on-write clones free less), `ignored` the ignored files that go with it (absolute), `unpushed` the commits not on the branch's upstream, or without one not on its base (`null`: could not tell) |
 | `keeps` | `{folder, notes, memory, rules, context, branches}`: the workspace, its `notes.md` and `.claude-memory/` (`null` when there are none), its rule files (absolute), an epic's `context/` (`null` otherwise), and `branches` `[{task, name, repo, branch, sha}]` — every branch kept, the epic's tasks' included (`task` `null` for the workspace's own); `sha` is `null` for a workspace archived before (its record keeps no tip) |
 | `blockers` | `{dirty, ignored, detached}`, each `[{task, source, …}]`: `changes` (as `git status --porcelain` shows them), `files` (absolute) with `stamp` (what they hold, see remove) or `commit`; `task` the epic's task it is in, else `null`. Empty lists when nothing refuses; with `--delete-ignored` `ignored` is empty, except in an `--expect-ignored` refusal, where it is the fresh list |
-| `tasks` | an epic's tasks it takes: `[{task, workspace, status, previous, changed, removes, bytes, files}]`; a task archived on its own before is not taken (its record stays its own). `[]` for a task or a process |
+| `tasks` | an epic's tasks it takes: `[{task, workspace, status, previous, changed, removes, bytes, files}]`; a task archived on its own before is not taken (its record stays its own). `[]` for a task |
 | `bytes`, `files` | the totals of every `removes`, the tasks' included: what is freed |
 | `tasksMdUpdated` | whether a `tasks.md` block changed (planned, in a dry run) |
 
@@ -347,8 +347,8 @@ steps aside under a hidden name next to it while the epic is made). The state ke
 resumes a Claude Code session from those directories when the task's own has none. wsg never writes
 under `~/.claude`.
 
-Refused, `invalid_input` with `result` present, the same document with `--dry-run` and without: a
-process or an epic; an archived task, or an archived epic on either side; a task not right in `WS_ROOT`
+Refused, `invalid_input` with `result` present, the same document with `--dry-run` and without: an
+epic; an archived task, or an archived epic on either side; a task not right in `WS_ROOT`
 or in an epic right in it, or whose directory above is not the epic its state names; a target that is
 not an epic (or, with `--new-epic`, one that exists); a name taken there, case ignored (a task, a file,
 one of the epic's reserved names or its sources' names); different file systems; a worktree under the
@@ -383,7 +383,7 @@ and a source of the target epic with a branch template the task has not attached
 
 ### context add, context note, context remove
 
-An epic's context (epics only: a task or a process is `invalid_input`). The epic is written in one
+An epic's context (epics only: a task is `invalid_input`). The epic is written in one
 transaction under its lock, then every task of it is refreshed, each under its own lock; a task that
 can't be refreshed is reported in `tasks`, never a rollback of the epic's change. A stop signal
 during that refresh keeps the epic's change: `interrupted` with `rollback: "unknown"` and `result`
@@ -427,7 +427,7 @@ of the owner's in it by the name of the epic's server) is `invalid_input`, nothi
 
 ### mcp add, mcp remove, mcp disable, mcp enable
 
-An epic's MCP servers for Claude Code (epics only: a task or a process is `invalid_input`; so is
+An epic's MCP servers for Claude Code (epics only: a task is `invalid_input`; so is
 `--agent codex` — "not supported yet"). The epic is written in one transaction under its lock — its
 `.claude/wsg.json`, `.mcp.json` (the epic's servers, next to the owner's own entries, which are
 kept) and `.claude/settings.json` (`enabledMcpjsonServers`, `deniedMcpServers`, the owner's entries

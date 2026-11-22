@@ -225,7 +225,7 @@ For each `wsg add`, `wsg remove` or `wsg new … --epic` command in the brief:
 - **Source modes.** `--worktree`: the repository gets its own branch inside the workspace — the
   default for a repository root. `--link`: a symlink to the shared checkout plus
   `additionalDirectories`, for a repository the task only reads, a heavy one that needs no branch
-  of its own, and always for a subdirectory of a repository or in a process workspace.
+  of its own, and always for a subdirectory of a repository.
   `--reference` is only for a directory **not** under git (specs, exports, designs): wsg refuses it
   for a git repository and refuses a directory outside git without it. At least one git repository
   is required — except in a task without code (`wsg new --no-code`, `"noCode": true` in its state):
@@ -271,7 +271,7 @@ For each `wsg add`, `wsg remove` or `wsg new … --epic` command in the brief:
   session at close. A task's status (`open`, `review`, `done`) is in its `.claude/wsg.json`: the
   task's session sets only review (`wsg status <epic>/<task> review`); done is set by the epic
   session, as the last write of Closing (`wsg close <epic>/<task>`), or by the owner. `wsg team`
-  and `wsg promote` refuse an epic (exit 2); promote refuses a task of one too.
+  refuses an epic (exit 2).
 - **Push and MR** are the owner's: the workspace settings deny `git push`.
 - **Dry runs and checks** change nothing: `wsg add <path> … --dry-run`, `wsg remove <name> --dry-run`,
   `wsg new <slug> --epic <epic> … --dry-run`, `wsg close <epic>/<task> --dry-run`, `wsg check`,
