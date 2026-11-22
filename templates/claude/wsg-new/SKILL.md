@@ -23,3 +23,5 @@ allowed-tools: Bash(wsg *)
 5. A task that exists already and belongs in an epic, in another one or in none is moved, not made
    again: `wsg move <task> --epic <epic>` (`--new-epic` makes the epic, `--out` takes it out of
    its epic). Show the person the `--dry-run` first and run it only after their "ok".
+6. A task that grew into several becomes an epic in its own folder, not a new workspace:
+   `wsg promote <task>`. Show the `--dry-run` first and run it only after their "ok".

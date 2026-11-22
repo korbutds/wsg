@@ -43,7 +43,10 @@
 #      unarchived (the worktree back on the branch, status open); `wsg reorder` of an epic's task
 #      directories and of its tracker tasks under "## Other tasks", the order in tasks.md and in
 #      wsg list --json; and what 0.8.1 adds: `wsg move` of a task with a worktree into the epic and
-#      out again, the worktree usable at each place, tasks.md following, wsg check clean.
+#      out again, the worktree usable at each place, tasks.md following, wsg check clean; and what
+#      0.9.0 adds: `wsg promote` of a task with a link into an epic in place (the dry run changes
+#      nothing, the link and notes stay, wsg check clean, a task made in it), and of a hand-made
+#      workspace without .claude/wsg.json, its repository symlink taken as a source.
 #      WSG_SMOKE_ONLY=v08 runs this step alone: claude need not be installed, and nothing under the
 #      user's config dir is touched.
 #
@@ -206,9 +209,10 @@ JS
   report "a global server the epic leaves on is listed (the control)" "$(has "$out" smokeon)"
   echo "  info  $(snippet "$out")"
 }
-# 9. What wsg 0.8 adds, with wsg alone: a task without code, archive and unarchive, reorder, move. No model.
+# 9. What wsg 0.8 adds, with wsg alone: a task without code, archive and unarchive, reorder, move,
+# promote. No model.
 v08_step() {
-  echo "9. wsg 0.8: --no-code, archive and unarchive, reorder, move (no model)"
+  echo "9. wsg 0.8 and 0.9: --no-code, archive and unarchive, reorder, move, promote (no model)"
   local nc="$WS_ROOT/v08-spec" ar="$WS_ROOT/v08-arc" ep="$WS_ROOT/v08-epic" field
   # A field of a workspace in wsg list --json: v08_field <slug> <expression on the entry e>.
   v08_field() {
@@ -261,6 +265,28 @@ v08_step() {
   wsg move v08-epic/v081-mv --out >/dev/null && ok=yes || ok=no
   report "wsg move --out" "$ok"
   report "the worktree is usable back in WS_ROOT, the epic's tasks.md without it" "$([ "$(git -C "$mv/repo" branch --show-current 2>/dev/null)" = smoke/v081-mv ] && [ "$(hasnt "$(cat "$ep/tasks.md")" 'v081-mv')" = yes ] && echo yes || echo no)"
+
+  # wsg 0.9.0: a task with a link becomes an epic in place; so does a hand-made workspace.
+  local pr="$WS_ROOT/v09-pr" hand="$WS_ROOT/v09-hand"
+  wsg new v09-pr --no-launch >/dev/null
+  wsg add "$TMP/repo" --link --ws v09-pr >/dev/null
+  printf '\nA note of the owner.\n' >> "$pr/notes.md"
+  report "wsg promote --dry-run changes nothing" "$(wsg promote v09-pr --dry-run >/dev/null && [ "$(cat "$pr/.claude/ws-kind")" = task ] && [ ! -e "$pr/knowledge.md" ] && echo yes || echo no)"
+  wsg promote v09-pr >/dev/null 2>&1 && ok=yes || ok=no
+  report "wsg promote" "$ok"
+  report "list --json: an epic, its link source kept" "$([ "$(v08_field v09-pr 'e.kind + " " + e.sources.length')" = "epic 1" ] && [ -L "$pr/repo" ] && echo yes || echo no)"
+  report "notes.md kept, the epic files made" "$([ "$(has "$(cat "$pr/notes.md")" 'A note of the owner.')" = yes ] && [ -f "$pr/knowledge.md" ] && [ -f "$pr/tasks.md" ] && echo yes || echo no)"
+  report "wsg check of the new epic finds no error" "$(wsg check v09-pr >/dev/null 2>&1 && echo yes || echo no)"
+  wsg new v09-pr-a --epic v09-pr --no-code --no-launch >/dev/null && ok=yes || ok=no
+  report "a task made in it, listed in its tasks.md" "$([ "$ok" = yes ] && has "$(cat "$pr/tasks.md")" '- `v09-pr-a/`' || echo no)"
+  mkdir -p "$hand/.claude"
+  echo task > "$hand/.claude/ws-kind"
+  printf '# hand\n\n## Why\n\nA hand-made workspace.\n' > "$hand/AGENTS.md"
+  printf '# hand\n\n@AGENTS.md\n' > "$hand/CLAUDE.md"
+  ln -s "$TMP/repo" "$hand/app"
+  wsg promote v09-hand >/dev/null 2>&1 && ok=yes || ok=no
+  report "wsg promote of a workspace without .claude/wsg.json" "$ok"
+  report "its repository symlink is a source now, the link as it was" "$([ "$(v08_field v09-hand 'e.kind + " " + e.sources.map((s) => s.name).join(",")')" = "epic app" ] && [ "$(readlink "$hand/app")" = "$TMP/repo" ] && echo yes || echo no)"
 }
 if [ "$V08_ONLY" = yes ]; then
   v08_step

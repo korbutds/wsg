@@ -177,6 +177,12 @@ the old place (`wsg check` warns about the latter).
 wsg move <task> --epic <epic>       # --new-epic makes it; --out takes the task out of its epic
 ```
 
+A task that grew into an epic becomes one in place, in the same folder (`--dry-run` first):
+
+```bash
+wsg promote <task>                  # notes, memory, rules and links stay; the epic's files are added
+```
+
 Delete a workspace only through git, otherwise admin entries are left behind:
 
 ```bash

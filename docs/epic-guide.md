@@ -75,6 +75,21 @@ takes a task out of its epic, `--new-epic` makes a new epic for it. A session op
 the old path: tell the owner to close it first, and to open the task again with `ws <epic>/<task>`,
 which also resumes the session from before the move.
 
+### A task that grew into an epic
+
+A task whose work turned out to be several tasks becomes an epic in its own folder:
+
+```bash
+wsg promote <task> --dry-run   # the plan: what is rewritten, made, dropped, adopted
+wsg promote <task>             # after the owner's "ok"
+```
+
+Its notes, memory, rules and link sources stay; the epic's `knowledge.md`, `tasks.md`,
+`decisions.md`, its rule and skills are added. Then fill `knowledge.md` from the task's notes and
+make the next pieces of work as tasks of it. A task with a worktree is refused (an epic's sources are
+links): `wsg move <task> --epic <name> --new-epic` nests it in a new epic instead. A session open in
+the folder keeps the task's instructions: tell the owner to restart it.
+
 ## Working
 
 In the task's own session.

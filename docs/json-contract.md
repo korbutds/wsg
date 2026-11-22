@@ -88,6 +88,8 @@ attached; `launched` is always `false`.
 
 ### add
 
+With `--link`, a symlink of the source's name that already leads to the same directory is registered as it is: not
+written, not in `files`, a rule there kept, and `notes` says so; any other entry of that name refuses.
 `{workspace, source, files, settingsChanged, backupBranch, notes, plan}`. `files` are the paths
 written; `backupBranch` the `backup/…` branch `--reset-to-base` made; `notes` what the plain add
 says about the source before it starts. `plan` is `{start, branchExists, remoteBranch,
@@ -380,6 +382,47 @@ and a source of the target epic with a branch template the task has not attached
 | `ticketDropped` | out of an epic: whether the ticket key left the state |
 | `notesForEpic` | into an epic: whether `notes.md` gets the `## For the epic` section |
 | `tasksMdUpdated` | `{from, to}`: whether the `tasks.md` block of the epic it left and of the one it joined changed (planned, in a dry run) |
+
+### promote
+
+`wsg promote [<task>] [--title T]`: a task becomes an epic in place, the same directory and path.
+Stays: the text of `AGENTS.md`, `CLAUDE.md` and `notes.md` outside the markers, `.claude-memory`,
+`.learnings`, `.claude/settings.json` (never read by the render nor written; when it lacks the epic's link directories or does not read, a warning: `wsg refresh` adds them),
+the rules, the link and reference sources with their symlinks, every other file. Rewritten: `.claude/ws-kind`
+and the state (`kind` `epic`, version 3; `status`, `closed`, `noCode`, `spec`, `moved`, `ticket` dropped),
+the README kind line and the `AGENTS.md` intro line when they are wsg's text as written, a read-only rule
+of a task without code when it is wsg's text (it becomes the epic's link rule; an edited one is a warning),
+and the generated blocks rendered for an epic. Made where nothing is (`wx`; a file there is kept, with a
+warning): `tasks.md`, `decisions.md`, `knowledge.md`, `.claude/rules/epic-knowledge.md`, the `wsg-epic-*`
+skills. A workspace of wsg 0.1 (no state; `.claude/ws-kind`, or `CLAUDE.md` outside git) gets a fresh epic
+state, slug the directory name, title its `AGENTS.md` heading; each top-level symlink to the root of a git
+repository becomes a link source by the link's name, taken as it is (as `wsg add --link` of an existing
+link); the `repo` pointer and other symlinks stay, listed in `leftAlone`. One transaction under the
+task's lock (`busy`; a dry run takes none): a failure or a stop signal puts every file back.
+
+Refused, `invalid_input` with `result` present, the same document with `--dry-run` and without: an epic;
+a task of an epic (`wsg move <epic>/<task> --out` first); an archived task; a task with a worktree source
+or a checkout in its directory (`blockers.worktrees`; `wsg move <task> --epic <name> --new-epic` nests it
+instead; in a workspace without a state, the checkouts named without that hint); a task with a team; an unknown `.claude/ws-kind`; a symlink where it writes; a directory not right in `WS_ROOT`, or whose name
+is no slug; a marker the render can't handle. Warnings, never refusals: a done task (its status goes),
+the task-only files that stay, symlinks left alone, a directory named like a source or a reserved name,
+open sessions keeping the old instructions.
+
+`{workspace, slug, kind, legacy, title, changed, rewrites, creates, dropped, adopted, leftAlone, taskFiles, blockers}`
+
+| Key | Value |
+|---|---|
+| `workspace`, `slug` | the directory, as on disk, and its name |
+| `kind` | `task`, or the kind of the workspace refused |
+| `legacy` | `true` for a workspace without `.claude/wsg.json` |
+| `title` | the epic's title: `--title`, else the task's |
+| `changed` | `false` when the plan is refused |
+| `rewrites`, `creates` | the files rewritten and the files made, absolute, sorted |
+| `dropped` | the state's keys that go |
+| `adopted` | `[{name, path}]`: the symlinks taken as link sources (a workspace without a state) |
+| `leftAlone` | `[{name, target}]`: the symlinks left as they are |
+| `taskFiles` | the files only a task has, kept as plain files, the `repo` pointer included |
+| `blockers` | `{worktrees: [{name, path}]}`: the worktrees that refuse it |
 
 ### context add, context note, context remove
 

@@ -68,6 +68,14 @@ edited from the task. A task's status — `open`, `review` or `done` — is the 
 the epic's `tasks.md` block is rendered from it; `wsg list` shows every workspace with it.
 `wsg team` refuses an epic.
 
+A task that grew into an epic becomes one in place: `wsg promote <task>`. The folder, the text
+people and agents wrote, memory, settings, rules and link sources stay; `.claude/ws-kind` and the
+state say epic (`status`, `closed`, `noCode`, `spec`, `moved`, `ticket` go), the epic's files are made
+where nothing is, and `checklist.md`, `spec.md`, `plan.md`, `mr-target-branch.txt` stay as plain
+files. A workspace without a state gets a fresh one, its top-level symlinks to git repositories
+taken as link sources. A task with a worktree is refused: an epic's sources are links. There is no
+reverse conversion.
+
 ## Sources
 
 A source is what the task works with, attached by `wsg add`. A workspace needs at least one git
@@ -102,7 +110,7 @@ change. Every `wsg add` re-renders from it:
 
 | Where | What |
 |---|---|
-| `AGENTS.md` | `<!-- wsg:advisor -->` — the one-line rule that questions for the owner go through the advisor first; `<!-- wsg:team -->` — three lines pointing to the team, only after `wsg team`; `<!-- wsg:epic -->` — in a task of an epic, the pointers to the epic, from the task's own state; `<!-- wsg:epic-rules -->` — in a task of an epic, the epic's Owner rules, from `../AGENTS.md` (kept as they are, with a warning, when the epic can't be read); `<!-- wsg:epic-context -->` — in an epic and in each task of it, the index of the epic's context (`wsg context add`, `note`, `remove`), from the epic's `.claude/wsg.json`; `<!-- wsg:layout -->` — the source lines of Layout; `<!-- wsg:verification -->` — the Verification bullets |
+| `AGENTS.md` | `<!-- wsg:advisor -->` — the one-line rule that questions for the owner go through the advisor first; `<!-- wsg:team -->` — three lines pointing to the team, only after `wsg team`; `<!-- wsg:epic -->` — in a task of an epic, the pointers to the epic, from the task's own state; `<!-- wsg:epic-rules -->` — in a task of an epic, the epic's Owner rules, from `../AGENTS.md` (kept as they are, with a warning, when the epic can't be read); `<!-- wsg:epic-context -->` — in an epic and in each task of it, the index of the epic's context (`wsg context add`, `note`, `remove`), from the epic's `.claude/wsg.json`; `<!-- wsg:layout -->` — the source lines of Layout; `<!-- wsg:verification -->` — the Verification bullets (an owner's own bullet under `## Verification` outside the block hides the FILL IN placeholder) |
 | `CLAUDE.md` | `<!-- wsg:imports -->` — the `@<repo>/AGENTS.md` imports (`@AGENTS.md` itself stays outside) |
 | `README.md` | `<!-- wsg:sources -->` — the sources table and the launch commands |
 | `.claude/settings.json` | `permissions.additionalDirectories`; in an epic and each task of it, `enabledMcpjsonServers` (the epic's MCP servers) and `deniedMcpServers` (the global ones it turns off), from the epic's `.claude/wsg.json` (`wsg mcp`), the owner's own entries kept after wsg's — `mcpRendered` in each workspace's state records which are wsg's; every other key stays |

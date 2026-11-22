@@ -271,7 +271,8 @@ For each `wsg add`, `wsg remove` or `wsg new … --epic` command in the brief:
   session at close. A task's status (`open`, `review`, `done`) is in its `.claude/wsg.json`: the
   task's session sets only review (`wsg status <epic>/<task> review`); done is set by the epic
   session, as the last write of Closing (`wsg close <epic>/<task>`), or by the owner. `wsg team`
-  refuses an epic (exit 2).
+  refuses an epic (exit 2). `wsg promote <task>` turns a task into an epic in place; it refuses an
+  epic, a task of one, an archived task, a task with a worktree or a team (exit 2).
 - **Push and MR** are the owner's: the workspace settings deny `git push`.
 - **Dry runs and checks** change nothing: `wsg add <path> … --dry-run`, `wsg remove <name> --dry-run`,
   `wsg new <slug> --epic <epic> … --dry-run`, `wsg close <epic>/<task> --dry-run`, `wsg check`,
