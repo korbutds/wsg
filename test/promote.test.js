@@ -17,6 +17,8 @@ const ROOT = path.resolve(__dirname, '..');
 const CLI = path.join(ROOT, 'bin', 'cli.js');
 const W = require(path.join(ROOT, 'lib', 'workspace.js'));
 const T = require(path.join(ROOT, 'lib', 'templates.js'));
+const { blockLines } = require(path.join(ROOT, 'lib', 'generate.js'));
+const knowledgePointer = (dir) => blockLines(read(dir, 'AGENTS.md'), 'epic-knowledge');
 
 const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wsg-promote-')));
 const home = path.join(tmp, 'home');
@@ -159,11 +161,23 @@ function make(slug, sources = [], extra = []) {
       const agents = read(ws, 'AGENTS.md');
       assert.match(agents, /^This is an epic workspace, not a git repository/m);
       assert.match(agents, /<!-- wsg:epic-context -->/);
+      assert.deepStrictEqual(knowledgePointer(ws), T.epicKnowledgeLines());
+      assert.match(read(ws, 'CLAUDE.md'), /^@AGENTS\.md$/m);
     });
-    it('the intro line is the one a new epic gets', () => {
+    it('a new project has the same shared pointer, and refresh restores it once', () => {
       const P = require(path.join(ROOT, 'lib', 'promote.js'));
       const fresh = make('fresh-epic', [], ['--kind', 'epic']);
-      assert.ok(read(fresh, 'AGENTS.md').split('\n').includes(P.EPIC_INTRO));
+      const agents = read(fresh, 'AGENTS.md');
+      assert.ok(agents.split('\n').includes(P.EPIC_INTRO));
+      assert.deepStrictEqual(knowledgePointer(fresh), T.epicKnowledgeLines());
+      const without = agents.replace(/<!-- wsg:epic-knowledge -->\n[\s\S]*?<!-- \/wsg:epic-knowledge -->\n/, '');
+      assert.notStrictEqual(without, agents);
+      fs.writeFileSync(path.join(fresh, 'AGENTS.md'), without);
+      for (let i = 0; i < 2; i++) {
+        const refreshed = wsg(['refresh', '--ws', fresh]);
+        assert.strictEqual(refreshed.code, 0, refreshed.all);
+        assert.strictEqual(read(fresh, 'AGENTS.md'), agents);
+      }
     });
     const c = checkOf(ws);
     it('wsg check: no FAIL, the epic section', () => {
@@ -378,6 +392,65 @@ function make(slug, sources = [], extra = []) {
       const block = '<!-- wsg:advisor -->\nAsk the advisor.\n<!-- /wsg:advisor -->\n';
       assert.strictEqual(restored.text.replace(block, ''), intro);
       assert.ok(restored.text.includes('-->  \n' + block));
+    });
+  }
+
+  console.log('\nlegacy: no AGENTS.md');
+  {
+    const ws = path.join(wsRoot, 'claude-only');
+    fs.mkdirSync(ws);
+    const claude = '# Claude only\n\n## Claude Code only\n\nOwner instructions.\n';
+    fs.writeFileSync(path.join(ws, 'CLAUDE.md'), claude);
+    {
+      const P = require('../lib/promote');
+      const plan = P.planPromote(ws, null, {}, { WS_ROOT: wsRoot });
+      const agents = path.join(ws, 'AGENTS.md');
+      const link = fs.linkSync;
+      fs.linkSync = (src, dest) => {
+        if (dest === agents) fs.writeFileSync(agents, 'Owner instructions.\n', { flag: 'wx' });
+        return link(src, dest);
+      };
+      let error;
+      try {
+        await P.applyPromote(plan);
+      } catch (e) {
+        error = e;
+      } finally {
+        fs.linkSync = link;
+      }
+      it('a concurrent creator of AGENTS.md keeps its file after rollback', () => {
+        assert.strictEqual(error?.code, 'EEXIST');
+        assert.strictEqual(error?.rollback, 'done');
+        assert.strictEqual(read(ws, 'AGENTS.md'), 'Owner instructions.\n');
+        assert.ok(!W.hasState(ws));
+      });
+      fs.unlinkSync(agents);
+    }
+    it('promotion creates instructions for Codex and keeps Claude instructions', () => {
+      const dry = json(['promote', 'claude-only', '--dry-run']);
+      const agents = path.join(ws, 'AGENTS.md');
+      assert.strictEqual(dry.code, 0, dry.all);
+      assert.ok(dry.doc.result.creates.includes(agents));
+      assert.ok(!fs.existsSync(agents));
+      const run = json(['promote', 'claude-only']);
+      assert.strictEqual(run.code, 0, run.all);
+      assert.deepStrictEqual(run.doc.result, dry.doc.result);
+      assert.deepStrictEqual(knowledgePointer(ws), T.epicKnowledgeLines());
+      assert.match(read(ws, 'CLAUDE.md'), /Owner instructions\./);
+      assert.match(read(ws, '.claude', 'rules', T.EPIC_RULE), /read the epic's `knowledge\.md`/);
+      fs.unlinkSync(agents);
+      const refreshed = wsg(['refresh', '--ws', ws]);
+      assert.strictEqual(refreshed.code, 0, refreshed.all);
+      assert.deepStrictEqual(knowledgePointer(ws), T.epicKnowledgeLines());
+    });
+    it('one refresh of an archived project without AGENTS.md restores its archive guard', () => {
+      const archived = wsg(['archive', 'claude-only']);
+      assert.strictEqual(archived.code, 0, archived.all);
+      fs.unlinkSync(path.join(ws, 'AGENTS.md'));
+      const refreshed = wsg(['refresh', '--ws', ws]);
+      assert.strictEqual(refreshed.code, 0, refreshed.all);
+      assert.match(read(ws, 'AGENTS.md'), /^<!-- wsg:archive -->$/m);
+      assert.deepStrictEqual(knowledgePointer(ws), T.epicKnowledgeLines());
     });
   }
 
