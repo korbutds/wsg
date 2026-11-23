@@ -191,7 +191,13 @@ function make(slug, sources = [], extra = []) {
     const ruleRel = path.join('.claude', 'rules', 'shop-docs.md');
     const st0 = readState(ws);
     it('the read-only rule is wsg\'s own before', () => assert.strictEqual(read(ws, ruleRel), T.ruleMd(st0.sources[0], { noCode: true })));
+    const agentsFile = path.join(ws, 'AGENTS.md');
+    fs.writeFileSync(agentsFile, read(ws, 'AGENTS.md').replace(/^(This is a task workspace[^\n]*)$/m, '$1\r'));
     const r = json(['promote', 'digest', '--title', 'Shop digest']);
+    it('the generated no-code intro with CRLF becomes the standard epic intro', () => {
+      const { EPIC_INTRO } = require(path.join(ROOT, 'lib', 'promote.js'));
+      assert.ok(read(ws, 'AGENTS.md').split('\n').includes(EPIC_INTRO + '\r'));
+    });
     it('promoted: noCode and spec dropped and said, --title taken', () => {
       assert.strictEqual(r.code, 0, r.all);
       assert.deepStrictEqual(r.doc.result.dropped, ['status', 'noCode', 'spec']);
@@ -244,7 +250,8 @@ function make(slug, sources = [], extra = []) {
     fs.symlinkSync(docs, path.join(ws, 'docs'));
     const settings = '{\n  "permissions": {\n    "deny": ["Bash(git push*)"]\n  }\n}\n';
     fs.writeFileSync(path.join(ws, '.claude', 'settings.json'), settings);
-    const agents = ['# acme — shop workspace', '', 'This is a task workspace, not a git repository. Repositories inside: 2.', '',
+    const agents = ['# acme — shop workspace', '', '<!-- Owner context --> ## Why', '',
+      'This is a task workspace, not a git repository. Repositories inside: 2.', '',
       '## Why', '', 'Build the shop.', '', '## Layout', '', '- `web` — symlink to the checkout.', '',
       '## Verification', '', '- web: `npm test`', '', '## Owner rules (override tool defaults)', '', '1. Ask first.', ''].join('\n');
     fs.writeFileSync(path.join(ws, 'AGENTS.md'), agents);
@@ -287,7 +294,7 @@ function make(slug, sources = [], extra = []) {
     });
     it('the blocks go in at the anchors, the owner\'s text around them stays', () => {
       const now = read(ws, 'AGENTS.md');
-      assert.match(now, /^This is a task workspace, not a git repository\. Repositories inside: 2\.\n<!-- wsg:advisor -->/m);
+      assert.match(now, /^<!-- Owner context --> ## Why\n\nThis is an epic workspace, not a git repository\. Repositories inside: 2\.\n<!-- wsg:advisor -->/m);
       assert.match(now, /^## Layout\n<!-- wsg:layout -->/m);
       assert.match(now, /## Owner rules \(override tool defaults\)\n\n1\. Ask first\.\n/);
       assert.match(read(ws, 'CLAUDE.md'), /^## Claude Code only\n<!-- wsg:advisor -->/m);
@@ -301,11 +308,6 @@ function make(slug, sources = [], extra = []) {
       assert.ok(items.some((i) => i.level === 'ok' && /verification command/.test(i.text)));
       assert.doesNotMatch(read(ws, 'AGENTS.md'), /FILL IN/);
     });
-    it('the hand-written intro line is kept, and said; settings named in the next step', () => {
-      assert.ok(run.doc.warnings.some((w) => /"This is a task workspace" line of AGENTS\.md is not as wsg wrote it/.test(w)));
-      const plain = read(ws, 'AGENTS.md');
-      assert.match(plain, /^This is a task workspace, not a git repository\. Repositories inside: 2\.$/m);
-    });
     it('wsg refresh keeps the verification block empty under the owner\'s commands', () => {
       const r = wsg(['refresh', '--ws', ws]);
       assert.strictEqual(r.code, 0, r.all);
@@ -315,6 +317,67 @@ function make(slug, sources = [], extra = []) {
       const n = wsg(['new', 'cart', '--epic', 'acme', '--no-launch']);
       assert.strictEqual(n.code, 0, n.all);
       assert.match(read(ws, 'cart', 'AGENTS.md'), /1\. Ask first\./);
+    });
+  }
+
+  console.log('\nthe workspace declaration in edited AGENTS.md');
+  {
+    const ws = make('edited-heading');
+    const agents = read(ws, 'AGENTS.md');
+    const { EPIC_INTRO, TASK_INTROS } = require(path.join(ROOT, 'lib', 'promote.js'));
+    fs.writeFileSync(path.join(ws, 'AGENTS.md'), agents.replace(TASK_INTROS[0], '## Workspace\n\n' + TASK_INTROS[0]));
+    const run = json(['promote', 'edited-heading']);
+    it('the generated declaration still becomes the epic intro after an owner heading', () => {
+      assert.strictEqual(run.code, 0, run.all);
+      assert.ok(read(ws, 'AGENTS.md').includes('## Workspace\n\n' + EPIC_INTRO + '\n'));
+    });
+  }
+  {
+    const slug = 'edited-comment';
+    const ws = path.join(wsRoot, slug);
+    fs.mkdirSync(path.join(ws, '.claude'), { recursive: true });
+    fs.writeFileSync(path.join(ws, '.claude', 'settings.json'), '{}\n');
+    const example = ['```md', '<!--', 'This is a task workspace in a fenced example.', '```'].join('\n');
+    const comment = ['<!--', 'This is a task workspace in a comment.', '~~~', '-->'].join('\n');
+    const inlineComment = ['Owner note <!--', '2. An example', 'This is a task workspace in an inline comment.', '-->'].join('\n');
+    const intro = 'This is a task workspace, not a git repository. Repositories inside: 2.';
+    const body = '## Why\n\nThis is a task workspace in body text.';
+    fs.writeFileSync(path.join(ws, 'AGENTS.md'), ['# Shop', example, comment, inlineComment, intro, body, ''].join('\n\n'));
+    fs.writeFileSync(path.join(ws, 'CLAUDE.md'), '# Shop\n\n@AGENTS.md\n');
+    const run = json(['promote', slug]);
+    it('ignores examples and places the advisor block after the visible legacy declaration', () => {
+      assert.strictEqual(run.code, 0, run.all);
+      const now = read(ws, 'AGENTS.md');
+      assert.ok(now.includes([example, comment, inlineComment, intro.replace('a task workspace', 'an epic workspace')].join('\n\n')));
+      assert.ok(now.includes('Repositories inside: 2.\n<!-- wsg:advisor -->'));
+      assert.ok(now.includes(body));
+      assert.deepStrictEqual(fails(checkOf(ws)), []);
+    });
+  }
+
+  {
+    const { fencedLines, replaceBlock } = require(path.join(ROOT, 'lib', 'generate.js'));
+    it('literal or container-scoped comment openers do not hide a real unclosed fence', () => {
+      const examples = [['    <!--'], [String.raw`\<!--`], ['> <!--'], ['## Shop <!--'], ['- Example', '  <!--'], ['Owner note <!--']];
+      const declaration = 'This is a task workspace, not a git repository. Repositories inside: 2.';
+      for (const example of examples) {
+        const lines = ['# Shop', '', ...example, '', declaration, '', '~~~'];
+        const scan = fencedLines(lines);
+        assert.strictEqual(scan.comments.has(lines.indexOf(declaration)), false, example.join('\n'));
+        assert.deepStrictEqual(scan.open, { line: lines.length, closer: '~~~' }, example.join('\n'));
+      }
+    });
+    it('a thematic break ends the paragraph before an inline comment can continue', () => {
+      const scan = fencedLines(['Owner note <!--', '***', 'This is a task workspace.', 'End -->']);
+      assert.strictEqual(scan.comments.size, 0);
+    });
+    it('restoring an advisor block preserves the inline comment and trailing whitespace', () => {
+      const intro = 'This is an epic workspace. <!-- Owner note\nKeep this comment together.\n-->  \n\n';
+      const restored = replaceBlock(intro, 'AGENTS.md', 'advisor', ['Ask the advisor.'], /^This is an epic workspace/);
+      assert.ok(restored.restored);
+      const block = '<!-- wsg:advisor -->\nAsk the advisor.\n<!-- /wsg:advisor -->\n';
+      assert.strictEqual(restored.text.replace(block, ''), intro);
+      assert.ok(restored.text.includes('-->  \n' + block));
     });
   }
 

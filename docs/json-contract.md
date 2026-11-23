@@ -386,11 +386,11 @@ and a source of the target epic with a branch template the task has not attached
 ### promote
 
 `wsg promote [<task>] [--title T]`: a task becomes an epic in place, the same directory and path.
-Stays: the text of `AGENTS.md`, `CLAUDE.md` and `notes.md` outside the markers, `.claude-memory`,
+Stays: the text of `AGENTS.md`, `CLAUDE.md` and `notes.md` outside generated blocks and workspace-kind declarations, `.claude-memory`,
 `.learnings`, `.claude/settings.json` (never read by the render nor written; when it lacks the epic's link directories or does not read, a warning: `wsg refresh` adds them),
 the rules, the link and reference sources with their symlinks, every other file. Rewritten: `.claude/ws-kind`
 and the state (`kind` `epic`, version 3; `status`, `closed`, `noCode`, `spec`, `moved`, `ticket` dropped),
-the README kind line and the `AGENTS.md` intro line when they are wsg's text as written, a read-only rule
+the README kind line when it is wsg's text as written, the workspace kind in the `AGENTS.md` introduction, a read-only rule
 of a task without code when it is wsg's text (it becomes the epic's link rule; an edited one is a warning),
 and the generated blocks rendered for an epic. Made where nothing is (`wx`; a file there is kept, with a
 warning): `tasks.md`, `decisions.md`, `knowledge.md`, `.claude/rules/epic-knowledge.md`, the `wsg-epic-*`
