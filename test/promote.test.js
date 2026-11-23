@@ -19,6 +19,7 @@ const W = require(path.join(ROOT, 'lib', 'workspace.js'));
 const T = require(path.join(ROOT, 'lib', 'templates.js'));
 const { blockLines } = require(path.join(ROOT, 'lib', 'generate.js'));
 const knowledgePointer = (dir) => blockLines(read(dir, 'AGENTS.md'), 'epic-knowledge');
+const problemRule = (dir) => blockLines(read(dir, 'AGENTS.md'), 'epic-problems');
 
 const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wsg-promote-')));
 const home = path.join(tmp, 'home');
@@ -162,6 +163,7 @@ function make(slug, sources = [], extra = []) {
       assert.match(agents, /^This is an epic workspace, not a git repository/m);
       assert.match(agents, /<!-- wsg:epic-context -->/);
       assert.deepStrictEqual(knowledgePointer(ws), T.epicKnowledgeLines());
+      assert.deepStrictEqual(problemRule(ws), T.epicProblemLines());
       assert.match(read(ws, 'CLAUDE.md'), /^@AGENTS\.md$/m);
     });
     it('a new project has the same shared pointer, and refresh restores it once', () => {
@@ -178,6 +180,26 @@ function make(slug, sources = [], extra = []) {
         assert.strictEqual(refreshed.code, 0, refreshed.all);
         assert.strictEqual(read(fresh, 'AGENTS.md'), agents);
       }
+    });
+    it('a new project has the reported-problem rule after the pointer; an older one gets both on refresh, announced as new', () => {
+      const fresh = make('problem-epic', [], ['--kind', 'epic']);
+      const agents = read(fresh, 'AGENTS.md');
+      assert.deepStrictEqual(problemRule(fresh), T.epicProblemLines());
+      assert.match(problemRule(fresh)[0], /not in a task below, it is fixed in a task, not here: start one as in `wsg guide epic` → Starting a task/);
+      assert.match(agents, /<!-- \/wsg:epic-knowledge -->\n<!-- wsg:epic-problems -->\n/);
+      const without = agents.replace(/<!-- wsg:epic-knowledge -->\n[\s\S]*?<!-- \/wsg:epic-problems -->\n/, '');
+      assert.notStrictEqual(without, agents);
+      fs.writeFileSync(path.join(fresh, 'AGENTS.md'), without);
+      const first = wsg(['refresh', '--ws', fresh]);
+      assert.strictEqual(first.code, 0, first.all);
+      assert.match(first.all, /added the <!-- wsg:epic-knowledge --> block \(new in wsg 0\.9\.1\)/);
+      assert.match(first.all, /added the <!-- wsg:epic-problems --> block \(new in wsg 0\.9\.1\)/);
+      assert.doesNotMatch(first.all, /markers were missing/);
+      assert.strictEqual(read(fresh, 'AGENTS.md'), agents);
+      const second = wsg(['refresh', '--ws', fresh]);
+      assert.strictEqual(second.code, 0, second.all);
+      assert.doesNotMatch(second.all, /epic-(knowledge|problems)/);
+      assert.strictEqual(read(fresh, 'AGENTS.md'), agents);
     });
     const c = checkOf(ws);
     it('wsg check: no FAIL, the epic section', () => {

@@ -59,6 +59,14 @@ From the epic session, when the owner asks to start work on a ticket.
    `cd … && <agent>` line, as the output says; the task is worked on there, not here. Its first session runs the setup
    (`wsg guide setup`) for what the epic does not give: why, done, scope, invariants.
 
+### A reported problem
+
+When the owner reports a problem in the epic's session, it is not fixed there. Make a task as above,
+or update the matching one listed in `tasks.md`, and write into its `notes.md` the symptoms, the
+evidence, the expected behavior and the current status. Then suggest opening that task's session for
+the fix. The fix is made from the epic's session only when the owner explicitly asks. The epic's
+`AGENTS.md` says the same in its `epic-problems` block; the epic's Owner rules win.
+
 ### A task made elsewhere
 
 A task that exists already — made standalone, or in another epic — is moved, not made again:
@@ -99,7 +107,11 @@ In the task's own session.
 3. What the next task of the epic should know — a decision, a repository fact, a pitfall — goes
    into the task's `notes.md` under `## For the epic`: dated, with the evidence (a file and line,
    a commit, a link). Never edit the epic's files from a task: they are merged at close.
-4. When the work is finished, read `checklist.md` and show the owner the items still unchecked
+4. After showing review results, when a commit is next and not approved yet, ask in the same reply
+   whether to commit; an explicit instruction to commit is that approval. Handing back an
+   implementation, say that it needs verification: what to verify, the expected observations, and
+   the build link if there is a build.
+5. When the work is finished, read `checklist.md` and show the owner the items still unchecked
    (a task made before wsg 0.8 has none), then show `wsg status <epic>/<task> review` and run it after
    "ok": the task is ready for the epic's closing. Unchecked items are a warning, never a refusal. Only review is the task session's to set; done
    is set by the epic session (Closing) or by the owner.

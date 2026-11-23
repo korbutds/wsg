@@ -933,9 +933,17 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     it('the block: the task session sets review, done is the epic session\'s or the owner\'s', () => {
       assert.match(block, /Work finished: show the owner unchecked `checklist\.md` items, then `wsg status shop\/pay-fix review`\. `done` is the epic session's or the owner's\./);
     });
+    it('the block: the verification handoff and the commit question in the same reply', () => {
+      const lines = block.split('\n');
+      const commit = lines.indexOf('After showing review results, if a commit is next and not approved yet, ask in the same reply whether to commit; an explicit instruction to commit is that approval.');
+      const handoff = lines.indexOf('Handing back an implementation: say it needs verification, with what to verify, the expected observations, and the build link if there is a build.');
+      const finished = lines.findIndex((l) => l.startsWith('Work finished: '));
+      assert.ok(commit >= 0 && handoff > commit && finished > handoff, block);
+    });
     it('the block is plain text, small', () => {
       assert.doesNotMatch(block, /(^|\s)@/);
-      assert.ok(Buffer.byteLength(block) <= 560, Buffer.byteLength(block));
+      // 560 B until the verification handoff and the commit question came in (0.9.1).
+      assert.ok(Buffer.byteLength(block) <= 960, `${Buffer.byteLength(block)} B`);
     });
     it('otherwise the AGENTS.md of a task', () => {
       for (const h of ['## Why', '## Definition of done', '## Out of scope', '## Layout', '## Verification', '## Invariants are not findings', '## Code map']) assert.ok(agents.includes(h), h);
