@@ -268,8 +268,8 @@ $WS_ROOT/shop/
   finished, the task's session sets it to review (`wsg status shop/cart-fix review`). The agent in
   the epic session then merges it (`/wsg-epic-close <task>`; in Codex, ask it to run
   `wsg guide epic`, section Closing) into `knowledge.md`, `.claude/rules/<repo>.md`,
-  `decisions.md` and `tasks.md`, after your "ok", and then marks it done with
-  `wsg close shop/cart-fix`, the last write. The status lives in the task's `.claude/wsg.json`; `tasks.md` and `wsg list`
+  `decisions.md` and `tasks.md` without asking, marks it done with `wsg close shop/cart-fix`,
+  the last write, and shows you one line: what went where, and the warnings. The status lives in the task's `.claude/wsg.json`; `tasks.md` and `wsg list`
   show it as `[review]` or `[done <date>]`. `/wsg-epic-sync` reads
   the epic's other tasks from the tracker, with any read tool the agent has, into `tasks.md`:
   every child issue without a task directory is a line under "Other tasks", by its key, in the

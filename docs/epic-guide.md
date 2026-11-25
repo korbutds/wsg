@@ -7,7 +7,8 @@ epic's repositories, attached as links with the settings its tasks reuse; and th
 themselves, each an ordinary task workspace in a directory of the epic.
 
 Every procedure here is a proposal first: show the owner what you are about to run or write, and
-run or write it only after "ok". Questions for the owner go through the advisor first, as
+run or write it only after "ok". Closing is the exception: the request to close a task is the
+approval, and the owner gets the result. Questions for the owner go through the advisor first, as
 AGENTS.md says. Never write to the tracker.
 
 Never skip a tracker task silently. Every child issue of the epic is accounted for in `tasks.md`:
@@ -128,25 +129,30 @@ rendered from it, and the free-text `## Status` section of `tasks.md` is a summa
 `wsg status <epic>/<task>` prints it; `wsg list` shows every task with its marker.
 
 1. Read the task's `notes.md` → `## For the epic`, its `.learnings/`, its invariants, and
-   `git log` of its branches. Read its `checklist.md` and show the owner the items still unchecked:
-   `wsg close` warns about them too ("N of M checklist items unchecked"), and never refuses.
-2. Draft one diff:
-   - `knowledge.md` rewritten, not appended to, within 4 KiB;
+   `git log` of its branches. Read its `checklist.md` and show the owner the items still unchecked,
+   in the result line of step 5: `wsg close` warns about them too ("N of M checklist items
+   unchecked"), and never refuses.
+2. Write the merge, without asking: the request to close the task is the approval for it.
+   - `knowledge.md` rewritten, not appended to, within 4 KiB; it holds findings only, never a
+     summary of the task;
    - facts of one repository to `.claude/rules/<repo>.md`;
    - the rationale of a new decision to `decisions.md`;
-   - a line for the task in `tasks.md` → Status: date, outcome;
+   - a line for the task in `tasks.md` → Status: date, outcome — the task's only summary;
    - in the task's `notes.md`, the merged entries moved out of `## For the epic` to the top of
      `## Notes`, under `### Merged into the epic <date>`. `## For the epic` keeps only its comment:
      an entry left there reads as not merged, and `wsg close` and `wsg check` warn about it.
-3. Send the draft to the advisor, show the owner the result, and write it only after "ok".
-4. Then, after "ok", the last write: run `wsg close <epic>/<task> --dry-run`, show the owner its
-   warnings — uncommitted or unpushed work in the task's worktrees, entries still under
-   `## For the epic` — then `wsg close <epic>/<task>`. It sets done with today's UTC date and
-   renders the task's marker in `tasks.md`; it merges, pushes and removes nothing, and a warning
-   never stops it. A task named by its slug alone is looked up in `WS_ROOT`, not in the epic:
-   always give `<epic>/<task>`.
-5. Run `wsg check`: it warns about a `knowledge.md` over 4 KiB and fails one over 8 KiB, and about
+   An entry you cannot place with confidence — it contradicts a decision, or it is not clear
+   whether it holds for the whole epic — stays where it is: ask the owner about it in the result.
+3. Run `wsg close <epic>/<task>` (a task already done, closed from Studio or by the owner, needs
+   no second run). It sets done with today's UTC date and renders the task's marker in `tasks.md`;
+   it merges, pushes and removes nothing, and a warning never stops it — uncommitted or unpushed
+   work in the task's worktrees, entries still under `## For the epic`. A task named by its slug
+   alone is looked up in `WS_ROOT`, not in the epic: always give `<epic>/<task>`.
+4. Run `wsg check`: it warns about a `knowledge.md` over 4 KiB and fails one over 8 KiB, and about
    a done task whose `## For the epic` still has entries.
+5. Show the owner one line: what was merged where, and the warnings of `wsg close` and
+   `wsg check` and the unchecked checklist items, if any. Not the diff: the owner reads the files
+   if they want to.
 
 ## Syncing
 
