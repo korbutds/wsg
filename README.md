@@ -642,8 +642,7 @@ A merge into `main` opens or updates a release pull request with the next versio
 publishes `@korbutds/wsg` to npm through trusted publishing: GitHub's OIDC token, no stored npm
 token, with provenance. Nothing is published by hand.
 
-The release pull request is opened by the workflow's own token, and GitHub does not run checks on
-such pull requests: merge it as an admin.
+The checks run on the release pull request too: merge it when they are green, like any other.
 
 If a release is tagged but did not reach npm (release-please failed after the tag), run
 Actions -> Release -> Run workflow with that tag: it publishes only that tag, and only when its
