@@ -1,0 +1,27 @@
+name: PR title
+
+# Pull requests are squash-merged with their title as the commit message, and release-please reads
+# those messages: the title must be a conventional commit.
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  pr-title:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Check the title
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          re='^(feat|fix|docs|chore|refactor|test|ci|build|perf|revert)(\([a-z0-9._/-]+\))?!?: .+'
+          if printf '%s' "$TITLE" | grep -Eq "$re"; then
+            echo "OK: $TITLE"
+          else
+            echo "::error::The title is not a conventional commit, e.g. 'fix: keep the branch on close'. Got: $TITLE"
+            exit 1
+          fi

@@ -3565,7 +3565,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     // The whole file, as wsg 0.5 writes it: the directories first, then the rest of the permissions.
     const expected = (ws, dirs) => `${JSON.stringify({
       autoMemoryDirectory: path.join(ws, '.claude-memory'),
-      permissions: { additionalDirectories: dirs, deny: ['Bash(git push*)', 'Bash(git -C * push*)', 'Bash(* git push*)'], allow: [`Read(/${root}/**)`] },
+      permissions: { additionalDirectories: dirs, ask: ['Bash(git push*)', 'Bash(git -C * push*)', 'Bash(* git push*)'], allow: [`Read(/${root}/**)`] },
     }, null, 2)}\n`;
     for (const [name, ws, dirs] of [['a standalone task with a worktree, a link and a reference', solo, [web, docs]],
       ['an epic with a link and a reference', ep, [web, docs]], ['a task of the epic with its sources', pay, [web, docs]]]) {
@@ -3578,6 +3578,34 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       assert.deepStrictEqual(W.readState(pay).sources.map((x) => x.mode), ['link', 'link']);
       assert.ok(!W.extraDirs(W.readState(pay)).includes(ep));
     });
+    // Before wsg 0.9.3 the push entries were under deny: a refresh moves them to ask and keeps the
+    // owner's own entries; a second refresh changes nothing.
+    {
+      const file = path.join(solo, '.claude', 'settings.json');
+      const push = ['Bash(git push*)', 'Bash(git -C * push*)', 'Bash(* git push*)'];
+      const old = JSON.parse(settingsOf(solo));
+      delete old.permissions.ask;
+      old.permissions.deny = [...push, 'Bash(rm -rf*)'];
+      fs.writeFileSync(file, `${JSON.stringify(old, null, 2)}\n`);
+      const r = wsg(['refresh', '--ws', solo], { env });
+      const now = JSON.parse(settingsOf(solo)).permissions;
+      it('a 0.9.2 push deny: refresh moves it to ask', () => {
+        assert.strictEqual(r.code, 0, r.all);
+        assert.deepStrictEqual(now.ask, push);
+      });
+      it('a 0.9.2 push deny: the owner\'s own deny entry stays', () => assert.deepStrictEqual(now.deny, ['Bash(rm -rf*)']));
+      it('a 0.9.2 push deny: a second refresh changes nothing', () => assert.match(wsg(['refresh', '--ws', solo], { env }).out, /up to date/));
+      // Only wsg's entries under deny alone: the key goes with them, the file is as a new one.
+      old.permissions.deny = [...push];
+      fs.writeFileSync(file, `${JSON.stringify(old, null, 2)}\n`);
+      wsg(['refresh', '--ws', solo], { env });
+      it('a 0.9.2 push deny alone: no deny key is left', () => assert.ok(!('deny' in JSON.parse(settingsOf(solo)).permissions)));
+      // An owner who took the entries out of ask keeps it that way.
+      const none = JSON.parse(settingsOf(solo));
+      delete none.permissions.ask;
+      fs.writeFileSync(file, `${JSON.stringify(none, null, 2)}\n`);
+      it('no push entries anywhere: refresh adds none', () => assert.match(wsg(['refresh', '--ws', solo], { env }).out, /up to date/));
+    }
     const wt = path.join(solo, 'api');
     if (fs.existsSync(path.join(wt, '.git'))) execFileSync('git', ['-C', api, 'worktree', 'remove', '--force', wt]);
   }
@@ -6907,7 +6935,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
         [/only after `--delete-ignored`/, /they go only with `--delete-ignored`/],
         [/`skip-worktree` or `assume-unchanged`/, /`skip-worktree` or\s+`assume-unchanged`/],
         [/`--dry-run` prints the plan as JSON/, /prints the plan as JSON and changes nothing/],
-        [/Push and MR creation are done manually by the owner|push ban/, /\*\*Push and MR\*\* are the owner's/],
+        [/push prompt/, /\*\*Push and MR\*\* are the owner's decision: the agent pushes and opens an MR only after the\s+owner's "ok", and the workspace settings make Claude Code ask before every `git push`/],
       ];
       for (const [inReadme, inGuide] of facts) {
         assert.match(readme, inReadme);

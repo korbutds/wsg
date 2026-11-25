@@ -153,7 +153,7 @@ $WS_ROOT/oauth-refresh/
 ├── api/               git worktree on the task branch
 ├── web                symlink to a shared checkout
 ├── .claude/
-│   ├── settings.json  own auto-memory, permissions, push ban
+│   ├── settings.json  own auto-memory, permissions, push prompt
 │   ├── wsg.json       the sources and how each is attached: what wsg add renders from
 │   ├── rules/<repo>.md rules loaded when working with the repo's files
 │   └── skills/wsg-setup/ the setup dialogue, invoked as /wsg-setup
@@ -479,7 +479,7 @@ for example, counts too, which `claude --continue` would skip; a session file ch
 minute gets a warning that it may be open elsewhere, and a non-zero exit of claude is said, never
 followed by a new session), `ws <slug> --new` starts a new one; with `codex`, it attaches symlinked directories via `--add-dir`. Any other command
 (`gemini`, `cursor-agent`, `opencode`…) is run as-is; such an agent reads `AGENTS.md`,
-while the `.claude/` files — path-scoped rules, the push ban, separate memory — only work in Claude Code.
+while the `.claude/` files — path-scoped rules, the push prompt, separate memory — only work in Claude Code.
 To bypass the setting once: `ws <slug> --claude`, `ws <slug> --codex` or `ws <slug> --cd`.
 
 **Language.** The messages of `wsg` itself and `ws` speak English or Russian: `WSG_LANG` in the
@@ -628,6 +628,23 @@ shows you the text before writing it.
 Sources for the limits: [Claude Code memory](https://code.claude.com/docs/en/memory),
 [worktrees](https://code.claude.com/docs/en/worktrees),
 [AGENTS.md in Codex](https://developers.openai.com/codex/guides/agents-md).
+
+## Releases
+
+Every pull request into `main` runs `npm test` on macOS (`.github/workflows/ci.yml`) and checks
+that its title is a conventional commit: `feat: ...`, `fix: ...`, `docs: ...` and so on
+(`pr-title.yml`). Pull requests are squash-merged, so the title becomes the commit message on
+`main`, and release-please reads it: `fix` and `feat` give a patch release while the version is
+0.x, a `!` after the type a minor one; `docs`, `chore`, `ci` and the like give no release.
+
+A merge into `main` opens or updates a release pull request with the next version and
+`CHANGELOG.md` (`release-please.yml`). Merging it tags `vX.Y.Z`, creates the GitHub Release and
+publishes `@korbutds/wsg` to npm through trusted publishing: GitHub's OIDC token, no stored npm
+token, with provenance. Nothing is published by hand.
+
+The release pull request is opened by the workflow's own token, and GitHub does not run checks on
+such pull requests: merge it as an admin. `"release-as"` in `release-please-config.json` pinned
+the first release; remove it after that release.
 
 ## License
 
