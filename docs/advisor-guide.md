@@ -273,7 +273,8 @@ For each `wsg add`, `wsg remove` or `wsg new … --epic` command in the brief:
   session, as the last write of Closing (`wsg close <epic>/<task>`), or by the owner. `wsg team`
   refuses an epic (exit 2). `wsg promote <task>` turns a task into an epic in place; it refuses an
   epic, a task of one, an archived task, a task with a worktree or a team (exit 2).
-- **Push and MR** are the owner's: the workspace settings deny `git push`.
+- **Push and MR** are the owner's decision: the agent pushes and opens an MR only after the
+  owner's "ok", and the workspace settings make Claude Code ask before every `git push`.
 - **Dry runs and checks** change nothing: `wsg add <path> … --dry-run`, `wsg remove <name> --dry-run`,
   `wsg new <slug> --epic <epic> … --dry-run`, `wsg close <epic>/<task> --dry-run`, `wsg check`,
   `wsg list`, `wsg status <epic>/<task>`.

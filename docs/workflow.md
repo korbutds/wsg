@@ -121,7 +121,8 @@ loaded when the agent works with the repo's files, so two repositories with diff
 don't clash in one file for the whole workspace.
 
 Common ground: the commit body says why, not what. No `Co-Authored-By` or "Generated with" trailers.
-Push and MR creation are manual; the agent stops at local commits and the description text.
+Push and MR come after the owner's "ok" on the commits: the agent shows the MR text, then pushes
+the task branch and opens the MR. Claude Code asks before every `git push` (`.claude/settings.json`).
 
 The same repository can be kept in several worktrees on different branches — that's the whole point.
 You just can't check out the same branch in two worktrees at once.

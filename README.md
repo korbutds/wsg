@@ -153,7 +153,7 @@ $WS_ROOT/oauth-refresh/
 ├── api/               git worktree on the task branch
 ├── web                symlink to a shared checkout
 ├── .claude/
-│   ├── settings.json  own auto-memory, permissions, push ban
+│   ├── settings.json  own auto-memory, permissions, push prompt
 │   ├── wsg.json       the sources and how each is attached: what wsg add renders from
 │   ├── rules/<repo>.md rules loaded when working with the repo's files
 │   └── skills/wsg-setup/ the setup dialogue, invoked as /wsg-setup
@@ -479,7 +479,7 @@ for example, counts too, which `claude --continue` would skip; a session file ch
 minute gets a warning that it may be open elsewhere, and a non-zero exit of claude is said, never
 followed by a new session), `ws <slug> --new` starts a new one; with `codex`, it attaches symlinked directories via `--add-dir`. Any other command
 (`gemini`, `cursor-agent`, `opencode`…) is run as-is; such an agent reads `AGENTS.md`,
-while the `.claude/` files — path-scoped rules, the push ban, separate memory — only work in Claude Code.
+while the `.claude/` files — path-scoped rules, the push prompt, separate memory — only work in Claude Code.
 To bypass the setting once: `ws <slug> --claude`, `ws <slug> --codex` or `ws <slug> --cd`.
 
 **Language.** The messages of `wsg` itself and `ws` speak English or Russian: `WSG_LANG` in the
