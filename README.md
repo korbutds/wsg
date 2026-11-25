@@ -629,6 +629,23 @@ Sources for the limits: [Claude Code memory](https://code.claude.com/docs/en/mem
 [worktrees](https://code.claude.com/docs/en/worktrees),
 [AGENTS.md in Codex](https://developers.openai.com/codex/guides/agents-md).
 
+## Releases
+
+Every pull request into `main` runs `npm test` on macOS (`.github/workflows/ci.yml`) and checks
+that its title is a conventional commit: `feat: ...`, `fix: ...`, `docs: ...` and so on
+(`pr-title.yml`). Pull requests are squash-merged, so the title becomes the commit message on
+`main`, and release-please reads it: `fix` and `feat` give a patch release while the version is
+0.x, a `!` after the type a minor one; `docs`, `chore`, `ci` and the like give no release.
+
+A merge into `main` opens or updates a release pull request with the next version and
+`CHANGELOG.md` (`release-please.yml`). Merging it tags `vX.Y.Z`, creates the GitHub Release and
+publishes `@korbutds/wsg` to npm through trusted publishing: GitHub's OIDC token, no stored npm
+token, with provenance. Nothing is published by hand.
+
+The release pull request is opened by the workflow's own token, and GitHub does not run checks on
+such pull requests: merge it as an admin. `"release-as"` in `release-please-config.json` pinned
+the first release; remove it after that release.
+
 ## License
 
 MIT
