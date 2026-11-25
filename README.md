@@ -643,8 +643,11 @@ publishes `@korbutds/wsg` to npm through trusted publishing: GitHub's OIDC token
 token, with provenance. Nothing is published by hand.
 
 The release pull request is opened by the workflow's own token, and GitHub does not run checks on
-such pull requests: merge it as an admin. `"release-as"` in `release-please-config.json` pinned
-the first release; remove it after that release.
+such pull requests: merge it as an admin.
+
+If a release is tagged but did not reach npm (release-please failed after the tag), run
+Actions -> Release -> Run workflow with that tag: it publishes only that tag, and only when its
+`package.json` has the same version.
 
 ## License
 
