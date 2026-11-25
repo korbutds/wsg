@@ -2,9 +2,16 @@ name: Release
 
 # A merge into main opens or updates the release pull request; merging that one tags the release
 # and publishes to npm. The npm trusted publisher is bound to this file name: keep it.
+# Run it by hand with a tag (Actions -> Release -> Run workflow) to publish a release that is tagged
+# but not on npm, e.g. when release-please failed after creating the tag.
 on:
   push:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The release tag to publish to npm, e.g. v0.9.3
+        required: true
 
 permissions:
   contents: read
@@ -15,6 +22,7 @@ concurrency:
 
 jobs:
   release-please:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -25,23 +33,37 @@ jobs:
       tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
       - id: release
-        uses: googleapis/release-please-action@v4
+        uses: googleapis/release-please-action@v5
         with:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
   publish:
     needs: release-please
-    if: needs.release-please.outputs.release_created == 'true'
+    # always(): on a manual run release-please is skipped, and a skipped need skips this job too.
+    if: >-
+      always() && (
+        (github.event_name == 'push' && needs.release-please.outputs.release_created == 'true') ||
+        github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: read
       id-token: write
+    env:
+      TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || needs.release-please.outputs.tag_name }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.release-please.outputs.tag_name }}
+          ref: ${{ env.TAG }}
+      # A manual run names any ref: publish only a release tag whose package.json has that version.
+      - name: Check the tag
+        run: |
+          version="$(node -p 'require("./package.json").version')"
+          if [ "$TAG" != "v$version" ] || ! git rev-parse -q --verify "refs/tags/$TAG" > /dev/null; then
+            echo "::error::$TAG is not a release tag of package.json version $version"
+            exit 1
+          fi
       - uses: actions/setup-node@v4
         with:
           node-version: 22
