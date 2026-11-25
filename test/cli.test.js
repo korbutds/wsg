@@ -6950,11 +6950,14 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     it('README names refresh, install-skills --uninstall and the advisor guide', () => {
       for (const x of ['`wsg refresh [--tasks] [--dry-run] [--json] [--ws SLUG\\|PATH]`', '`wsg install-skills [--uninstall]`', '`wsg guide [setup\\|advisor\\|teach\\|epic]`', '## Advisor', '**Codex.**', 'docs/advisor-guide.md']) assert.ok(readme.includes(x), x);
     });
-    it('the version is 0.9.2, in package.json and its lock', () => {
-      assert.strictEqual(wsg(['--version']).out, '0.9.2\n');
+    // The version is set by release-please in its release pull request: the test follows package.json.
+    it('wsg --version and the lock agree with package.json', () => {
+      const { version } = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+      assert.match(version, /^\d+\.\d+\.\d+$/);
+      assert.strictEqual(wsg(['--version']).out, `${version}\n`);
       const lock = JSON.parse(fs.readFileSync(path.join(ROOT, 'package-lock.json'), 'utf8'));
-      assert.strictEqual(lock.version, '0.9.2');
-      assert.strictEqual(lock.packages[''].version, '0.9.2');
+      assert.strictEqual(lock.version, version);
+      assert.strictEqual(lock.packages[''].version, version);
     });
 
     const bare = wsg([]);
