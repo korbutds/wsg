@@ -30,7 +30,10 @@ Go through these in order. Each answer goes into its section of `AGENTS.md`, rep
 
 1. **What and why** (required) — the problem, for whom, and why now. Without it the agent can't
    decide what is in scope. Example: "Users are logged out every hour: the refresh token is not
-   renewed. ~20 support tickets a day." → section `## Why`.
+   renewed. ~20 support tickets a day." → section `## Why`. From it, write the task's description
+   for the owner, unless `description.md` has one: `wsg describe <task> --text T` — 1–3 short
+   sentences in the owner's language, what happened or what we want and what should come out; no
+   status, code or paths.
 2. **Ticket** — a key or a URL. `wsg new --ticket` writes it at creation; given later, write the
    `Ticket:` line under the title of `AGENTS.md` yourself: a URL as given; for a bare key, the
    tracker prefix `WSG_TRACKER_URL` from `~/.config/wsg/config` (if it is set there) followed by

@@ -37,8 +37,12 @@ From the epic session, when the owner asks to start work on a ticket.
    the owner the command and wait for "ok":
 
    ```bash
-   wsg new <slug> --epic <epic> --ticket <KEY> [--title T] [--sources a,b|none] [--no-code] [--spec]
+   wsg new <slug> --epic <epic> --ticket <KEY> [--title T] [--description T] [--sources a,b|none] [--no-code] [--spec]
    ```
+
+   `--description`: the task's description for the owner (`description.md`, later `wsg describe`) —
+   1–3 short sentences in the owner's language: what happened or what we want, and what should come
+   out; no status, code or paths.
 
    `--no-code` (the owner's answer above): no repository, no branch, `--sources` refused but for
    `none`; material to read is attached later with `wsg add <name> --link`. `--spec` when the
@@ -64,7 +68,8 @@ From the epic session, when the owner asks to start work on a ticket.
 
 When the owner reports a problem in the epic's session, it is not fixed there. Make a task as above,
 or update the matching one listed in `tasks.md`, and write into its `notes.md` the symptoms, the
-evidence, the expected behavior and the current status. Then suggest opening that task's session for
+evidence, the expected behavior and the current status; write its description for the owner with
+`--description`, or `wsg describe <epic>/<task> --text T` for a task that exists. Then suggest opening that task's session for
 the fix. The fix is made from the epic's session only when the owner explicitly asks. The epic's
 `AGENTS.md` says the same in its `epic-problems` block; the epic's Owner rules win.
 
