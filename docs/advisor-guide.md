@@ -237,6 +237,10 @@ For each `wsg add`, `wsg remove` or `wsg new … --epic` command in the brief:
   when local and origin differ. `--reset-to-base` starts the branch over — the old head is saved in
   `backup/…` — and only the owner decides that. The base of a new branch is `origin/<target>`
   unless `--base` says otherwise; the target is `origin/HEAD` unless `--target` says otherwise.
+  wsg runs `git fetch` first, so the base is what origin has now; a failed fetch is a warning and
+  the base is as of the last fetch; `--dry-run` never fetches and says so. A dry-run plan reflects
+  the refs as of the last fetch, so the real run may differ: a branch pushed since is continued, or
+  a `--base` is refused.
 - **The workspace root's `.claude/` governs.** A session starts at the workspace root, and settings,
   rules, permissions and agents load from there. A repository's own `.claude/settings.local.json`
   is not read in the workspace, so it need not be carried — leave it out of `--carry`: the

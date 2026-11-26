@@ -299,7 +299,8 @@ its tasks reuse; each task gets its own worktree of it.
    - `--branch-template` follows the repository's convention. `{slug}` (the task's directory) and
      `{ticket}` (its ticket key) are the only placeholders, at least one is required, and the plan
      shows a sample branch (`task.sampleBranch`). Quote it: the braces are literal.
-   - `--base` is what a task's branch starts from; without it, `origin/<target>`.
+   - `--base` is what a task's branch starts from; without it, `origin/<target>`. `wsg new --epic`
+     runs `git fetch` before the branch starts (a failed fetch is a warning; `--dry-run` never fetches).
    - `--carry` picks the ignored files each task's worktree gets (`task.carryCandidates`): `all` by
      default, resolved to the list there is now.
    - `--target` and `--verify` are the repository's own, and its tasks reuse them.
