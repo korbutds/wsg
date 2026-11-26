@@ -304,9 +304,9 @@ async function cmdNew(args) {
     for (const name of names) {
       let res;
       try {
-        res = S.fromEpic(name, epic, vars, {}, { ws: planned, state, home });
+        res = S.fromEpic(name, epic, vars, {}, { ws: planned, state, home, fetch: !dryRun });
       } catch (e) {
-        // Ctrl+C while git was asked about the source: only read so far, nothing changed.
+        // Ctrl+C while git was asked about the source (or fetched its remote): nothing of the workspace changed.
         if (e && e.name === 'Interrupted') throw Object.assign(e, { rollback: 'none' });
         throw e;
       }
@@ -536,10 +536,10 @@ async function cmdAdd(args) {
   let res;
   try {
     res = derived
-      ? S.fromEpic(pos[0], derived.epic, { slug: state.slug, ticket: state.ticket || '', made: true }, opts, { ws, state })
-      : S.resolve(pos[0], opts, { ws, state });
+      ? S.fromEpic(pos[0], derived.epic, { slug: state.slug, ticket: state.ticket || '', made: true }, opts, { ws, state, fetch: !flags['--dry-run'] })
+      : S.resolve(pos[0], opts, { ws, state, fetch: !flags['--dry-run'] });
   } catch (e) {
-    // Ctrl+C while git was asked about the source: only read so far, nothing changed.
+    // Ctrl+C while git was asked about the source (or fetched its remote): nothing of the workspace changed.
     if (e && e.name === 'Interrupted') throw Object.assign(e, { rollback: 'none' });
     throw e;
   }
