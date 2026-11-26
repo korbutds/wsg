@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.9.5](https://github.com/korbutds/wsg/compare/v0.9.4...v0.9.5) (2026-11-26)
+
+
+### Features
+
+* describe a task for the owner (wsg describe) ([#9](https://github.com/korbutds/wsg/issues/9)) ([045ec62](https://github.com/korbutds/wsg/commit/045ec62af6c52176ed87a59610c3c3fd9e27073a))
+* fetch before choosing the base of a task branch ([#11](https://github.com/korbutds/wsg/issues/11)) ([a0f2b9b](https://github.com/korbutds/wsg/commit/a0f2b9bbd0e6109c5e7cead74460a72897293ea3))
+
 ## [0.9.4](https://github.com/korbutds/wsg/compare/v0.9.3...v0.9.4) (2026-11-26)
 
 
