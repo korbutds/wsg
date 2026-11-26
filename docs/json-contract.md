@@ -6,7 +6,7 @@ messages, a crash's stack). This file describes `schemaVersion` 1, as `lib/json.
 `bin/cli.js` produce it.
 
 Commands that take `--json`: `new`, `add`, `remove`, `refresh`, `check`, `list`, `status`, `close`,
-`move`, `context add`, `context note`, `context remove`, `context list`, `mcp add`, `mcp remove`,
+`describe`, `move`, `context add`, `context note`, `context remove`, `context list`, `mcp add`, `mcp remove`,
 `mcp disable`, `mcp enable`, `mcp list`, `studio install`, and `wsg --version --json`. Any other command given `--json` refuses it as an unknown flag, in the
 envelope (`invalid_input`). `--json` is read before anything else can refuse, so a flag error, a
 settings file that can't be read or an unknown command is an envelope too.
@@ -78,12 +78,14 @@ settings file that can't be read or an unknown command is an envelope too.
 
 ### new
 
-`{workspace, kind, slug, title, epic, ticket, ticketText, status, noCode, spec, sources, launched}`. `epic` is
+`{workspace, kind, slug, title, epic, ticket, ticketText, status, noCode, spec, description, sources, launched}`. `epic` is
 the epic's slug or `null`; `ticket` the parsed key, `ticketText` the text as given (a standalone
 task keeps its ticket only in `AGENTS.md`, not in its state, so `list` gives it `ticket: null`); `status` is
 `"open"` (`null` for an epic); `noCode` is `true` for `--no-code` (a task without a repository:
 it takes no source of its epic), else `false`; `spec` is `true` for `--spec` (`spec.md`, `plan.md`
-and the Stages section of `AGENTS.md`), else `false`; `sources` are the sources taken from the epic, as planned or
+and the Stages section of `AGENTS.md`), else `false`; `description` is the text `--description` gives
+the task's `description.md`, normalized as `describe` does (`null` without it; an epic refuses it);
+`sources` are the sources taken from the epic, as planned or
 attached; `launched` is always `false`.
 
 ### add
@@ -150,6 +152,7 @@ and tasks in `WS_ROOT` — each epic's tasks in its `tasks`. Each entry:
 | `kind` | `task`, `epic` (a `process` of wsg 0.8 is listed as `task`); `null` when the state does not read, or for a 0.1 workspace whose `.claude/ws-kind` names no known kind |
 | `path` | the workspace, as `WS_ROOT` gives it (a symlinked `WS_ROOT` is kept) |
 | `title` | from the state |
+| `description` | a task's description for the owner: its `description.md` as text, normalized as `describe` gives it; `null` without the file, for one holding only whitespace, for anything but a task, and for one that is no file of its own (a symlink, a directory), is bigger than 64 KiB (65536 bytes) or can't be read — `problems` says so |
 | `ticket` | the key a task of an epic keeps in its state; `null` for anything else, a standalone task with a ticket included (it keeps it only in `AGENTS.md`) |
 | `status` | `open`, `review`, `done`, `archived` for a task — or a value a later wsg wrote, as it is (`problems` says so); `null` for an epic, a 0.1 workspace and one whose state does not read |
 | `closed` | the UTC date it was closed, while done; else `null` |
@@ -197,6 +200,28 @@ or unpushed work, entries left under `## For the epic` and, on a move to review 
 items of `checklist.md` ("N of M checklist items unchecked") are warnings, never refusals; so is done
 set for a task of an epic from inside its own workspace (a standalone task gets no
 such warning: it has no epic session).
+
+### describe
+
+`wsg describe <task>` reads; `--text T`, `--from FILE`, `--from -` (stdin) set, `--clear` removes —
+at most one of them, else `invalid_input`. The task is named as for `status`.
+
+`{workspace, task, epic, description, previous, changed, file}`
+
+| Key | Value |
+|---|---|
+| `workspace`, `task`, `epic` | as in status |
+| `description`, `previous` | the text after and before, `null` for none; equal when reading |
+| `changed` | whether `description.md` is written or removed (planned, in a dry run); `false` when reading, for the text it has already, and for `--clear` with no file |
+| `file` | the task's `description.md`, there or not |
+
+The text is normalized: CRLF read as LF, trimmed, three or more line breaks one blank line. At most
+600 characters (code points): longer is `invalid_input`, nothing written; so is a text empty after
+normalization (`--clear` removes). Only `description.md` changes, in one transaction: a write that
+fails puts it back (`step_failed`). An epic, a 0.1 workspace and any write to an archived task are
+`invalid_input`; an archived task's description reads. A `description.md` that is no file of its own,
+is bigger than 64 KiB or can't be read refuses a write; reading, it is a warning and `description` is `null`. A write holds
+the epic's lock, then the task's: one held elsewhere is `busy`.
 
 ### archive
 

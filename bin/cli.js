@@ -217,6 +217,16 @@ async function cmdNew(args) {
   // Spec first: spec.md, plan.md and the Stages section; a task only.
   const spec = !!flags['--spec'];
   if (spec && kind !== 'task') invalid(t('cli.specKind', { kind }));
+  // The task's description for the owner (wsg describe): checked here, before anything is made, and
+  // written with the task's other files, in the same transaction.
+  let description = null;
+  if (flags['--description'] !== undefined) {
+    if (kind !== 'task') invalid(t('cli.descriptionKind', { kind }));
+    const d = W.descriptionOf(flags['--description']);
+    if (d.error) invalid(d.error);
+    if (!d.text) invalid(t('describe.empty'));
+    description = d.text;
+  }
   if (noCode && flags['--sources'] !== undefined && flags['--sources'].trim().toLowerCase() !== 'none') invalid(t('cli.noCodeSources'));
   // A task of an epic: the epic is named, never taken from the current directory. It is a workspace
   // right in WS_ROOT, where `<epic>/<task>` resolves; one elsewhere is refused.
@@ -261,6 +271,7 @@ async function cmdNew(args) {
     personalRules: !!(cfg.WSG_GLOBAL_MEMORY && fs.existsSync(cfg.WSG_GLOBAL_MEMORY)),
     ...(noCode ? { noCode: true } : {}),
     ...(spec ? { spec: true } : {}),
+    ...(description !== null ? { description } : {}),
   };
   const generate = lib('generate');
   const json = J.active();
@@ -334,6 +345,7 @@ async function cmdNew(args) {
     status: kind === 'epic' ? null : 'open',
     noCode,
     spec,
+    description,
     sources: sources.map((x) => sourceResult(target, x)),
     launched: false,
   });
@@ -344,6 +356,7 @@ async function cmdNew(args) {
     process.stdout.write(`${JSON.stringify({
       workspace: target,
       state,
+      description,
       sources: taken.plans,
       errors,
       warnings: taken.warnings,
@@ -1040,6 +1053,124 @@ async function statusCommand(given, value, flags, needTask) {
   return 0;
 }
 
+// `wsg describe <task>` prints a task's description for the owner (lib/describe.js); with --text,
+// --from or --clear it sets or removes it. The task is named and resolved as wsg status resolves it:
+// a slug, <epic>/<task> or a path, as it is on disk. An epic has none, a 0.1 workspace is refused,
+// an archived task's is frozen. The text is read before any lock (stdin may take a while); a write
+// holds the epic's lock, then the task's, as status does, and the state is read again under them.
+async function cmdDescribe(args) {
+  const { flags, pos } = parse(args, FLAGS.describe, 1);
+  if (!pos[0]) invalid(t('describe.task'));
+  const W = lib('workspace');
+  const given = ['--text', '--from', '--clear'].filter((f) => flags[f] !== undefined);
+  if (given.length > 1) invalid(t('describe.oneSource'));
+  let text = flags['--text'];
+  if (flags['--from'] !== undefined) {
+    const from = flags['--from'];
+    // Bytes, not characters: room for the blank lines and spaces the normalization drops.
+    const max = W.DESCRIPTION_READ_MAX;
+    const what = from === '-' ? 'stdin' : from;
+    const tooLarge = () => invalid(t('describe.inputTooLarge', { what, max, chars: W.DESCRIPTION_MAX }));
+    try {
+      text = readFrom(from, max, tooLarge, tooLarge).toString('utf8');
+    } catch (e) {
+      invalid(t('describe.read', { from, msg: e.message }));
+    }
+  }
+  const op = flags['--clear'] ? { clear: true } : text !== undefined ? { text } : {};
+  const writing = given.length === 1;
+  const found = targetWs(pos[0]);
+  if (found.legacy) invalid(t('cli.legacyWorkspace', { ws: found.ws }));
+  const ws = fs.realpathSync(found.ws);
+  currentWs = ws;
+  // As wsg status gives it: a path taken from wsg list matches it back.
+  const asGiven = path.resolve(found.ws);
+  const shownWs = fs.lstatSync(asGiven).isSymbolicLink() ? ws : asGiven;
+  const readState = () => {
+    let st;
+    try {
+      st = W.readState(ws);
+    } catch (e) {
+      return invalid(e.message);
+    }
+    if (st.kind === 'epic') invalid(t('describe.epic', { ws }));
+    if (writing && W.isArchived(st)) invalid(t('describe.archived', { ws, name: wsName(ws, st) }));
+    return st;
+  };
+  let state = readState();
+  const dryRun = !!flags['--dry-run'];
+  const releases = [];
+  if (writing && !dryRun) {
+    if (state.epic) {
+      try {
+        W.epicState(W.epicOf(ws, state));
+      } catch (e) {
+        invalid(e.message);
+      }
+      releases.push(lock(W.epicOf(ws, state)));
+    }
+    releases.push(lock(ws));
+    state = readState();
+  }
+  const release = () => { while (releases.length) releases.pop()(); };
+  const D = lib('describe');
+  const ui = lib('ui');
+  const plan = D.plan(ws, op);
+  const json = J.active();
+  const task = path.basename(ws);
+  // The result --json gives, read, planned or done: every key always there, the path absolute.
+  const result = () => ({
+    workspace: shownWs,
+    task,
+    epic: state.epic ? state.epic.slug : null,
+    description: plan.description,
+    previous: plan.previous,
+    changed: plan.changed,
+    file: path.join(shownWs, plan.rel),
+  });
+  // A refused plan: the same document with --dry-run and without.
+  if (json && plan.errors.length) return J.fail('invalid_input', plan.errors[0], { details: plan.errors, result: result(), warnings: plan.warnings });
+  if (!writing || (dryRun && json)) {
+    if (json) return J.succeed(result(), { warnings: plan.warnings });
+    // The text alone on stdout, for a script; anything about it on stderr.
+    if (plan.description !== null) process.stdout.write(`${plan.description}\n`);
+    else if (!plan.warnings.length && !writing) process.stderr.write(`wsg: ${t('describe.none', { task: wsName(ws, state) })}\n`);
+    for (const w of plan.warnings) process.stderr.write(`wsg: ${w}\n`);
+    return 0;
+  }
+  if (dryRun) {
+    process.stdout.write(`${JSON.stringify({ ...result(), errors: plan.errors, warnings: plan.warnings }, null, 2)}\n`);
+    return plan.errors.length ? INVALID : 0;
+  }
+  if (plan.errors.length) {
+    for (const e of plan.errors) process.stderr.write(`wsg: ${e}\n`);
+    return INVALID;
+  }
+  if (!plan.changed) {
+    release();
+    if (json) return J.succeed(result(), { warnings: plan.warnings });
+    ui.ok(t(op.clear ? 'describe.noneToClear' : 'describe.same', { task: wsName(ws, state) }));
+    return 0;
+  }
+  guardPlatform();
+  try {
+    await D.apply(ws, plan);
+  } catch (e) {
+    if (e && e.name === 'Interrupted') {
+      if (json) return J.fail('interrupted', cancelled(e), { ...J.rollbackOf(e, ws), warnings: plan.warnings });
+      process.stderr.write(`${cancelled(e)}\n`);
+      return 130;
+    }
+    // A write that failed: put back as far as it went (guarded() in lib/generate.js).
+    if (json && e && e.rollback) return J.fail('step_failed', String(e.message), { ...J.rollbackOf(e, ws), warnings: plan.warnings });
+    throw e;
+  }
+  release();
+  if (json) return J.succeed(result(), { warnings: plan.warnings });
+  ui.head(t(op.clear ? 'describe.cleared' : 'describe.set', { task: wsName(ws, state), file: path.join(shownWs, plan.rel) }));
+  return 0;
+}
+
 // The workspace wsg archive and wsg unarchive act on: the one named (a slug, <epic>/<task> or a
 // path), the one --ws names, else the one you are in — as it is on disk, so its locks and its line in
 // the epic's tasks.md are its own.
@@ -1611,6 +1742,48 @@ function reportTasks(tasks) {
   if (archived.length) ui.dim(t('context.tasksArchived', { list: archived.join(', ') }));
 }
 
+// What --from names, read whole: a file (relative to the current directory), or stdin for `-`.
+// Anything but a regular file (stdin, a FIFO, /dev/zero) is read up to one byte past max bytes: what
+// is beyond it is never held in memory; a regular file is measured before it is read. Over max:
+// tooLarge(size) with the bytes found, or over() when the rest was not read — both refuse (exit),
+// never return. Returns a Buffer; a read that fails throws, for the caller to say.
+function readFrom(from, max, tooLarge, over) {
+  const capped = (fd) => {
+    const chunks = [];
+    let total = 0;
+    const buf = Buffer.alloc(1 << 16);
+    const pause = new Int32Array(new SharedArrayBuffer(4));
+    for (;;) {
+      let n;
+      try {
+        n = fs.readSync(fd, buf, 0, buf.length, null);
+      } catch (e) {
+        // A non-blocking stdin with nothing yet: wait a little, then ask again.
+        if (e.code === 'EAGAIN') { Atomics.wait(pause, 0, 0, 10); continue; }
+        if (e.code === 'EOF') break;
+        throw e;
+      }
+      if (n === 0) break;
+      chunks.push(Buffer.from(buf.subarray(0, n)));
+      total += n;
+      if (total > max) over();
+    }
+    return Buffer.concat(chunks);
+  };
+  if (from === '-') return capped(0);
+  let body;
+  const fd = fs.openSync(path.resolve(from), 'r');
+  try {
+    const st = fs.fstatSync(fd);
+    if (st.isFile() && st.size > max) tooLarge(st.size);
+    body = st.isFile() ? fs.readFileSync(fd) : capped(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+  if (body.length > max) tooLarge(body.length);
+  return body;
+}
+
 // `wsg context add|note|remove|list`: an epic's context (lib/context.js). A write plans with nothing
 // touched, writes the epic under its lock in one transaction, then refreshes every task of the epic,
 // each under its own lock (generate.refreshEpicTasks): a task that can't be refreshed is reported in
@@ -1675,44 +1848,8 @@ async function cmdContext(args) {
         const [found, ceiling] = typeof size === 'number' ? C.sizesOf(size, max) : [size, T.sizeOf(max)];
         invalid(t('context.tooLarge', { what, size: found, max: ceiling }));
       };
-      // Anything but a regular file (stdin, a FIFO, /dev/zero) is read up to one byte past the
-      // ceiling: what is beyond it is never held in memory.
-      const capped = (fd) => {
-        const chunks = [];
-        let total = 0;
-        const buf = Buffer.alloc(1 << 16);
-        const pause = new Int32Array(new SharedArrayBuffer(4));
-        for (;;) {
-          let n;
-          try {
-            n = fs.readSync(fd, buf, 0, buf.length, null);
-          } catch (e) {
-            // A non-blocking stdin with nothing yet: wait a little, then ask again.
-            if (e.code === 'EAGAIN') { Atomics.wait(pause, 0, 0, 10); continue; }
-            if (e.code === 'EOF') break;
-            throw e;
-          }
-          if (n === 0) break;
-          chunks.push(Buffer.from(buf.subarray(0, n)));
-          total += n;
-          if (total > max) tooLarge(t('context.overMax', { max: T.sizeOf(max) }));
-        }
-        return Buffer.concat(chunks);
-      };
       try {
-        if (from === '-') body = capped(0);
-        else {
-          const fd = fs.openSync(path.resolve(from), 'r');
-          try {
-            const st = fs.fstatSync(fd);
-            // A regular file is measured before it is read.
-            if (st.isFile() && st.size > max) tooLarge(st.size);
-            body = st.isFile() ? fs.readFileSync(fd) : capped(fd);
-          } finally {
-            fs.closeSync(fd);
-          }
-          if (body.length > max) tooLarge(body.length);
-        }
+        body = readFrom(from, max, tooLarge, () => tooLarge(t('context.overMax', { max: T.sizeOf(max) })));
       } catch (e) {
         invalid(t('context.noteRead', { from, msg: e.message }));
       }
@@ -2007,6 +2144,7 @@ const COMMANDS = {
   list: cmdList,
   status: cmdStatus,
   close: cmdClose,
+  describe: cmdDescribe,
   context: cmdContext,
   mcp: cmdMcp,
   studio: cmdStudio,

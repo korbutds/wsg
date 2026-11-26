@@ -35,7 +35,8 @@ with what the tracker and sibling workspaces say about the task.
   `rev-parse`, `merge-base`, `ls-files`, `for-each-ref`, `symbolic-ref`, `ls-remote`,
   `branch --list|-v|-a|-r|--show-current`; wsg only as `node "<WSG_CLI>"`: `guide`, `check`,
   `list`, `status <task>`, `--where`, `add … --dry-run`, `remove … --dry-run`, `new … --dry-run`,
-  `status <task> <status> --dry-run`, `close … --dry-run`; `ls`, `cat`, `head`, `tail`, `wc`,
+  `status <task> <status> --dry-run`, `close … --dry-run`, `describe <task>`,
+  `describe <task> --from FILE --dry-run`; `ls`, `cat`, `head`, `tail`, `wc`,
   `grep`, `rg`, `find`, `pwd`. Every git command as
   `git --no-optional-locks --no-lazy-fetch …` (`-C <path>` after them): without the first,
   `status` and `diff` refresh `.git/index` and can collide with the caller's `index.lock`; without
@@ -277,7 +278,7 @@ For each `wsg add`, `wsg remove` or `wsg new … --epic` command in the brief:
   owner's "ok", and the workspace settings make Claude Code ask before every `git push`.
 - **Dry runs and checks** change nothing: `wsg add <path> … --dry-run`, `wsg remove <name> --dry-run`,
   `wsg new <slug> --epic <epic> … --dry-run`, `wsg close <epic>/<task> --dry-run`, `wsg check`,
-  `wsg list`, `wsg status <epic>/<task>`.
+  `wsg list`, `wsg status <epic>/<task>`, `wsg describe <epic>/<task>`.
 
 ## For the caller
 

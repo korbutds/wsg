@@ -366,8 +366,8 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       }
     });
     it('AGENTS.md carries the ticket', () => assert.match(agents, /^Ticket: PROJ-7$/m));
-    it('AGENTS.md has empty marker pairs', () => {
-      assert.match(agents, /<!-- wsg:layout -->\n<!-- \/wsg:layout -->/);
+    it('AGENTS.md has the marker pairs: no source in Layout yet, only description.md', () => {
+      assert.match(agents, /<!-- wsg:layout -->\n- `description\.md` — [^\n]*\n<!-- \/wsg:layout -->/);
       assert.match(agents, /<!-- wsg:verification -->\n- FILL IN: no repository attached yet/);
     });
     it('CLAUDE.md imports AGENTS.md outside the generated block', () =>
@@ -3079,7 +3079,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       assert.strictEqual(r2.code, 2);
       assert.match(r2.err, /AGENTS\.md: the <!-- wsg:layout --> block has 1 opening and 0 closing markers/);
     });
-    fs.writeFileSync(agentsFile, text.replace('<!-- wsg:layout -->\n<!-- /wsg:layout -->\n', ''));
+    fs.writeFileSync(agentsFile, text.replace(/<!-- wsg:layout -->\n[\s\S]*?<!-- \/wsg:layout -->\n/, ''));
     const r3 = wsg(['add', web, '--link'], { cwd: wsM });
     it('a deleted pair is put back, with a warning', () => {
       assert.strictEqual(r3.code, 0, r3.all);
@@ -3129,7 +3129,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     const after = fs.readFileSync(agentsFile, 'utf8');
     it('wsg add adds the block to a workspace that lacks it', () => {
       assert.strictEqual(r1.code, 0, r1.all);
-      assert.match(after, /^This is a task workspace[^\n]*\n<!-- wsg:advisor -->\n[^\n]+\n<!-- \/wsg:advisor -->\n\n## Why/m);
+      assert.match(after, /^This is a task workspace[^\n]*\n<!-- wsg:advisor -->\n[^\n]+\n<!-- \/wsg:advisor -->\n<!-- wsg:description -->\n`description\.md` is the task's description[^\n]*\n<!-- \/wsg:description -->\n\n## Why/m);
     });
     it('saying it is new in 0.3.0, not that markers were missing', () => {
       assert.match(r1.out, /AGENTS\.md: added the <!-- wsg:advisor --> block \(new in wsg 0\.3\.0\)/);
@@ -5165,7 +5165,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     const run = (args, opts = {}) => wsg(['new', ...args], { env, ...opts, env: { ...env, ...(opts.env || {}) } });
     const doc = (r) => { try { return JSON.parse(r.out); } catch { return null; } };
     const VERSION = require(path.join(ROOT, 'package.json')).version;
-    const RESULT_KEYS = ['workspace', 'kind', 'slug', 'title', 'epic', 'ticket', 'ticketText', 'status', 'noCode', 'spec', 'sources', 'launched'];
+    const RESULT_KEYS = ['workspace', 'kind', 'slug', 'title', 'epic', 'ticket', 'ticketText', 'status', 'noCode', 'spec', 'description', 'sources', 'launched'];
     const SOURCE_KEYS = ['name', 'mode', 'path', 'workspacePath', 'branch', 'base', 'target', 'verify', 'note', 'carry', 'cloneNm', 'from', 'task'];
     const envelope = (r, what) => {
       const j = doc(r);
@@ -5186,10 +5186,10 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     };
 
     const plain = run(['plain-dry', '--ticket', 'ACME-123', '--dry-run']);
-    it('plain new --dry-run: the plan as before, no envelope', () => {
+    it('plain new --dry-run: the plan (the state, the description, the sources), no envelope', () => {
       assert.strictEqual(plain.code, 0, plain.all);
       const p = doc(plain);
-      assert.deepStrictEqual(Object.keys(p), ['workspace', 'state', 'sources', 'errors', 'warnings']);
+      assert.deepStrictEqual(Object.keys(p), ['workspace', 'state', 'description', 'sources', 'errors', 'warnings']);
       assert.strictEqual(plain.out, `${JSON.stringify(p, null, 2)}\n`);
     });
     const dry = run(['first', '--ticket', 'ACME-123', '--title', 'First task', '--dry-run', '--json']);
@@ -5199,7 +5199,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       const j = envelope(dry, 'dry');
       assert.deepStrictEqual([j.ok, j.dryRun], [true, true]);
       assert.deepStrictEqual(j.result, { workspace: path.join(root, 'first'), kind: 'task', slug: 'first', title: 'First task',
-        epic: null, ticket: 'ACME-123', ticketText: 'ACME-123', status: 'open', noCode: false, spec: false, sources: [], launched: false });
+        epic: null, ticket: 'ACME-123', ticketText: 'ACME-123', status: 'open', noCode: false, spec: false, description: null, sources: [], launched: false });
       assert.ok(!fs.existsSync(path.join(root, 'first')));
     });
     // One rule for the ticket: the key parsed from what was given, or null; the text as given.
@@ -5508,7 +5508,7 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
     const root = path.join(tmp, 'list-root');
     const env = { WS_ROOT: root };
     const VERSION = require(path.join(ROOT, 'package.json')).version;
-    const ENTRY_KEYS = ['slug', 'kind', 'path', 'title', 'ticket', 'status', 'closed', 'archived', 'noCode', 'spec', 'checklist', 'forEpicPending', 'created', 'epic', 'moved', 'legacy',
+    const ENTRY_KEYS = ['slug', 'kind', 'path', 'title', 'description', 'ticket', 'status', 'closed', 'archived', 'noCode', 'spec', 'checklist', 'forEpicPending', 'created', 'epic', 'moved', 'legacy',
       'problems', 'extraDirs', 'sources', 'archivedSources', 'tasks', 'trackerTasks'];
     const listJson = (extra = {}) => {
       const r = wsg(['list', '--json'], { env: { ...env, ...extra } });
@@ -6918,12 +6918,13 @@ const cfg = { WS_ROOT: wsRoot, WSG_GLOBAL_MEMORY: '', WSG_PARENT_CONTEXT: '' };
       for (const c of ['git log', 'git show', 'git diff', 'git status', 'git blame', 'git grep', 'git rev-parse', 'git merge-base',
         'git ls-files', 'git for-each-ref', 'git symbolic-ref HEAD', 'git ls-remote', 'git branch --list', 'git branch -v', 'git branch -a',
         'git branch -r', 'git branch --show-current', 'git -C . log', ...['guide advisor', 'check', 'list', 'status shop/pay', '--where', 'add x --dry-run',
-          'remove x --dry-run', 'new x --dry-run', 'status shop/pay review --dry-run', 'close shop/pay --dry-run'].map((x) => `node "${cliPath}" ${x}`), 'ls', 'cat a', 'head a', 'tail a', 'wc a', 'grep a b', 'rg a',
+          'remove x --dry-run', 'new x --dry-run', 'status shop/pay review --dry-run', 'close shop/pay --dry-run', 'describe shop/pay',
+          'describe shop/pay --from notes.md --dry-run'].map((x) => `node "${cliPath}" ${x}`), 'ls', 'cat a', 'head a', 'tail a', 'wc a', 'grep a b', 'rg a',
         'find .', 'pwd']) assert.ok(G.decide({ tool_name: 'Bash', tool_input: { command: c }, cwd: demo }).allow, c);
       // Up to the next item, whatever marks it: "2." in the agent, "-" in the guide.
       const rule = (text) => text.slice(text.indexOf('Bash only to read'), text.indexOf('Other tools, MCP included')).replace(/\s+/g, ' ').replace(/ (-|\d\.) $/, '');
       assert.ok(rule(agentTpl).includes('`git` `log`, `show`, `diff`, `status`, `blame`, `grep`, `rev-parse`, `merge-base`, `ls-files`, `for-each-ref`, `symbolic-ref`, `ls-remote`, `branch --list|-v|-a|-r|--show-current`'), rule(agentTpl));
-      assert.ok(rule(agentTpl).includes('wsg only as `node "<WSG_CLI>"`: `guide`, `check`, `list`, `status <task>`, `--where`, `add … --dry-run`, `remove … --dry-run`, `new … --dry-run`, `status <task> <status> --dry-run`, `close … --dry-run`'), rule(agentTpl));
+      assert.ok(rule(agentTpl).includes('wsg only as `node "<WSG_CLI>"`: `guide`, `check`, `list`, `status <task>`, `--where`, `add … --dry-run`, `remove … --dry-run`, `new … --dry-run`, `status <task> <status> --dry-run`, `close … --dry-run`, `describe <task>`, `describe <task> --from FILE --dry-run`'), rule(agentTpl));
       assert.ok(rule(agentTpl).includes('`ls`, `cat`, `head`, `tail`, `wc`, `grep`, `rg`, `find`, `pwd`'));
       assert.ok(rule(agentTpl).includes('no pipes, redirection, `;`, `&&` or `$`'));
       assert.strictEqual(rule(advisorGuide), rule(agentTpl));

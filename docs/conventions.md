@@ -71,7 +71,7 @@ the epic's `tasks.md` block is rendered from it; `wsg list` shows every workspac
 A task that grew into an epic becomes one in place: `wsg promote <task>`. The folder, the text
 people and agents wrote, memory, settings, rules and link sources stay; `.claude/ws-kind` and the
 state say epic (`status`, `closed`, `noCode`, `spec`, `moved`, `ticket` go), the epic's files are made
-where nothing is, and `checklist.md`, `spec.md`, `plan.md`, `mr-target-branch.txt` stay as plain
+where nothing is, and `checklist.md`, `spec.md`, `plan.md`, `description.md`, `mr-target-branch.txt` stay as plain
 files. A workspace without a state gets a fresh one, its top-level symlinks to git repositories
 taken as link sources. A task with a worktree is refused: an epic's sources are links. There is no
 reverse conversion.
@@ -132,7 +132,7 @@ Workspaces created by wsg 0.1 have no `wsg.json`: `wsg check` reports on them as
 
 A source can't take a name the workspace uses itself — the template would be written through its
 symlink, over a file outside the workspace: `CLAUDE.md`, `AGENTS.md`, `README.md`, `notes.md`,
-`SETUP.md`, `journal.md`, `runs`, `checklist.md`, `spec.md`, `mr-target-branch.txt`, `requirements.md`, `design.md`, `plan.md`,
+`SETUP.md`, `journal.md`, `runs`, `checklist.md`, `spec.md`, `description.md`, `mr-target-branch.txt`, `requirements.md`, `design.md`, `plan.md`,
 `review.md`, `team`, `tasks.md`, `decisions.md`, `knowledge.md`, `.claude`, `.claude-memory`,
 `.learnings`, `.git` (compared case-insensitively). `repo` is allowed: the pointer is not created
 then. A task inside an epic can't take these names either, nor the name of one of the epic's
@@ -167,6 +167,7 @@ and `wsg check` does not judge them. `.claude/wsg.json` records the team as `tea
 | State, code map, open questions | `notes.md` | on demand |
 | The Definition of done as checkboxes, ticked with evidence | a task's `checklist.md` (wsg 0.8+) | on demand |
 | The spec and the plan of a task with stages (`wsg new --spec`) | `spec.md`, `plan.md` | on demand |
+| A task's description for the owner: what it is about, in plain words (`wsg describe`) | a task's `description.md` | on demand; `wsg list --json` gives it |
 | What every task of an epic must know | the epic's `knowledge.md` | on demand, through the always-on pointer rule |
 | Multi-step procedures | `.claude/skills/<name>/SKILL.md` | on demand |
 | Lessons and failures | `.learnings/` | on demand |
