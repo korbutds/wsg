@@ -7,7 +7,7 @@ messages, a crash's stack). This file describes `schemaVersion` 1, as `lib/json.
 
 Commands that take `--json`: `new`, `add`, `remove`, `refresh`, `check`, `list`, `status`, `close`,
 `move`, `context add`, `context note`, `context remove`, `context list`, `mcp add`, `mcp remove`,
-`mcp disable`, `mcp enable`, `mcp list`, and `wsg --version --json`. Any other command given `--json` refuses it as an unknown flag, in the
+`mcp disable`, `mcp enable`, `mcp list`, `studio install`, and `wsg --version --json`. Any other command given `--json` refuses it as an unknown flag, in the
 envelope (`invalid_input`). `--json` is read before anything else can refuse, so a flag error, a
 settings file that can't be read or an unknown command is an envelope too.
 
@@ -40,7 +40,7 @@ settings file that can't be read or an unknown command is an envelope too.
 | `schemaVersion` | `1`. Raised on any breaking change: a key removed or renamed, a meaning or a value changed. New keys may be added without a raise. |
 | `wsgVersion` | the wsg that printed it |
 | `ok` | `true` when the command did what was asked; `false` with `error` set |
-| `command` | the command (`check` for `--check` too); a two-word command is named by both words, separated by one space: `context add`, `context note`, `context remove`, `context list`, `mcp add`, `mcp remove`, `mcp disable`, `mcp enable`, `mcp list`; `null` for an unknown command (`context` or `mcp` alone, or with a word it doesn't have, included), a global flag or `--version` |
+| `command` | the command (`check` for `--check` too); a two-word command is named by both words, separated by one space: `context add`, `context note`, `context remove`, `context list`, `mcp add`, `mcp remove`, `mcp disable`, `mcp enable`, `mcp list`, `studio install`; `null` for an unknown command (`context`, `mcp` or `studio` alone, or with a word it doesn't have, included), a global flag or `--version` |
 | `dryRun` | `true` when the command ran with `--dry-run` (a command that has one) |
 | `result` | the command's outcome, below; on an error it may still hold the refused plan (a refused `add`, `new`, `remove`, `status`, `close`, a `check` that found errors), else `null` |
 | `error` | `null` on success, else the object below |
@@ -508,6 +508,41 @@ that is not off change nothing: `ok` with a warning, `restartNeeded` `false`.
 `command`, `args` and `url` are what the owner gave. A token typed into them by hand is in the
 result, and in `.mcp.json`, which every task's agent can read: `mcp add` warns about it; keep
 secrets in variables.
+
+### studio install
+
+The latest wsg studio build (macOS on Apple silicon only) from the public
+`korbutds/wsg-studio-releases`: `wsg-studio-mac-arm64.zip` of its latest release, checked against
+`wsg-studio-mac-arm64.zip.sha256`, unpacked with `ditto` and put in place of the old copy. Needs no
+workspace and no settings. `invalid_input`, nothing touched: another platform, Studio running (it is
+never quit by wsg) or `pgrep` failing at the first check (wsg does not guess),
+`WSG_STUDIO_RELEASES_URL` that is not https. `step_failed`: neither `/Applications` nor
+`~/Applications` can be written; no release yet (404), another HTTP status, a network error or
+timeout, a redirect that is not https or too many redirects; a `.sha256` that does not read, a zip
+that does not match it; the temp dir, the zip or the staging directory that can't be written; an
+unpack that fails or holds no `wsg studio.app`, an unpacked download that can't be read; Studio
+started during the download, or `pgrep` failing at the check before the swap; the swap failing. `interrupted` (exit 130): Ctrl+C, a closed
+terminal or `kill` during the download, the unpack or a `pgrep` check (a `pgrep` ended by the
+signal is the interruption, not a failing `pgrep`) — the download is stopped, `ditto` too, and
+the temp files are removed before the exit; the swap itself is not interrupted. `rollback`: `none`
+before the target directory was touched, `done` after (the old copy is as it was; a
+`~/Applications` made for the install is removed again), `incomplete` when the old copy could not
+be put back (the message names where it is: `<dir>/.wsg studio.app.old-<pid>`, in `kept`) or the
+hidden staging directory (`<dir>/.wsg-studio-install-*`) could not be removed: it is in `kept` and
+`details`. A quarantine flag found on the installed app is a warning, never removed by wsg.
+`--dry-run` checks the platform and Studio, fetches only the `.sha256` and writes nothing.
+
+`{app, dir, replaced, sha256, asset, url, quarantine}`
+
+| Key | Value |
+|---|---|
+| `app` | the installed app: `<dir>/wsg studio.app` |
+| `dir` | `/Applications`, or `~/Applications` when `/Applications` can't be written |
+| `replaced` | whether an old copy was replaced (in a dry run: would be) |
+| `sha256` | the hash of the zip (in a dry run: the one its `.sha256` gives) |
+| `asset` | `wsg-studio-mac-arm64.zip` |
+| `url` | the zip's URL, before redirects |
+| `quarantine` | whether the installed app has `com.apple.quarantine`; `null` in a dry run or when `xattr` could not tell |
 
 ### --version
 

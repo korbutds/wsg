@@ -85,6 +85,20 @@ to install.
 
 **Requirements:** Node 20.19+ (or 22.13+) and git — for both installation methods. The `ws` function is for zsh.
 
+**wsg studio**, the desktop app (macOS on Apple silicon), installs with one command:
+
+```bash
+npx @korbutds/wsg studio install
+```
+
+It downloads the latest build from
+[korbutds/wsg-studio-releases](https://github.com/korbutds/wsg-studio-releases) over https, checks
+its sha256 and puts it into `/Applications` (`~/Applications` when `/Applications` can't be
+written), replacing an old copy. A download made this way carries no quarantine flag, so macOS
+opens the app without the "Apple could not verify" block. A zip downloaded in a browser still
+needs System Settings -> Privacy & Security -> Open Anyway. Quit Studio first: the command refuses
+while it runs.
+
 **Windows is not supported yet:** it needs git worktrees and POSIX-style symlinks. Works under WSL.
 
 ## Quick start
@@ -130,6 +144,7 @@ The commands the agent (or you) call:
 | `wsg promote [<task>] [--title T] [--dry-run] [--json]` | Turns a task into an epic in place: the same folder and path; notes, memory, settings, rules and the link sources stay, the state and `ws-kind` say epic (the task-only keys go, each said), the epic's files (`tasks.md`, `decisions.md`, `knowledge.md`, its rule and skills) are made where nothing is, the blocks are rendered for an epic. A workspace without `.claude/wsg.json` (wsg 0.1, or made by hand) gets a fresh epic state, each top-level symlink to a git repository taken as a link source. Refused: an epic, a task of one, an archived task, a task with a worktree (`wsg move <task> --epic <name> --new-epic` nests it instead) or a team. Everything is checked first; a failure or Ctrl+C puts everything back. No way back. |
 | `wsg context add <url\|path> [--id ID] [--title T] [--desc D]`, `wsg context note <id> (--text T\|--from FILE\|--from -) [--replace]`, `wsg context remove <id>`, `wsg context list` (each with `--ws E`, `--json`; the writes with `--dry-run`) | An epic's context: links, files copied into `context/`, notes. Its index — one line per item — is rendered into the epic's and every task's `AGENTS.md` in a `<!-- wsg:epic-context -->` block, at once; the agent opens an item only when it needs it. See [Epics](#epics). |
 | `wsg mcp add <name> [--env A,B=value] -- <command> [args...]`, `wsg mcp add <name> --url URL [--bearer-env VAR]`, `wsg mcp remove <name>`, `wsg mcp disable <name>`, `wsg mcp enable <name>`, `wsg mcp list` (each with `--ws E`, `--json`; the writes with `--dry-run`) | An epic's MCP servers for Claude Code: written into the epic's `.mcp.json` and enabled in the epic's and every task's `.claude/settings.json`, at once; `disable` turns a global server off there by name. Secrets by reference only (`${VAR}`). Codex not yet. See [Epics](#epics). |
+| `wsg studio install [--dry-run] [--json]` | Installs the latest wsg studio (macOS, Apple silicon) into `/Applications`, or `~/Applications` when `/Applications` can't be written: downloaded over https from `korbutds/wsg-studio-releases`, checked against its sha256, unpacked with `ditto`, the old copy replaced (put back on a failure). Refused while Studio runs. A download made this way has no quarantine flag; one found is warned about with the `xattr` line to remove it. `--dry-run` fetches only the sha256 and prints the plan as JSON. See [Installation](#installation). |
 | `wsg guide [setup\|advisor\|teach\|epic]` | Prints a guide an agent follows: the setup dialogue, the advisor's procedure, teaching a team role a practice, or working in an epic. |
 | `wsg install-skills [--uninstall]` | Installs the `wsg-new` and `wsg-teach` skills into `~/.claude/skills` and the `wsg-advisor` agent into `~/.claude/agents` (or under `$CLAUDE_CONFIG_DIR`) and, when Codex is there, `~/.codex/agents` (or `$CODEX_HOME/agents`). Overwrites only files it wrote — they carry a marker — and refuses others with exit 1. `--uninstall` removes only its own files. |
 
