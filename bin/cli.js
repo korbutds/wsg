@@ -1921,6 +1921,50 @@ function printMcpList(r, slug) {
   if (r.missingEnv.length) ui.warn(t('mcp.listMissing', { list: r.missingEnv.join(', ') }));
 }
 
+// `wsg studio install`: the latest wsg studio build into /Applications (lib/studio.js). Refusals
+// before anything is touched (not macOS on arm64, Studio running or pgrep failing, a bad
+// WSG_STUDIO_RELEASES_URL) are exit 2; a download, a sha256 that does not match, an unpack or the
+// swap failing are exit 1, with nothing installed or the old copy put back; a stop signal during
+// the download or the unpack is exit 130 once the temp files are removed. No workspace, no settings.
+async function cmdStudio(args) {
+  const verb = args[0];
+  const name = `studio ${verb}`;
+  if (verb === undefined) invalid(t('studio.noVerb'));
+  if (!hasOwn(FLAGS, name)) invalid(t('studio.badVerb', { verb }));
+  const { flags } = parse(args.slice(1), FLAGS[name], 0);
+  const dryRun = !!flags['--dry-run'];
+  const json = J.active();
+  const S = lib('studio');
+  const ui = lib('ui');
+  // A plain dry run prints only its JSON: its warnings go inside it.
+  const warnings = [];
+  const deps = dryRun && !json ? { log: { info: () => {}, warn: (w) => warnings.push(w) } } : {};
+  let result;
+  try {
+    result = await S.install({ dryRun }, deps);
+  } catch (e) {
+    if (!(e instanceof S.StudioError)) throw e;
+    if (e.code === 'invalid_input') invalid(e.message);
+    if (json) return J.fail(e.code, e.message, { rollback: e.rollback, kept: e.kept, details: e.details });
+    const text = [e.message, ...e.details].join('\n');
+    if (e.code === 'interrupted') {
+      process.stderr.write(`\n${text}\n`);
+      return 130;
+    }
+    process.stderr.write(`wsg: ${text}\n`);
+    return 1;
+  }
+  if (json) return J.succeed(result);
+  if (dryRun) {
+    process.stdout.write(`${JSON.stringify({ ...result, errors: [], warnings }, null, 2)}\n`);
+    return 0;
+  }
+  ui.ok(t('studio.installed', { app: result.app, sha: result.sha256.slice(0, 12) }));
+  if (result.replaced) ui.info(t('studio.replacedOld'));
+  ui.info(t('studio.open', { app: result.app }));
+  return 0;
+}
+
 function cmdInstallSkills(args) {
   const { flags } = parse(args, FLAGS['install-skills'], 0);
   const ui = lib('ui');
@@ -1951,7 +1995,7 @@ function cmdInstallSkills(args) {
 
 // Commands that don't read the settings work even when they are broken, so a bad config can
 // be diagnosed and the install finished.
-const NO_CONFIG = new Set(['install-skills']);
+const NO_CONFIG = new Set(['install-skills', 'studio']);
 
 const COMMANDS = {
   new: cmdNew,
@@ -1965,6 +2009,7 @@ const COMMANDS = {
   close: cmdClose,
   context: cmdContext,
   mcp: cmdMcp,
+  studio: cmdStudio,
   archive: cmdArchive,
   unarchive: cmdUnarchive,
   reorder: cmdReorder,
