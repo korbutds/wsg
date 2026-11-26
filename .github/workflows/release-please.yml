@@ -25,16 +25,22 @@ jobs:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    permissions:
-      contents: write
-      pull-requests: write
     outputs:
       release_created: ${{ steps.release.outputs.release_created }}
       tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
+      # Pull requests created or updated with GITHUB_TOKEN require approval to run CI.
+      - id: release-app
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.RELEASE_PLEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_PLEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
       - id: release
         uses: googleapis/release-please-action@v5
         with:
+          token: ${{ steps.release-app.outputs.token }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
