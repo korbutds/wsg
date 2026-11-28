@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.6](https://github.com/korbutds/wsg/compare/v0.9.5...v0.9.6) (2026-11-28)
+
+
+### Bug Fixes
+
+* **refresh:** roll back a partial write and answer step_failed ([#14](https://github.com/korbutds/wsg/issues/14)) ([8e8c35d](https://github.com/korbutds/wsg/commit/8e8c35d5046ee7a4cd7cd60e7add445d3c97481a))
+
 ## [0.9.5](https://github.com/korbutds/wsg/compare/v0.9.4...v0.9.5) (2026-11-26)
 
 
