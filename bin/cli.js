@@ -784,9 +784,21 @@ async function cmdRefresh(args) {
   let rendered;
   try {
     // Everything is computed before the first write: a broken pair refuses it with nothing changed.
-    rendered = generate.renderGenerated(ws);
+    rendered = generate.computeRender(ws, W.readState(ws), null);
   } catch (e) {
     invalid(e.message);
+  }
+  try {
+    await generate.renderGenerated(ws, rendered);
+  } catch (e) {
+    if (e && e.name === 'Interrupted') {
+      if (json) return J.fail('interrupted', cancelled(e), { ...J.rollbackOf(e, ws), warnings: rendered.warnings });
+      process.stderr.write(`${cancelled(e)}\n`);
+      return 130;
+    }
+    // A write that failed: the ones before it put back (guarded() in lib/generate.js), exit 1.
+    if (json && e && e.rollback) return J.fail('step_failed', String(e.message), { ...J.rollbackOf(e, ws), warnings: rendered.warnings });
+    throw e;
   }
   let tasks = null;
   if (withTasks) {
