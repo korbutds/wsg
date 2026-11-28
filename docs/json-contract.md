@@ -484,7 +484,10 @@ markers included.
 `{workspace, files, settingsChanged, tasks}`. The plain `wsg refresh --dry-run` keeps its own JSON
 (relative paths, `errors`, `warnings`); with `--json` it is this envelope, `dryRun` `true`. A
 generated part that can't be rendered (a broken marker, a `.mcp.json` that does not read, an entry
-of the owner's in it by the name of the epic's server) is `invalid_input`, nothing written.
+of the owner's in it by the name of the epic's server) is `invalid_input`, nothing written. The
+writes are one transaction: one that fails (a read-only file) puts back those before it and is
+`step_failed` with `rollback` and `kept`. With `--tasks` that is the epic's own write; a task that
+fails is in `tasks`.
 
 | Key | Value |
 |---|---|
